@@ -1185,12 +1185,14 @@ class TimesheetController extends Controller
                 }
             }
 
-            // Resetar status para pendente se houve alterações após rejeição
+            // Resetar status para pendente se houve alterações após rejeição ou conflito
             if ($timesheet->status === Timesheet::STATUS_REJECTED) {
                 $validatedData['status'] = Timesheet::STATUS_PENDING;
                 $validatedData['rejection_reason'] = null;
                 $validatedData['reviewed_by'] = null;
                 $validatedData['reviewed_at'] = null;
+            } elseif ($timesheet->status === Timesheet::STATUS_CONFLICTED) {
+                $validatedData['status'] = Timesheet::STATUS_PENDING;
             }
 
             $timesheet->fill($validatedData);
@@ -1207,6 +1209,30 @@ class TimesheetController extends Controller
             }
 
             $timesheet->save();
+
+            // Re-detectar conflitos após a edição (somente quando há horários definidos)
+            if ($timesheet->start_time && $timesheet->end_time) {
+                $overlappingIds = Timesheet::where('user_id', $timesheet->user_id)
+                    ->where('date', $timesheet->date)
+                    ->where('id', '!=', $timesheet->id)
+                    ->whereNotIn('status', [Timesheet::STATUS_REJECTED])
+                    ->whereNotNull('start_time')
+                    ->whereNotNull('end_time')
+                    ->where('start_time', '<', $timesheet->end_time)
+                    ->where('end_time', '>', $timesheet->start_time)
+                    ->pluck('id');
+
+                if ($overlappingIds->isNotEmpty()) {
+                    $timesheet->status = Timesheet::STATUS_CONFLICTED;
+                    $timesheet->save();
+                    Timesheet::whereIn('id', $overlappingIds)
+                        ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED])
+                        ->update(['status' => Timesheet::STATUS_CONFLICTED]);
+                }
+            }
+
+            // Resolver conflitos obsoletos para o mesmo usuário/data
+            $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
 
             DB::commit();
 
@@ -1350,6 +1376,7 @@ class TimesheetController extends Controller
         }
 
         if ($timesheet->approve($user)) {
+            $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
             $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
 
             return response()->json([
@@ -1429,6 +1456,7 @@ class TimesheetController extends Controller
         }
 
         if ($timesheet->reject($user, $request->reason)) {
+            $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
             $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
 
             return response()->json([
@@ -1742,6 +1770,11 @@ class TimesheetController extends Controller
      * @param int|null $excludeTimesheetId ID do timesheet a excluir do cálculo (útil na edição)
      * @return JsonResponse|null Retorna erro se não houver saldo suficiente, null se OK
      */
+    private function resolveStaleConflicts(int $userId, string $date): void
+    {
+        Timesheet::resolveStaleConflicts($userId, $date);
+    }
+
     private function validateHoursBalance(Project $project, int $userId, float $hoursToAdd, ?int $excludeTimesheetId = null): ?JsonResponse
     {
         Log::info('Iniciando validação de saldo de horas', [

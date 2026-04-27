@@ -295,6 +295,7 @@ class Timesheet extends Model
     public function canBeApproved(): bool
     {
         return $this->status === self::STATUS_PENDING ||
+               $this->status === self::STATUS_CONFLICTED ||
                $this->status === self::STATUS_ADJUSTMENT_REQUESTED;
     }
 
@@ -472,5 +473,34 @@ class Timesheet extends Model
         $this->rejection_reason = null;
 
         return $this->save();
+    }
+
+    /**
+     * Reavalia todos os timesheets conflitados do usuário na data informada.
+     * Se um conflitado não tem mais sobreposição com nenhum outro, volta para pending.
+     */
+    public static function resolveStaleConflicts(int $userId, string $date): void
+    {
+        static::where('user_id', $userId)
+            ->where('date', $date)
+            ->where('status', self::STATUS_CONFLICTED)
+            ->whereNotNull('start_time')
+            ->whereNotNull('end_time')
+            ->get()
+            ->each(function ($ts) {
+                $stillConflicts = static::where('user_id', $ts->user_id)
+                    ->where('date', $ts->date)
+                    ->where('id', '!=', $ts->id)
+                    ->whereNotIn('status', [self::STATUS_REJECTED])
+                    ->whereNotNull('start_time')
+                    ->whereNotNull('end_time')
+                    ->where('start_time', '<', $ts->end_time)
+                    ->where('end_time', '>', $ts->start_time)
+                    ->exists();
+                if (!$stillConflicts) {
+                    $ts->status = self::STATUS_PENDING;
+                    $ts->save();
+                }
+            });
     }
 }

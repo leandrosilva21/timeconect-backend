@@ -326,6 +326,11 @@ class ApprovalController extends Controller
                 }
             }
 
+            // Resolver conflitos obsoletos para cada usuário/data processado
+            foreach (Timesheet::whereIn('id', $timesheetIds)->get()->unique(fn($t) => $t->user_id . '_' . $t->date) as $t) {
+                Timesheet::resolveStaleConflicts($t->user_id, $t->date);
+            }
+
             DB::commit();
 
             return response()->json([
@@ -378,6 +383,12 @@ class ApprovalController extends Controller
                     $results['errors'][] = "Sem permissão ou erro ao rejeitar timesheet $timesheetId";
                 }
             }
+
+            // Resolver conflitos obsoletos para cada usuário/data processado
+            foreach (Timesheet::whereIn('id', $timesheetIds)->get()->unique(fn($t) => $t->user_id . '_' . $t->date) as $t) {
+                Timesheet::resolveStaleConflicts($t->user_id, $t->date);
+            }
+
             DB::commit();
             return response()->json([
                 'success' => true,

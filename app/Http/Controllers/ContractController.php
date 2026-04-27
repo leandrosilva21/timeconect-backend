@@ -424,7 +424,10 @@ class ContractController extends Controller
             'contractType:id,name',
             'serviceType:id,name',
         ])->where(function ($q) use ($demandProjectIds) {
-            $q->whereNotNull('contract_id');
+            $q->where(function ($inner) {
+                $inner->whereNotNull('contract_id')
+                      ->whereHas('contract', fn($c) => $c->whereNull('sustentacao_column'));
+            });
             if (!empty($demandProjectIds)) {
                 $q->orWhereIn('id', $demandProjectIds);
             }
@@ -475,7 +478,6 @@ class ContractController extends Controller
                 'serviceType:id,name',
             ])
             ->whereNotNull('sustentacao_column')
-            ->whereNull('project_id')
             ->orderBy('kanban_order')
             ->get();
 
@@ -710,7 +712,6 @@ class ContractController extends Controller
                     'project_id'            => $project->id,
                     'generated_at'          => now(),
                     'generated_by_id'       => auth()->id(),
-                    'status'                => Contract::STATUS_ATIVO,
                     'sustentacao_column'    => $toColumn,
                     'kanban_coordinator_id' => null,
                     'kanban_status'         => Contract::KANBAN_INICIO_AUTORIZADO,

@@ -559,7 +559,7 @@ class TimesheetController extends Controller
         }
 
         // Verificações de duplicado/sobreposição só fazem sentido quando há horários definidos
-        if (!$hasTotalHours && $request->start_time && $request->end_time) {
+        if ($request->start_time && $request->end_time) {
         // Verificar se já existe um apontamento duplicado para o mesmo usuário, data, projeto e horário
         $existingTimesheet = Timesheet::where('user_id', $timesheetUserId)
             ->where('project_id', $request->project_id)

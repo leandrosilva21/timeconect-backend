@@ -43,7 +43,7 @@ class ProjectCodeService
                 $seq->last_sequence += 1;
                 $padded = str_pad($seq->last_sequence, 3, '0', STR_PAD_LEFT);
                 $code   = $prefix . $padded . '-' . $year;
-            } while (Project::where('code', $code)->exists());
+            } while (Project::withTrashed()->where('code', $code)->exists());
 
             $seq->save();
             $sequence = $seq->last_sequence;
@@ -90,7 +90,7 @@ class ProjectCodeService
      */
     public function resolveForStore(?string $requestCode, Customer $customer, ?Project $parent): array
     {
-        if ($requestCode && !Project::where('code', $requestCode)->exists()) {
+        if ($requestCode && !Project::withTrashed()->where('code', $requestCode)->exists()) {
             return [
                 'code'           => $requestCode,
                 'proj_sequence'  => null,

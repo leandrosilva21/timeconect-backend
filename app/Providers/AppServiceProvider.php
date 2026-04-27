@@ -39,5 +39,10 @@ class AppServiceProvider extends ServiceProvider
         // Registrar Policies
         Gate::policy(Timesheet::class, TimesheetPolicy::class);
         Gate::policy(Project::class, ProjectPolicy::class);
+
+        // Redirecionar disco 'public' para R2 quando credenciais estiverem configuradas
+        if (config('filesystems.disks.r2.key')) {
+            config(['filesystems.disks.public' => config('filesystems.disks.r2')]);
+        }
     }
 }

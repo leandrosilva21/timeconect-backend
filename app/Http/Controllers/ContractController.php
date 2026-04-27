@@ -476,6 +476,11 @@ class ContractController extends Controller
                 'customer:id,name',
                 'contractType:id,name',
                 'serviceType:id,name',
+                'project.customer:id,name',
+                'project.coordinators',
+                'project.consultants',
+                'project.contractType:id,name',
+                'project.serviceType:id,name',
             ])
             ->whereNotNull('sustentacao_column')
             ->orderBy('kanban_order')
@@ -499,7 +504,12 @@ class ContractController extends Controller
                         $col = 'sust_bh_fixo';
                     }
                 }
-                $formatted = $this->formatKanbanCard($c);
+                if ($c->project_id && $c->project) {
+                    $formatted = $this->formatProjectCard($c->project);
+                    $formatted['kanban_order'] = $c->kanban_order;
+                } else {
+                    $formatted = $this->formatKanbanCard($c);
+                }
                 $formatted['sustentacao_column'] = $col;
                 $sustentacaoGroups[$col][] = $formatted;
                 $sustentacaoAutoCards[] = $formatted;

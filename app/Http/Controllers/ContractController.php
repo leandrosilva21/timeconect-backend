@@ -678,12 +678,11 @@ class ContractController extends Controller
             }
             $contract->update($updateData);
 
-            // Quando um contrato novo_projeto chega em inicio_autorizado, avança a requisição vinculada
-            if ($contract->getOriginal('kanban_status') === 'novo_projeto') {
-                \App\Models\ContractRequest::where('linked_contract_id', $contract->id)
-                    ->where('kanban_column', 'req_inicio_autorizado')
-                    ->update(['kanban_column' => 'inicio_autorizado']);
-            }
+            // Avança a requisição vinculada para 'inicio_autorizado' sempre que o contrato é autorizado.
+            // Cobre dois caminhos: novo_projeto → inicio_autorizado E req_inicio_autorizado → inicio_autorizado.
+            \App\Models\ContractRequest::where('linked_contract_id', $contract->id)
+                ->where('kanban_column', 'req_inicio_autorizado')
+                ->update(['kanban_column' => 'inicio_autorizado']);
         } elseif (in_array($toColumn, $validDemandColumns)) {
             $contract->update([
                 'kanban_status'         => $toColumn,

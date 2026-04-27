@@ -90,7 +90,7 @@ class ProjectCodeService
      */
     public function resolveForStore(?string $requestCode, Customer $customer, ?Project $parent): array
     {
-        if ($requestCode) {
+        if ($requestCode && !Project::where('code', $requestCode)->exists()) {
             return [
                 'code'           => $requestCode,
                 'proj_sequence'  => null,

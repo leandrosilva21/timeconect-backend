@@ -7,8 +7,8 @@ use Illuminate\Support\Facades\DB;
 
 class CleanHomologData extends Command
 {
-    protected $signature   = 'db:clean-homolog {--force : Pula confirmação}';
-    protected $description = 'Limpa todos os dados de movimentação do ambiente de homologação';
+    protected $signature   = 'db:clean-homolog {--force : Pula confirmação} {--only-timesheets : Limpa apenas timesheets e reversões}';
+    protected $description = 'Limpa dados de movimentação do ambiente de homologação';
 
     public function handle(): int
     {
@@ -17,6 +17,22 @@ class CleanHomologData extends Command
                 $this->info('Cancelado.');
                 return 0;
             }
+        }
+
+        if ($this->option('only-timesheets')) {
+            $this->info('Limpando apenas timesheets...');
+            DB::statement('SET session_replication_role = replica;');
+            foreach (['timesheet_reversals', 'timesheets'] as $table) {
+                try {
+                    DB::statement("TRUNCATE TABLE \"{$table}\" RESTART IDENTITY CASCADE");
+                    $this->line("  ✓ {$table}");
+                } catch (\Exception $e) {
+                    $this->warn("  ⚠ {$table}: " . $e->getMessage());
+                }
+            }
+            DB::statement('SET session_replication_role = DEFAULT;');
+            $this->info('Limpeza de timesheets concluída.');
+            return 0;
         }
 
         $this->info('Limpando dados...');

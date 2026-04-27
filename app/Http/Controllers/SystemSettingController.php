@@ -51,24 +51,14 @@ class SystemSettingController extends Controller
                 ], 403);
             }
 
-            // Buscar todas as configurações agrupadas
             $settings = SystemSetting::all();
 
-            // Organizar por grupo
-            $grouped = [];
+            $flat = [];
             foreach ($settings as $setting) {
-                if (!isset($grouped[$setting->group])) {
-                    $grouped[$setting->group] = [];
-                }
-
-                $grouped[$setting->group][$setting->key] = [
-                    'value' => $this->castValue($setting->value, $setting->type),
-                    'type' => $setting->type,
-                    'description' => $setting->description,
-                ];
+                $flat[$setting->key] = $this->castValue($setting->value, $setting->type);
             }
 
-            return response()->json($grouped);
+            return response()->json($flat);
         } catch (\Exception $e) {
             Log::error('Erro ao listar configurações do sistema: ' . $e->getMessage(), [
                 'exception' => $e,

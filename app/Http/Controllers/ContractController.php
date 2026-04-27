@@ -597,45 +597,7 @@ class ContractController extends Controller
                 $contract->load(['customer', 'contacts', 'attachments']);
 
                 DB::transaction(function () use ($contract, $coordinatorId, $request) {
-                    $codeService   = new ProjectCodeService();
-                    $parentProject = $contract->parent_project_id ? Project::find($contract->parent_project_id) : null;
-                    $codeData      = $codeService->resolveForStore($contract->project_code_preview, $contract->customer, $parentProject);
-                    $projectName   = $contract->project_name ?: ($contract->customer->name . ' — ' . now()->format('m/Y'));
-
-                    $project = Project::create(array_merge($codeData, [
-                        'name'                   => $projectName,
-                        'parent_project_id'      => $contract->parent_project_id,
-                        'customer_id'            => $contract->customer_id,
-                        'service_type_id'        => $contract->service_type_id,
-                        'contract_type_id'       => $contract->contract_type_id,
-                        'sold_hours'             => $contract->horas_contratadas,
-                        'project_value'          => $contract->valor_projeto,
-                        'hourly_rate'            => $contract->valor_hora,
-                        'additional_hourly_rate' => $contract->hora_adicional,
-                        'coordinator_hours'      => $contract->pct_horas_coordenador !== null ? (int) $contract->pct_horas_coordenador : null,
-                        'consultant_hours'       => $contract->horas_consultor,
-                        'start_date'             => $contract->expectativa_inicio,
-                        'status'                 => Project::STATUS_AWAITING_START,
-                        'contract_id'            => $contract->id,
-                        'tipo_alocacao'          => $contract->tipo_alocacao,
-                        'architect_id'           => $contract->architect_id,
-                        'condicao_pagamento'     => $contract->condicao_pagamento,
-                        'observacoes_contrato'   => $contract->observacoes,
-                        'cobra_despesa_cliente'  => $contract->cobra_despesa_cliente,
-                        'executivo_conta_id'     => $contract->executivo_conta_id,
-                        'vendedor_id'            => $contract->vendedor_id,
-                    ]));
-
-                    foreach ($contract->contacts as $c) {
-                        ProjectContact::create(['project_id' => $project->id, 'contract_contact_id' => $c->id, 'name' => $c->name, 'cargo' => $c->cargo, 'email' => $c->email, 'phone' => $c->phone]);
-                    }
-                    foreach ($contract->attachments as $a) {
-                        ProjectAttachment::create(['project_id' => $project->id, 'contract_attachment_id' => $a->id]);
-                    }
-
-                    if ($coordinatorId) {
-                        $project->coordinators()->attach($coordinatorId);
-                    }
+                    $project = $this->createProjectFromContract($contract, $coordinatorId);
 
                     $contract->update([
                         'project_id'            => $project->id,
@@ -736,15 +698,33 @@ class ContractController extends Controller
             return response()->json(['message' => 'Apenas admin ou coordenador de sustentação pode mover este card.'], 403);
         }
 
-        $toColumn = $request->input('to_column');
+        $toColumn  = $request->input('to_column');
+        $projectId = $contract->project_id;
 
-        $contract->update([
-            'sustentacao_column'    => $toColumn,
-            'kanban_coordinator_id' => null,
-            'kanban_status'         => Contract::KANBAN_INICIO_AUTORIZADO,
-        ]);
+        if (!$projectId) {
+            $contract->load(['customer', 'contacts', 'attachments']);
+            DB::transaction(function () use ($contract, $toColumn, &$projectId) {
+                $project   = $this->createProjectFromContract($contract, null);
+                $projectId = $project->id;
+                $contract->update([
+                    'project_id'            => $project->id,
+                    'generated_at'          => now(),
+                    'generated_by_id'       => auth()->id(),
+                    'status'                => Contract::STATUS_ATIVO,
+                    'sustentacao_column'    => $toColumn,
+                    'kanban_coordinator_id' => null,
+                    'kanban_status'         => Contract::KANBAN_INICIO_AUTORIZADO,
+                ]);
+            });
+        } else {
+            $contract->update([
+                'sustentacao_column'    => $toColumn,
+                'kanban_coordinator_id' => null,
+                'kanban_status'         => Contract::KANBAN_INICIO_AUTORIZADO,
+            ]);
+        }
 
-        return response()->json(['ok' => true, 'sustentacao_column' => $toColumn]);
+        return response()->json(['ok' => true, 'sustentacao_column' => $toColumn, 'project_id' => $projectId, 'project_created' => !$contract->getOriginal('project_id')]);
     }
 
     public function requestPlanDecision(Request $request, \App\Models\ContractRequest $contractRequest): JsonResponse
@@ -1005,5 +985,50 @@ class ContractController extends Controller
             'is_complete'           => true,
             'created_at'            => $project->created_at,
         ];
+    }
+
+    private function createProjectFromContract(Contract $contract, ?int $coordinatorId): Project
+    {
+        $codeService   = new ProjectCodeService();
+        $parentProject = $contract->parent_project_id ? Project::find($contract->parent_project_id) : null;
+        $codeData      = $codeService->resolveForStore($contract->project_code_preview, $contract->customer, $parentProject);
+        $projectName   = $contract->project_name ?: ($contract->customer->name . ' — ' . now()->format('m/Y'));
+
+        $project = Project::create(array_merge($codeData, [
+            'name'                   => $projectName,
+            'parent_project_id'      => $contract->parent_project_id,
+            'customer_id'            => $contract->customer_id,
+            'service_type_id'        => $contract->service_type_id,
+            'contract_type_id'       => $contract->contract_type_id,
+            'sold_hours'             => $contract->horas_contratadas,
+            'project_value'          => $contract->valor_projeto,
+            'hourly_rate'            => $contract->valor_hora,
+            'additional_hourly_rate' => $contract->hora_adicional,
+            'coordinator_hours'      => $contract->pct_horas_coordenador !== null ? (int) $contract->pct_horas_coordenador : null,
+            'consultant_hours'       => $contract->horas_consultor,
+            'start_date'             => $contract->expectativa_inicio,
+            'status'                 => Project::STATUS_AWAITING_START,
+            'contract_id'            => $contract->id,
+            'tipo_alocacao'          => $contract->tipo_alocacao,
+            'architect_id'           => $contract->architect_id,
+            'condicao_pagamento'     => $contract->condicao_pagamento,
+            'observacoes_contrato'   => $contract->observacoes,
+            'cobra_despesa_cliente'  => $contract->cobra_despesa_cliente,
+            'executivo_conta_id'     => $contract->executivo_conta_id,
+            'vendedor_id'            => $contract->vendedor_id,
+        ]));
+
+        foreach ($contract->contacts as $c) {
+            ProjectContact::create(['project_id' => $project->id, 'contract_contact_id' => $c->id, 'name' => $c->name, 'cargo' => $c->cargo, 'email' => $c->email, 'phone' => $c->phone]);
+        }
+        foreach ($contract->attachments as $a) {
+            ProjectAttachment::create(['project_id' => $project->id, 'contract_attachment_id' => $a->id]);
+        }
+
+        if ($coordinatorId) {
+            $project->coordinators()->attach($coordinatorId);
+        }
+
+        return $project;
     }
 }

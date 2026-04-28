@@ -48,23 +48,27 @@
             <td class="pd-header" align="center"
               style="padding:40px 40px 32px;background-color:#111113;border-bottom:1px solid rgba(255,255,255,0.06);">
 
-              {{-- Logo Minutor (4 barras) --}}
+              {{-- Logo Minutor inline com o nome --}}
               <table role="presentation" border="0" cellpadding="0" cellspacing="0">
                 <tr>
-                  <td align="center" style="padding-bottom:14px;">
-                    <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzYiIGhlaWdodD0iMzYiIHZpZXdCb3g9IjAgMCAyOCAyOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB4PSIyIiB5PSIxNS40IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjkiIHJ4PSIxLjYiIGZpbGw9IiMwMEY1RkYiLz48cmVjdCB4PSI5LjEiIHk9IjkuNCIgd2lkdGg9IjQuMiIgaGVpZ2h0PSIxNSIgcng9IjEuNiIgZmlsbD0iIzAwRjVGRiIvPjxyZWN0IHg9IjE2LjIiIHk9IjQiIHdpZHRoPSI0LjIiIGhlaWdodD0iMjAiIHJ4PSIxLjYiIGZpbGw9IiMwMEY1RkYiLz48cmVjdCB4PSIyMy4yIiB5PSIxMS42IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjEyIiByeD0iMS42IiBmaWxsPSIjMDBGNUZGIi8+PC9zdmc+" alt="Minutor" width="36" height="36" style="display:inline-block;width:36px;height:36px;" />
+                  <td align="center" style="padding-bottom:16px;">
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="vertical-align:middle;padding-right:10px;">
+                          <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzYiIGhlaWdodD0iMzYiIHZpZXdCb3g9IjAgMCAyOCAyOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB4PSIyIiB5PSIxNS40IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjkiIHJ4PSIxLjYiIGZpbGw9IiMwMEY1RkYiLz48cmVjdCB4PSI5LjEiIHk9IjkuNCIgd2lkdGg9IjQuMiIgaGVpZ2h0PSIxNSIgcng9IjEuNiIgZmlsbD0iIzAwRjVGRiIvPjxyZWN0IHg9IjE2LjIiIHk9IjQiIHdpZHRoPSI0LjIiIGhlaWdodD0iMjAiIHJ4PSIxLjYiIGZpbGw9IiMwMEY1RkYiLz48cmVjdCB4PSIyMy4yIiB5PSIxMS42IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjEyIiByeD0iMS42IiBmaWxsPSIjMDBGNUZGIi8+PC9zdmc+" alt="Minutor" width="32" height="32" style="display:block;width:32px;height:32px;" />
+                        </td>
+                        <td style="vertical-align:middle;">
+                          <span class="logo-text"
+                            style="font-size:26px;font-weight:700;letter-spacing:-0.5px;color:#FFFFFF;font-family:'Segoe UI',Arial,sans-serif;">
+                            Minutor
+                          </span>
+                        </td>
+                      </tr>
+                    </table>
                   </td>
                 </tr>
                 <tr>
                   <td align="center">
-                    <span class="logo-text"
-                      style="font-size:26px;font-weight:700;letter-spacing:-0.5px;color:#FFFFFF;font-family:'Segoe UI',Arial,sans-serif;">
-                      Minutor
-                    </span>
-                  </td>
-                </tr>
-                <tr>
-                  <td align="center" style="padding-top:4px;">
                     <span style="font-size:12px;color:#71717A;letter-spacing:0.5px;text-transform:uppercase;
                       font-family:'Segoe UI',Arial,sans-serif;">
                       Gestão de Projetos e Serviços
@@ -258,7 +262,7 @@
                 </tr>
                 <tr>
                   <td align="center">
-                    <img src="data:image/png;base64,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" alt="ERPServ" width="100" height="50" style="display:inline-block;width:100px;height:50px;" />
+                    <img src="data:image/png;base64,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" alt="ERPServ" width="100" height="50" style="display:inline-block;width:100px;height:50px;filter:brightness(0) invert(1);-webkit-filter:brightness(0) invert(1);" />
                   </td>
                 </tr>
               </table>

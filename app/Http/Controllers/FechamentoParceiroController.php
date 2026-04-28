@@ -268,6 +268,7 @@ class FechamentoParceiroController extends Controller
             'user:id,name',
             'project:id,name,code,contract_type_id',
             'project.contractType:id,name,code',
+            'project.customer:id,name',
         ])
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_titulo', 'movidesk_tickets.solicitante as ticket_solicitante')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
@@ -290,6 +291,7 @@ class FechamentoParceiroController extends Controller
                     'data'                 => $t->date->format('Y-m-d'),
                     'user_id'              => $t->user_id,
                     'consultor'            => $t->user->name ?? '—',
+                    'cliente'              => $t->project->customer->name ?? '—',
                     'projeto'              => $t->project->name ?? '—',
                     'projeto_codigo'       => $t->project->code ?? '—',
                     'tipo_contrato_code'   => $ct?->code ?? 'outros',

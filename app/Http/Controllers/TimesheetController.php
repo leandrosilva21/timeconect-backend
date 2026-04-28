@@ -378,7 +378,7 @@ class TimesheetController extends Controller
 
         // Resposta PO-UI (com cache Redis de 60s por usuário + filtros)
         try {
-            $result = $this->cachedList($request, 'timesheets', function () use ($query, $perPage, $page) {
+            $result = $this->cachedList($request, 'timesheets', function () use ($query, $perPage, $page, $hideClientPct) {
                 $totalEffortMinutes = (int) (clone $query)->sum('effort_minutes');
                 $totalHours   = intdiv($totalEffortMinutes, 60);
                 $totalMinutes = $totalEffortMinutes % 60;

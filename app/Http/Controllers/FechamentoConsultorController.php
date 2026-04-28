@@ -250,7 +250,7 @@ class FechamentoConsultorController extends Controller
             ->whereNull('timesheets.deleted_at')
             ->orderBy('timesheets.date')
             ->get()
-            ->map(function ($t) use ($effectiveRate) {
+            ->map(function ($t) use ($effectiveRate, $isBancoHoras) {
                 $solicitanteRaw = $t->ticket_solicitante;
                 if (is_string($solicitanteRaw)) $solicitanteRaw = json_decode($solicitanteRaw, true);
                 $solicitante = is_array($solicitanteRaw) ? ($solicitanteRaw['name'] ?? null) : null;

@@ -682,6 +682,105 @@ class UserController extends Controller
     }
 
     /**
+     * Reenvia o e-mail de boas-vindas para um único usuário, gerando nova senha temporária.
+     */
+    public function resendWelcome(int $id): JsonResponse
+    {
+        $currentUser = Auth::user();
+
+        if (!$currentUser->isAdmin() && !$currentUser->hasAccess('users.reset_password')) {
+            return $this->accessDeniedResponse('Você não tem permissão para reenviar e-mails de boas-vindas');
+        }
+
+        $user = User::find($id);
+        if (!$user) {
+            return $this->notFoundResponse('Usuário não encontrado');
+        }
+
+        DB::beginTransaction();
+        try {
+            $temporaryPassword = $this->generateTemporaryPassword();
+            $user->setTemporaryPassword($temporaryPassword, 24);
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return $this->serverErrorResponse('Erro ao gerar senha: ' . $e->getMessage());
+        }
+
+        $emailSent = false;
+        try {
+            $user->notify(new WelcomeNotification($temporaryPassword));
+            $emailSent = true;
+        } catch (\Exception $e) {
+            \Log::error('Falha ao reenviar e-mail de boas-vindas', [
+                'user_id' => $user->id,
+                'error'   => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json([
+            'message'    => 'E-mail de boas-vindas reenviado com sucesso',
+            'email_sent' => $emailSent,
+        ]);
+    }
+
+    /**
+     * Reenvia o e-mail de boas-vindas em massa para uma lista de usuários.
+     */
+    public function resendWelcomeBulk(Request $request): JsonResponse
+    {
+        $currentUser = Auth::user();
+
+        if (!$currentUser->isAdmin() && !$currentUser->hasAccess('users.reset_password')) {
+            return $this->accessDeniedResponse('Você não tem permissão para reenviar e-mails de boas-vindas');
+        }
+
+        $validator = Validator::make($request->all(), [
+            'user_ids'   => 'required|array|min:1|max:100',
+            'user_ids.*' => 'integer|exists:users,id',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->validationErrorResponse($validator->errors()->all());
+        }
+
+        $userIds = $validator->validated()['user_ids'];
+        $users   = User::whereIn('id', $userIds)->get();
+
+        $results = ['sent' => 0, 'failed' => 0, 'errors' => []];
+
+        foreach ($users as $user) {
+            DB::beginTransaction();
+            try {
+                $temporaryPassword = $this->generateTemporaryPassword();
+                $user->setTemporaryPassword($temporaryPassword, 24);
+                DB::commit();
+            } catch (\Exception $e) {
+                DB::rollBack();
+                $results['failed']++;
+                $results['errors'][] = "Erro ao gerar senha para {$user->email}: " . $e->getMessage();
+                continue;
+            }
+
+            try {
+                $user->notify(new WelcomeNotification($temporaryPassword));
+                $results['sent']++;
+            } catch (\Exception $e) {
+                $results['failed']++;
+                $results['errors'][] = "Falha ao enviar e-mail para {$user->email}: " . $e->getMessage();
+                \Log::error('Falha no resend welcome bulk', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+            }
+        }
+
+        return response()->json([
+            'message' => "{$results['sent']} e-mail(s) enviado(s), {$results['failed']} falha(s)",
+            'sent'    => $results['sent'],
+            'failed'  => $results['failed'],
+            'errors'  => $results['errors'],
+        ]);
+    }
+
+    /**
      * Gera uma senha temporária para o próprio usuário autenticado
      * (sem precisar de permissão de admin).
      */

@@ -383,6 +383,13 @@ class TimesheetController extends Controller
                 $totalHours   = intdiv($totalEffortMinutes, 60);
                 $totalMinutes = $totalEffortMinutes % 60;
 
+                $totalConsultantExtraMinutes = (int) round(
+                    (clone $query)
+                        ->whereNotNull('consultant_extra_pct')
+                        ->get(['effort_minutes', 'consultant_extra_pct'])
+                        ->sum(fn ($t) => $t->effort_minutes * ((float) $t->consultant_extra_pct / 100))
+                );
+
                 $timesheets = $query->paginate($perPage, ['*'], 'page', $page);
 
                 $items = collect($timesheets->items())->map(function ($ts) use ($hideClientPct) {
@@ -397,10 +404,11 @@ class TimesheetController extends Controller
                 })->all();
 
                 return [
-                    'hasNext'            => $timesheets->hasMorePages(),
-                    'items'              => $items,
-                    'totalEffortMinutes' => $totalEffortMinutes,
-                    'totalEffortHours'   => sprintf('%d:%02d', $totalHours, $totalMinutes),
+                    'hasNext'                       => $timesheets->hasMorePages(),
+                    'items'                         => $items,
+                    'totalEffortMinutes'             => $totalEffortMinutes,
+                    'totalEffortHours'               => sprintf('%d:%02d', $totalHours, $totalMinutes),
+                    'totalConsultantExtraMinutes'    => $totalConsultantExtraMinutes,
                 ];
             });
 

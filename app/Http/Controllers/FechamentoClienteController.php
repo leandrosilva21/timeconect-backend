@@ -190,9 +190,10 @@ class FechamentoClienteController extends Controller
             $project    = $projects[$projId] ?? null;
             $hourlyRate = (float) ($project?->hourly_rate ?? 0);
 
-            $horasProjeto = 0.0;
-            $totalProjeto = 0.0;
-            $apontamentos = [];
+            $horasProjeto  = 0.0;
+            $basesProjeto  = 0.0;
+            $totalProjeto  = 0.0;
+            $apontamentos  = [];
 
             foreach ($pts as $t) {
                 $solicitanteRaw = $t->ticket_solicitante;
@@ -206,6 +207,7 @@ class FechamentoClienteController extends Controller
                 $valorTs = round($horas * $hourlyRate * $mult, 2);
 
                 $horasProjeto += $horas;
+                $basesProjeto += $horas * $hourlyRate;
                 $totalProjeto += $valorTs;
 
                 $apontamentos[] = [
@@ -226,6 +228,7 @@ class FechamentoClienteController extends Controller
 
             $horasProjeto = round($horasProjeto, 2);
             $totalProjeto = round($totalProjeto, 2);
+            $basesProjeto = round($basesProjeto, 2);
 
             $projetos[] = [
                 'projeto_id'     => $projId,
@@ -235,6 +238,7 @@ class FechamentoClienteController extends Controller
                 'horas'          => $horasProjeto,
                 'valor_hora'     => $hourlyRate,
                 'total_receita'  => $totalProjeto,
+                'extra_receita'  => round($totalProjeto - $basesProjeto, 2),
                 'apontamentos'   => $apontamentos,
             ];
 

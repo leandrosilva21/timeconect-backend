@@ -228,8 +228,11 @@ class FechamentoController extends Controller
             $projectValue  = (float) ($project->project_value ?? 0);
 
             // Calcular receita conforme tipo de contrato
+            $extraReceita = 0.0;
             if (str_contains($contractCode, 'on_demand') || str_contains($contractCode, 'ondemand')) {
+                $baseReceita      = round($totalHours * $hourlyRate, 2);
                 $totalReceita     = round((float) ($weightedMinutesByProject[$project->id] ?? 0) / 60 * $hourlyRate, 2);
+                $extraReceita     = round($totalReceita - $baseReceita, 2);
                 $tipoFaturamento  = 'on_demand';
                 $valorBase        = $hourlyRate;
             } elseif (str_contains($contractCode, 'banco_horas') || str_contains($contractCode, 'bank_hours')) {
@@ -260,6 +263,7 @@ class FechamentoController extends Controller
                 'horas_aprovadas' => $totalHours,
                 'valor_base'      => $valorBase,
                 'total_receita'   => $totalReceita,
+                'extra_receita'   => $extraReceita,
             ];
         }
 
@@ -582,8 +586,11 @@ class FechamentoController extends Controller
             $hourlyRate   = (float) ($project->hourly_rate ?? 0);
             $projectValue = (float) ($project->project_value ?? 0);
 
+            $extraReceita = 0.0;
             if (str_contains($contractCode, 'on_demand') || str_contains($contractCode, 'ondemand')) {
+                $baseReceita     = round($totalHours * $hourlyRate, 2);
                 $totalReceita    = round((float) ($weightedMinutesByProject[$project->id] ?? 0) / 60 * $hourlyRate, 2);
+                $extraReceita    = round($totalReceita - $baseReceita, 2);
                 $tipoFaturamento = 'on_demand';
                 $valorBase       = $hourlyRate;
             } elseif (str_contains($contractCode, 'banco_horas') || str_contains($contractCode, 'bank_hours')) {
@@ -611,6 +618,7 @@ class FechamentoController extends Controller
                 'horas_aprovadas' => $totalHours,
                 'valor_base'      => $valorBase,
                 'total_receita'   => $totalReceita,
+                'extra_receita'   => $extraReceita,
             ];
         }
 

@@ -30,6 +30,12 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {
             if ($request->expectsJson() && !($e instanceof \Illuminate\Validation\ValidationException)) {
+                if ($e instanceof \Illuminate\Auth\AuthenticationException) {
+                    return response()->json(['message' => 'Unauthenticated.'], 401);
+                }
+                if ($e instanceof \Illuminate\Auth\Access\AuthorizationException) {
+                    return response()->json(['message' => 'This action is unauthorized.'], 403);
+                }
                 return response()->json([
                     'message' => $e->getMessage() ?: get_class($e),
                     'file'    => basename($e->getFile()),

@@ -7,8 +7,27 @@
 ## Stack
 
 - **Laravel 10** + PHP 8.2
-- **PostgreSQL** (Render managed DB)
-- **Deploy:** manual pelo dashboard do Render após `git push origin main`
+- **PostgreSQL** (auto-hospedado no VPS de produção)
+- **Deploy:** três ambientes — ver tabela abaixo
+
+## Ambientes
+
+| Ambiente | Frontend | Backend | Obs |
+|---|---|---|---|
+| **Homolog** | Render | Render | Repos `ricardooliveiraerpserv/*-homolog` |
+| **Produção** | `app.minutor.com.br` | `api.minutor.com.br` | VPS 178.18.246.162, Docker Compose, Cloudflare Tunnel |
+| **Produção antiga** | Render (inativo) | Render (inativo) | — |
+
+### Deploy em produção (VPS)
+```bash
+# No servidor (SSH fabio@178.18.246.162)
+git -C /opt/minutor/backend pull origin main
+git -C /opt/minutor/frontend pull origin main
+docker build -t minutor-backend:latest /opt/minutor/backend
+docker build --build-arg NEXT_PUBLIC_API_URL=https://api.minutor.com.br -t minutor-frontend:latest /opt/minutor/frontend
+cd /opt/minutor && docker compose up -d --no-deps backend queue-worker scheduler frontend
+docker exec minutor-backend php artisan migrate --force
+```
 
 ---
 

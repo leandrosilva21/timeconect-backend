@@ -38,6 +38,7 @@ class Timesheet extends Model
         'observation',
         'ticket',
         'origin',
+        'is_billable_only',
         'status',
         'rejection_reason',
         'reviewed_by',
@@ -53,6 +54,7 @@ class Timesheet extends Model
      */
     protected $casts = [
         'date' => 'date:Y-m-d',
+        'is_billable_only' => 'boolean',
         'start_time' => 'datetime:H:i',
         'end_time' => 'datetime:H:i',
         'effort_minutes' => 'integer',

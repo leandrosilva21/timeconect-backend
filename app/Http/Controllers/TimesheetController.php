@@ -181,6 +181,11 @@ class TimesheetController extends Controller
             }
         }
 
+        // Consultor (e demais perfis não-admin/não-coordenador) não vê apontamentos somente faturáveis
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            $query->where('timesheets.is_billable_only', false);
+        }
+
         // Filtros PO-UI
         if ($request->filled('project_id')) {
             $query->forProject($request->project_id);
@@ -682,6 +687,9 @@ class TimesheetController extends Controller
             $timesheet->customer_id = $project->customer_id;
             $timesheet->status = $hasConflict ? Timesheet::STATUS_CONFLICTED : Timesheet::STATUS_PENDING;
             $timesheet->origin = 'web'; // Origem: criação manual via webapp
+            $timesheet->is_billable_only = $user->isAdmin()
+                && $timesheetUserId !== Auth::id()
+                && $request->boolean('is_billable_only', false);
 
             if ($request->hasFile('attachment')) {
                 $file = $request->file('attachment');
@@ -1196,6 +1204,14 @@ class TimesheetController extends Controller
             }
 
             $timesheet->fill($validatedData);
+
+            // Atualiza is_billable_only apenas quando admin edita apontamento de outro usuário
+            $targetUserId = $validatedData['user_id'] ?? $timesheet->user_id;
+            if ($user->isAdmin() && $request->has('is_billable_only')) {
+                $timesheet->is_billable_only = $user->isAdmin()
+                    && $targetUserId != Auth::id()
+                    && $request->boolean('is_billable_only', false);
+            }
 
             if ($request->hasFile('attachment')) {
                 if ($timesheet->attachment_path) {

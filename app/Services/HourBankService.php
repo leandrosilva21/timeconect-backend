@@ -75,6 +75,7 @@ class HourBankService
         $query = Timesheet::where('user_id', $userId)
             ->whereYear('date', $year)
             ->whereMonth('date', $month)
+            ->where('is_billable_only', false)
             ->whereIn('status', ['approved', 'pending']);
 
         if ($startDate) {

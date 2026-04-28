@@ -1447,7 +1447,7 @@ class ProjectController extends Controller
     public function costSummary(Project $project): JsonResponse
     {
         // Carregar dados relacionados do projeto principal
-        $project->load(['timesheets.user', 'consultants', 'childProjects.timesheets.user', 'childProjects.contractType', 'hourContributions']);
+        $project->load(['timesheets.user', 'consultants', 'childProjects.timesheets.user', 'childProjects.contractType', 'hourContributions', 'contractType']);
 
         // Informações básicas do projeto
         $projectInfo = [
@@ -1643,7 +1643,9 @@ class ProjectController extends Controller
         }
 
         $aportesTotal     = $project->hourContributions->sum(fn($c) => (float)$c->contributed_hours * (float)$c->hourly_rate);
-        $isOnDemand       = $project->tipo_faturamento === 'on_demand';
+        $isOnDemand       = $project->tipo_faturamento === 'on_demand'
+            || ($project->contractType && stripos($project->contractType->name, 'on demand') !== false)
+            || ($project->contractType && stripos($project->contractType->name, 'on_demand') !== false);
         $projectRevenue   = $isOnDemand
             ? round($totalLoggedHours * (float)($project->hourly_rate ?? 0), 2)
             : (float)($project->project_value ?? 0);

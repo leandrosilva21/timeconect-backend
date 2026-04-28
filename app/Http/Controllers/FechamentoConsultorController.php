@@ -252,6 +252,8 @@ class FechamentoConsultorController extends Controller
                 return [
                     'id'                   => $t->id,
                     'data'                 => $t->date->format('Y-m-d'),
+                    'start_time'           => $t->start_time,
+                    'end_time'             => $t->end_time,
                     'projeto'              => $t->project->name ?? '—',
                     'projeto_codigo'       => $t->project->code ?? '—',
                     'cliente'              => $t->project->customer->name ?? '—',

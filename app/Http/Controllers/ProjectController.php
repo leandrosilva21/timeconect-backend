@@ -1447,7 +1447,7 @@ class ProjectController extends Controller
     public function costSummary(Project $project): JsonResponse
     {
         // Carregar dados relacionados do projeto principal
-        $project->load(['timesheets.user', 'consultants', 'childProjects.timesheets.user', 'childProjects.contractType']);
+        $project->load(['timesheets.user', 'consultants', 'childProjects.timesheets.user', 'childProjects.contractType', 'hourContributions']);
 
         // Informações básicas do projeto
         $projectInfo = [
@@ -1641,16 +1641,27 @@ class ProjectController extends Controller
             ];
         }
 
-        $projectValue = $project->project_value ?? 0;
-        $margin = $projectValue - $totalCost;
-        $marginPercentage = $projectValue > 0 ? round(($margin / $projectValue) * 100, 2) : 0;
+        $aportesTotal     = $project->hourContributions->sum(fn($c) => (float)$c->contributed_hours * (float)$c->hourly_rate);
+        $receitaTotal     = (float)($project->project_value ?? 0) + $aportesTotal;
+        $initialCost      = (float)($project->initial_cost ?? 0);
+        $custoTotal       = $initialCost + $totalCost;
+        $margin           = $receitaTotal - $custoTotal;
+        $marginPercentage = $receitaTotal > 0 ? round(($margin / $receitaTotal) * 100, 2) : 0;
+        $coordPct         = (float)($project->coordinator_percentage ?? 0);
+        $valorCoordenador = $coordPct > 0 ? round($margin * ($coordPct / 100), 2) : 0;
 
         $costCalculation = [
             'total_cost' => round($totalCost, 2),
             'approved_cost' => round($approvedCost, 2),
             'pending_cost' => round($pendingCost, 2),
+            'aportes_total' => round($aportesTotal, 2),
+            'receita_total' => round($receitaTotal, 2),
+            'custo_operacional' => round($totalCost, 2),
+            'custo_total' => round($custoTotal, 2),
             'margin' => round($margin, 2),
             'margin_percentage' => $marginPercentage,
+            'coordinator_percentage' => $coordPct,
+            'valor_coordenador' => $valorCoordenador,
         ];
 
         return response()->json([

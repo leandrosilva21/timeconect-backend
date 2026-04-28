@@ -700,9 +700,10 @@ class TimesheetController extends Controller
             // Percentuais de acréscimo — somente admin/coordenador, pós-criação
             // (em criação os campos não são enviados pelo frontend, mas protege caso venham)
             if ($user->isAdmin() || $user->isCoordenador()) {
-                $timesheet->client_extra_pct     = $request->filled('client_extra_pct')
+                $timesheet->client_extra_pct = $request->filled('client_extra_pct')
                     ? (float) $request->input('client_extra_pct') : null;
-                $timesheet->consultant_extra_pct = $request->filled('consultant_extra_pct')
+                // Fat. Admin nunca tem % consultor
+                $timesheet->consultant_extra_pct = (!$timesheet->is_billable_only && $request->filled('consultant_extra_pct'))
                     ? (float) $request->input('consultant_extra_pct') : null;
             }
 
@@ -1238,7 +1239,9 @@ class TimesheetController extends Controller
                         ? (float) $request->input('client_extra_pct') : null;
                 }
                 if ($request->has('consultant_extra_pct')) {
-                    $timesheet->consultant_extra_pct = $request->filled('consultant_extra_pct')
+                    // Fat. Admin nunca tem % consultor — força null
+                    $isBillableOnly = $timesheet->is_billable_only;
+                    $timesheet->consultant_extra_pct = (!$isBillableOnly && $request->filled('consultant_extra_pct'))
                         ? (float) $request->input('consultant_extra_pct') : null;
                 }
             }
@@ -1419,7 +1422,18 @@ class TimesheetController extends Controller
         if (empty($update)) {
             return response()->json(['success' => true, 'updated' => 0]);
         }
-        Timesheet::whereIn('id', $data['ids'])->update($update);
+        // Fat. Admin nunca recebe % consultor — força null nos is_billable_only=true
+        if (isset($update['consultant_extra_pct'])) {
+            Timesheet::whereIn('id', $data['ids'])->where('is_billable_only', false)->update($update);
+            if ($update['consultant_extra_pct'] !== null) {
+                Timesheet::whereIn('id', $data['ids'])->where('is_billable_only', true)
+                    ->update(array_merge($update, ['consultant_extra_pct' => null]));
+            } else {
+                Timesheet::whereIn('id', $data['ids'])->where('is_billable_only', true)->update($update);
+            }
+        } else {
+            Timesheet::whereIn('id', $data['ids'])->update($update);
+        }
         return response()->json(['success' => true, 'updated' => count($data['ids'])]);
     }
 

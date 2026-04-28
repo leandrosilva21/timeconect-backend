@@ -126,11 +126,12 @@ class HourBankService
         int     $year,
         int     $month,
         float   $dailyHours = 8.0,
-        ?string $startDate  = null
+        ?string $startDate  = null,
+        float   $additionalWorkedHours = 0.0
     ): array {
         $workingData     = $this->calculateWorkingDays($year, $month, $startDate);
         $expectedHours   = round($workingData['working_days'] * $dailyHours, 2);
-        $workedHours     = $this->getWorkedHours($userId, $year, $month, $startDate);
+        $workedHours     = round($this->getWorkedHours($userId, $year, $month, $startDate) + $additionalWorkedHours, 2);
         $previousBalance = $this->getPreviousBalance($userId, $year, $month, $startDate);
 
         $monthBalance = round($workedHours - $expectedHours, 2);

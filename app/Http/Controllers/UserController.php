@@ -682,9 +682,10 @@ class UserController extends Controller
     }
 
     /**
-     * Reenvia o e-mail de boas-vindas para um único usuário, gerando nova senha temporária.
+     * Reenvia o e-mail de boas-vindas para um único usuário.
+     * Aceita senha predefinida via body; se omitida, gera uma nova automaticamente.
      */
-    public function resendWelcome(int $id): JsonResponse
+    public function resendWelcome(Request $request, int $id): JsonResponse
     {
         $currentUser = Auth::user();
 
@@ -692,19 +693,28 @@ class UserController extends Controller
             return $this->accessDeniedResponse('Você não tem permissão para reenviar e-mails de boas-vindas');
         }
 
+        $validator = Validator::make($request->all(), [
+            'password' => 'nullable|string|min:6',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->validationErrorResponse($validator->errors()->all());
+        }
+
         $user = User::find($id);
         if (!$user) {
             return $this->notFoundResponse('Usuário não encontrado');
         }
 
+        $temporaryPassword = $request->input('password') ?: $this->generateTemporaryPassword();
+
         DB::beginTransaction();
         try {
-            $temporaryPassword = $this->generateTemporaryPassword();
             $user->setTemporaryPassword($temporaryPassword, 24);
             DB::commit();
         } catch (\Exception $e) {
             DB::rollBack();
-            return $this->serverErrorResponse('Erro ao gerar senha: ' . $e->getMessage());
+            return $this->serverErrorResponse('Erro ao definir senha: ' . $e->getMessage());
         }
 
         $emailSent = false;

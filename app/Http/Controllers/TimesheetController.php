@@ -186,6 +186,9 @@ class TimesheetController extends Controller
             $query->where('timesheets.is_billable_only', false);
         }
 
+        // Percentuais de acréscimo: consultor e cliente nunca veem client_extra_pct
+        $hideClientPct = !$user->isAdmin() && !$user->isCoordenador() && $user->type !== 'administrativo';
+
         // Filtros PO-UI
         if ($request->filled('project_id')) {
             $query->forProject($request->project_id);
@@ -382,7 +385,10 @@ class TimesheetController extends Controller
 
                 $timesheets = $query->paginate($perPage, ['*'], 'page', $page);
 
-                $items = collect($timesheets->items())->map(function ($ts) {
+                $items = collect($timesheets->items())->map(function ($ts) use ($hideClientPct) {
+                    if ($hideClientPct) {
+                        $ts->makeHidden(['client_extra_pct']);
+                    }
                     $arr = $ts->toArray();
                     if (isset($arr['ticket_solicitante']) && is_string($arr['ticket_solicitante'])) {
                         $arr['ticket_solicitante'] = json_decode($arr['ticket_solicitante'], true);
@@ -691,6 +697,15 @@ class TimesheetController extends Controller
                 && $timesheetUserId !== Auth::id()
                 && $request->boolean('is_billable_only', false);
 
+            // Percentuais de acréscimo — somente admin/coordenador, pós-criação
+            // (em criação os campos não são enviados pelo frontend, mas protege caso venham)
+            if ($user->isAdmin() || $user->isCoordenador()) {
+                $timesheet->client_extra_pct     = $request->filled('client_extra_pct')
+                    ? (float) $request->input('client_extra_pct') : null;
+                $timesheet->consultant_extra_pct = $request->filled('consultant_extra_pct')
+                    ? (float) $request->input('consultant_extra_pct') : null;
+            }
+
             if ($request->hasFile('attachment')) {
                 $file = $request->file('attachment');
                 $filename = time() . '_' . $file->getClientOriginalName();
@@ -822,6 +837,9 @@ class TimesheetController extends Controller
             }
 
             $step = 'serialize';
+            if ($user->isConsultor() || $user->isCliente()) {
+                $timesheet->makeHidden(['client_extra_pct']);
+            }
             return response()->json(['success' => true, 'data' => $timesheet]);
 
         } catch (\Exception $e) {
@@ -1213,6 +1231,18 @@ class TimesheetController extends Controller
                     && $request->boolean('is_billable_only', false);
             }
 
+            // Atualiza percentuais de acréscimo (admin/coordenador)
+            if ($user->isAdmin() || $user->isCoordenador()) {
+                if ($request->has('client_extra_pct')) {
+                    $timesheet->client_extra_pct = $request->filled('client_extra_pct')
+                        ? (float) $request->input('client_extra_pct') : null;
+                }
+                if ($request->has('consultant_extra_pct')) {
+                    $timesheet->consultant_extra_pct = $request->filled('consultant_extra_pct')
+                        ? (float) $request->input('consultant_extra_pct') : null;
+                }
+            }
+
             if ($request->hasFile('attachment')) {
                 if ($timesheet->attachment_path) {
                     \Storage::disk('public')->delete($timesheet->attachment_path);
@@ -1371,6 +1401,28 @@ class TimesheetController extends Controller
      *     )
      * )
      */
+    public function bulkExtraPct(\Illuminate\Http\Request $request): \Illuminate\Http\JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Não autorizado'], 403);
+        }
+        $data = $request->validate([
+            'ids'                  => 'required|array|min:1',
+            'ids.*'                => 'integer|exists:timesheets,id',
+            'client_extra_pct'     => 'nullable|numeric|min:0|max:999.99',
+            'consultant_extra_pct' => 'nullable|numeric|min:0|max:999.99',
+        ]);
+        $update = [];
+        if ($request->has('client_extra_pct'))     $update['client_extra_pct']     = $data['client_extra_pct'];
+        if ($request->has('consultant_extra_pct')) $update['consultant_extra_pct'] = $data['consultant_extra_pct'];
+        if (empty($update)) {
+            return response()->json(['success' => true, 'updated' => 0]);
+        }
+        Timesheet::whereIn('id', $data['ids'])->update($update);
+        return response()->json(['success' => true, 'updated' => count($data['ids'])]);
+    }
+
     public function approve(int $id): JsonResponse
     {
         $user = Auth::user();

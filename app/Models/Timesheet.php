@@ -39,6 +39,8 @@ class Timesheet extends Model
         'ticket',
         'origin',
         'is_billable_only',
+        'client_extra_pct',
+        'consultant_extra_pct',
         'status',
         'rejection_reason',
         'reviewed_by',
@@ -54,7 +56,9 @@ class Timesheet extends Model
      */
     protected $casts = [
         'date' => 'date:Y-m-d',
-        'is_billable_only' => 'boolean',
+        'is_billable_only'    => 'boolean',
+        'client_extra_pct'    => 'decimal:2',
+        'consultant_extra_pct'=> 'decimal:2',
         'start_time' => 'datetime:H:i',
         'end_time' => 'datetime:H:i',
         'effort_minutes' => 'integer',

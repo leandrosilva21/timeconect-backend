@@ -140,7 +140,11 @@ class FechamentoController extends Controller
             $rateType      = $hist['rate_type'] ?? 'hourly';
             $effectiveRate = $this->effectiveHourlyRate($hourlyRate, $rateType);
             $totalHours    = round($userTs->sum('effort_minutes') / 60, 2);
-            $totalCost     = round($totalHours * $effectiveRate, 2);
+            $totalCost     = round($userTs->sum(function ($t) use ($effectiveRate) {
+                $horas = $t->effort_minutes / 60;
+                $mult  = 1 + (((float) ($t->consultant_extra_pct ?? 0)) / 100);
+                return $horas * $effectiveRate * $mult;
+            }), 2);
 
             $row = [
                 'user_id'        => $userId,
@@ -206,6 +210,15 @@ class FechamentoController extends Controller
             ->groupBy('project_id')
             ->pluck('total_minutes', 'project_id');
 
+        // Weighted revenue applying client_extra_pct (for on_demand billing)
+        $weightedMinutesByProject = Timesheet::whereBetween('date', [$from, $to])
+            ->whereNotIn('status', $excludeStatuses)
+            ->whereNull('deleted_at')
+            ->whereIn('project_id', $projectIds)
+            ->selectRaw('project_id, SUM(effort_minutes * (1 + COALESCE(client_extra_pct, 0) / 100.0)) as weighted_minutes')
+            ->groupBy('project_id')
+            ->pluck('weighted_minutes', 'project_id');
+
         $rows = [];
         foreach ($projects as $project) {
             $totalMinutes  = (int) ($hoursByProject[$project->id] ?? 0);
@@ -216,7 +229,7 @@ class FechamentoController extends Controller
 
             // Calcular receita conforme tipo de contrato
             if (str_contains($contractCode, 'on_demand') || str_contains($contractCode, 'ondemand')) {
-                $totalReceita     = round($totalHours * $hourlyRate, 2);
+                $totalReceita     = round((float) ($weightedMinutesByProject[$project->id] ?? 0) / 60 * $hourlyRate, 2);
                 $tipoFaturamento  = 'on_demand';
                 $valorBase        = $hourlyRate;
             } elseif (str_contains($contractCode, 'banco_horas') || str_contains($contractCode, 'bank_hours')) {
@@ -500,7 +513,11 @@ class FechamentoController extends Controller
             $rateType      = $hist['rate_type'] ?? 'hourly';
             $effectiveRate = $this->effectiveHourlyRate($hourlyRate, $rateType);
             $totalHours    = round($userTs->sum('effort_minutes') / 60, 2);
-            $totalCost     = round($totalHours * $effectiveRate, 2);
+            $totalCost     = round($userTs->sum(function ($t) use ($effectiveRate) {
+                $horas = $t->effort_minutes / 60;
+                $mult  = 1 + (((float) ($t->consultant_extra_pct ?? 0)) / 100);
+                return $horas * $effectiveRate * $mult;
+            }), 2);
 
             $row = [
                 'user_id'        => $userId,
@@ -550,6 +567,14 @@ class FechamentoController extends Controller
             ->groupBy('project_id')
             ->pluck('total_minutes', 'project_id');
 
+        $weightedMinutesByProject = Timesheet::whereBetween('date', [$from, $to])
+            ->whereNotIn('status', $excludeStatuses)
+            ->whereNull('deleted_at')
+            ->whereIn('project_id', $projectIds)
+            ->selectRaw('project_id, SUM(effort_minutes * (1 + COALESCE(client_extra_pct, 0) / 100.0)) as weighted_minutes')
+            ->groupBy('project_id')
+            ->pluck('weighted_minutes', 'project_id');
+
         $rows = [];
         foreach ($projects as $project) {
             $totalHours   = round((int) ($hoursByProject[$project->id] ?? 0) / 60, 2);
@@ -558,7 +583,7 @@ class FechamentoController extends Controller
             $projectValue = (float) ($project->project_value ?? 0);
 
             if (str_contains($contractCode, 'on_demand') || str_contains($contractCode, 'ondemand')) {
-                $totalReceita    = round($totalHours * $hourlyRate, 2);
+                $totalReceita    = round((float) ($weightedMinutesByProject[$project->id] ?? 0) / 60 * $hourlyRate, 2);
                 $tipoFaturamento = 'on_demand';
                 $valorBase       = $hourlyRate;
             } elseif (str_contains($contractCode, 'banco_horas') || str_contains($contractCode, 'bank_hours')) {

@@ -187,30 +187,45 @@ class FechamentoClienteController extends Controller
         $totalGeral = 0.0;
 
         foreach ($byProject as $projId => $pts) {
-            $project      = $projects[$projId] ?? null;
-            $hourlyRate   = (float) ($project?->hourly_rate ?? 0);
-            $horasProjeto = round($pts->sum('effort_minutes') / 60, 2);
+            $project    = $projects[$projId] ?? null;
+            $hourlyRate = (float) ($project?->hourly_rate ?? 0);
 
-            $apontamentos = $pts->map(function ($t) {
+            $horasProjeto = 0.0;
+            $totalProjeto = 0.0;
+            $apontamentos = [];
+
+            foreach ($pts as $t) {
                 $solicitanteRaw = $t->ticket_solicitante;
                 if (is_string($solicitanteRaw)) {
                     $solicitanteRaw = json_decode($solicitanteRaw, true);
                 }
                 $solicitante = is_array($solicitanteRaw) ? ($solicitanteRaw['name'] ?? null) : null;
 
-                return [
-                    'id'          => $t->id,
-                    'data'        => $t->date->format('Y-m-d'),
-                    'colaborador' => $t->user?->name ?? '—',
-                    'horas'       => round($t->effort_minutes / 60, 2),
-                    'ticket'      => $t->ticket,
-                    'titulo'      => $t->ticket_titulo,
-                    'solicitante' => $solicitante,
-                    'observacao'  => $t->observation,
-                ];
-            })->values()->toArray();
+                $horas   = $t->effort_minutes / 60;
+                $mult    = 1 + (((float) ($t->client_extra_pct ?? 0)) / 100);
+                $valorTs = round($horas * $hourlyRate * $mult, 2);
 
-            $totalProjeto = round($horasProjeto * $hourlyRate, 2);
+                $horasProjeto += $horas;
+                $totalProjeto += $valorTs;
+
+                $apontamentos[] = [
+                    'id'               => $t->id,
+                    'data'             => $t->date->format('Y-m-d'),
+                    'colaborador'      => $t->user?->name ?? '—',
+                    'horas'            => round($horas, 2),
+                    'ticket'           => $t->ticket,
+                    'titulo'           => $t->ticket_titulo,
+                    'solicitante'      => $solicitante,
+                    'observacao'       => $t->observation,
+                    'client_extra_pct' => $t->client_extra_pct ? (float) $t->client_extra_pct : null,
+                    'valor_extra'      => $t->client_extra_pct
+                        ? round($horas * $hourlyRate * ((float) $t->client_extra_pct / 100), 2)
+                        : null,
+                ];
+            }
+
+            $horasProjeto = round($horasProjeto, 2);
+            $totalProjeto = round($totalProjeto, 2);
 
             $projetos[] = [
                 'projeto_id'     => $projId,
@@ -423,6 +438,15 @@ class FechamentoClienteController extends Controller
             ->groupBy('project_id')
             ->pluck('total_minutes', 'project_id');
 
+        // Weighted revenue per project applying client_extra_pct (on_demand billing)
+        $weightedMinutesByProject = Timesheet::whereBetween('date', [$from, $to])
+            ->whereNotIn('status', $excludeStatuses)
+            ->whereNull('deleted_at')
+            ->whereIn('project_id', $projectIds)
+            ->selectRaw('project_id, SUM(effort_minutes * (1 + COALESCE(client_extra_pct, 0) / 100.0)) as weighted_minutes')
+            ->groupBy('project_id')
+            ->pluck('weighted_minutes', 'project_id');
+
         // Apontamentos detalhados por projeto (se solicitado)
         $timesheetsByProject = [];
         if ($includeTimesheets) {
@@ -464,7 +488,7 @@ class FechamentoClienteController extends Controller
 
             if ($isOnDemand) {
                 $tipoFaturamento = 'on_demand';
-                $totalReceita    = round($totalHours * $hourlyRate, 2);
+                $totalReceita    = round((float) ($weightedMinutesByProject[$project->id] ?? 0) / 60 * $hourlyRate, 2);
                 $valorBase       = $hourlyRate;
                 $excessHoras     = 0.0;
                 $excessValor     = 0.0;

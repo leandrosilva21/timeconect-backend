@@ -51,6 +51,17 @@ class FechamentoConsultorController extends Controller
             ->groupBy('user_id')
             ->pluck('total_minutes', 'user_id');
 
+        // Per-timesheet extras (consultant_extra_pct) — only where set
+        $extraTimesheetsByUser = Timesheet::whereBetween('date', [$from, $to])
+            ->whereNotIn('status', $excludeStatuses)
+            ->whereNull('deleted_at')
+            ->where('is_billable_only', false)
+            ->whereNotNull('consultant_extra_pct')
+            ->whereIn('user_id', $users->pluck('id'))
+            ->select('user_id', 'effort_minutes', 'consultant_extra_pct')
+            ->get()
+            ->groupBy('user_id');
+
         $hourBankService = app(HourBankService::class);
 
         // Dias úteis do mês cheio — calculado uma vez, compartilhado por todos
@@ -67,6 +78,12 @@ class FechamentoConsultorController extends Controller
             $rateType         = $hist['rate_type'] ?? 'hourly';
             $effectiveRate    = $this->effectiveHourlyRate($hourlyRate, $rateType);
             $horasTrabalhadas = round((int) ($hoursByUser[$user->id] ?? 0) / 60, 2);
+
+            $extrasConsultant = round(
+                ($extraTimesheetsByUser->get($user->id, collect()))
+                    ->sum(fn ($t) => ($t->effort_minutes / 60) * $effectiveRate * ((float) $t->consultant_extra_pct / 100)),
+                2
+            );
 
             $base = [
                 'user_id'           => $user->id,
@@ -114,7 +131,8 @@ class FechamentoConsultorController extends Controller
                         'dias_uteis_cheio'   => $totalWorkingDays,
                         'data_inicio'        => $startDate,
                         'horas_a_pagar'      => $horasMinimas,
-                        'total'              => round($horasMinimas * $effectiveRate, 2),
+                        'total_extras'       => $extrasConsultant,
+                        'total'              => round($horasMinimas * $effectiveRate + $extrasConsultant, 2),
                     ]);
                     break;
 
@@ -136,7 +154,7 @@ class FechamentoConsultorController extends Controller
                     $valorHoraExtra   = $hourlyRate > 0 ? round($hourlyRate / 180, 4) : 0;
                     $horasExtras      = $calc['paid_hours']; // accumulated > 0, senão 0
                     $totalExtra       = round($horasExtras * $valorHoraExtra, 2);
-                    $total            = round($fixedSalary + $totalExtra, 2);
+                    $total            = round($fixedSalary + $totalExtra + $extrasConsultant, 2);
 
                     $bancoHoras[] = array_merge($base, [
                         'daily_hours'         => (float) ($user->daily_hours ?? 8.0),
@@ -152,6 +170,7 @@ class FechamentoConsultorController extends Controller
                         'horas_extras'        => $horasExtras,
                         'total_extra'         => $totalExtra,
                         'horas_a_pagar'       => $horasExtras,
+                        'total_extras'        => $extrasConsultant,
                         'total'               => $total,
                     ]);
                     break;
@@ -167,7 +186,8 @@ class FechamentoConsultorController extends Controller
                         'dias_uteis_periodo' => $periodDays,
                         'dias_uteis_cheio'   => $totalWorkingDays,
                         'data_inicio'        => $startDate,
-                        'total'              => $salarioProportional,
+                        'total_extras'       => $extrasConsultant,
+                        'total'              => round($salarioProportional + $extrasConsultant, 2),
                     ]);
                     break;
             }
@@ -201,6 +221,13 @@ class FechamentoConsultorController extends Controller
 
         $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED];
 
+        $user          = User::find($userId, ['id', 'name', 'hourly_rate', 'rate_type']);
+        $hist          = UserHourlyRateLog::effectiveValuesAt((int) $userId, $user, $from);
+        $effectiveRate = $this->effectiveHourlyRate(
+            (float) ($hist['hourly_rate'] ?? $user?->hourly_rate ?? 0),
+            $hist['rate_type'] ?? $user?->rate_type ?? 'hourly'
+        );
+
         $rows = Timesheet::with([
             'project:id,name,code,contract_type_id',
             'project.contractType:id,name,code',
@@ -215,25 +242,31 @@ class FechamentoConsultorController extends Controller
             ->whereNull('timesheets.deleted_at')
             ->orderBy('timesheets.date')
             ->get()
-            ->map(function ($t) {
+            ->map(function ($t) use ($effectiveRate) {
                 $solicitanteRaw = $t->ticket_solicitante;
                 if (is_string($solicitanteRaw)) $solicitanteRaw = json_decode($solicitanteRaw, true);
                 $solicitante = is_array($solicitanteRaw) ? ($solicitanteRaw['name'] ?? null) : null;
 
+                $horas = $t->effort_minutes / 60;
+
                 return [
-                    'id'                 => $t->id,
-                    'data'               => $t->date->format('Y-m-d'),
-                    'projeto'            => $t->project->name ?? '—',
-                    'projeto_codigo'     => $t->project->code ?? '—',
-                    'cliente'            => $t->project->customer->name ?? '—',
-                    'tipo_contrato_code' => $t->project?->contractType?->code ?? 'outros',
-                    'tipo_contrato_nome' => $t->project?->contractType?->name ?? 'Outros',
-                    'horas'              => round($t->effort_minutes / 60, 2),
-                    'status'             => $t->status,
-                    'ticket'             => $t->ticket,
-                    'titulo'             => $t->ticket_titulo,
-                    'solicitante'        => $solicitante,
-                    'observacao'         => $t->observation,
+                    'id'                   => $t->id,
+                    'data'                 => $t->date->format('Y-m-d'),
+                    'projeto'              => $t->project->name ?? '—',
+                    'projeto_codigo'       => $t->project->code ?? '—',
+                    'cliente'              => $t->project->customer->name ?? '—',
+                    'tipo_contrato_code'   => $t->project?->contractType?->code ?? 'outros',
+                    'tipo_contrato_nome'   => $t->project?->contractType?->name ?? 'Outros',
+                    'horas'                => round($horas, 2),
+                    'status'               => $t->status,
+                    'ticket'               => $t->ticket,
+                    'titulo'               => $t->ticket_titulo,
+                    'solicitante'          => $solicitante,
+                    'observacao'           => $t->observation,
+                    'consultant_extra_pct' => $t->consultant_extra_pct ? (float) $t->consultant_extra_pct : null,
+                    'valor_extra'          => $t->consultant_extra_pct
+                        ? round($horas * $effectiveRate * ((float) $t->consultant_extra_pct / 100), 2)
+                        : null,
                 ];
             });
 

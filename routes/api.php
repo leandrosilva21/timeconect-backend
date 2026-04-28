@@ -411,6 +411,7 @@ Route::prefix('v1')->group(function () {
         // Rotas que qualquer usuário autenticado pode acessar (com lógica de permissão no controller)
         Route::get('/timesheets', [TimesheetController::class, 'index'])->name('timesheets.index');
         Route::get('/timesheets/export', [TimesheetController::class, 'export'])->name('timesheets.export');
+        Route::put('/timesheets/bulk-extra-pct', [TimesheetController::class, 'bulkExtraPct'])->name('timesheets.bulk-extra-pct');
         Route::get('/timesheets/{timesheet}', [TimesheetController::class, 'show'])->name('timesheets.show');
 
         // Qualquer usuário autenticado (exceto Cliente — verificado no controller) pode criar apontamentos

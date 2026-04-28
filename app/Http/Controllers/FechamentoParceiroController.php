@@ -266,7 +266,7 @@ class FechamentoParceiroController extends Controller
 
         $rows = Timesheet::with([
             'user:id,name',
-            'project:id,name,code,contract_type_id',
+            'project:id,name,code,contract_type_id,customer_id',
             'project.contractType:id,name,code',
             'project.customer:id,name',
         ])

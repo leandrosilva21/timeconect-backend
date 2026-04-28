@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Holiday;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 
 class HolidayController extends Controller
 {
@@ -58,5 +59,51 @@ class HolidayController extends Controller
     {
         $holiday->delete();
         return response()->json(null, 204);
+    }
+
+    public function importFromApi(Request $request): JsonResponse
+    {
+        $year = (int) ($request->query('year') ?: now()->year);
+
+        $response = Http::timeout(10)
+            ->get("https://brasilapi.com.br/api/feriados/v1/{$year}");
+
+        if (!$response->successful()) {
+            return response()->json(['message' => 'Erro ao consultar a API de feriados.'], 502);
+        }
+
+        $imported = 0;
+        $skipped  = 0;
+
+        foreach ($response->json() as $item) {
+            if (($item['type'] ?? '') !== 'national') {
+                $skipped++;
+                continue;
+            }
+
+            Holiday::updateOrCreate(
+                ['date' => $item['date']],
+                [
+                    'name'   => $item['name'],
+                    'type'   => 'national',
+                    'state'  => null,
+                    'active' => true,
+                ]
+            );
+
+            $imported++;
+        }
+
+        $holidays = Holiday::whereYear('date', $year)
+            ->where('type', 'national')
+            ->orderBy('date')
+            ->get();
+
+        return response()->json([
+            'message'  => "{$imported} feriados importados para {$year}.",
+            'imported' => $imported,
+            'skipped'  => $skipped,
+            'items'    => $holidays,
+        ]);
     }
 }

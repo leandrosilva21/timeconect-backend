@@ -705,6 +705,7 @@ Route::prefix('v1')->group(function () {
         // 📅 FERIADOS
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/holidays', [HolidayController::class, 'index']);
+            Route::post('/holidays/import', [HolidayController::class, 'importFromApi']);
             Route::post('/holidays', [HolidayController::class, 'store']);
             Route::put('/holidays/{holiday}', [HolidayController::class, 'update']);
             Route::delete('/holidays/{holiday}', [HolidayController::class, 'destroy']);

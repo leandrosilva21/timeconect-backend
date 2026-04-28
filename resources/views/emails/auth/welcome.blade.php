@@ -1,299 +1,294 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" xmlns="http://www.w3.org/1999/xhtml">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bem-vindo(a) ao {{ config('app.name') }}</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f4f4f4;
-            color: #333;
-            line-height: 1.6;
-        }
-        
-        .container {
-            max-width: 600px;
-            margin: 0 auto;
-            background-color: #fff;
-            border-radius: 10px;
-            overflow: hidden;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-        
-        .header {
-            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-            color: white;
-            padding: 40px 30px;
-            text-align: center;
-        }
-        
-        .header h1 {
-            font-size: 32px;
-            margin-bottom: 10px;
-            font-weight: 300;
-        }
-        
-        .header p {
-            font-size: 18px;
-            opacity: 0.9;
-        }
-        
-        .welcome-icon {
-            font-size: 48px;
-            margin-bottom: 20px;
-        }
-        
-        .content {
-            padding: 40px 30px;
-        }
-        
-        .greeting {
-            font-size: 24px;
-            margin-bottom: 20px;
-            color: #2c3e50;
-            text-align: center;
-        }
-        
-        .message {
-            font-size: 16px;
-            margin-bottom: 25px;
-            color: #555;
-            text-align: center;
-        }
-        
-        .features {
-            background-color: #f8f9fa;
-            border-radius: 8px;
-            padding: 30px;
-            margin: 30px 0;
-        }
-        
-        .features h3 {
-            color: #2c3e50;
-            margin-bottom: 20px;
-            font-size: 20px;
-            text-align: center;
-        }
-        
-        .feature-list {
-            list-style: none;
-        }
-        
-        .feature-list li {
-            margin-bottom: 15px;
-            padding-left: 30px;
-            position: relative;
-            font-size: 15px;
-            color: #555;
-        }
-        
-        .feature-list li::before {
-            content: '✅';
-            position: absolute;
-            left: 0;
-            top: 0;
-            font-size: 16px;
-        }
-        
-        .button {
-            text-align: center;
-            margin: 30px 0;
-        }
-        
-        .btn {
-            display: inline-block;
-            padding: 15px 35px;
-            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-            color: white;
-            text-decoration: none;
-            border-radius: 5px;
-            font-size: 16px;
-            font-weight: 500;
-            transition: transform 0.2s;
-        }
-        
-        .btn:hover {
-            transform: translateY(-2px);
-        }
-        
-        .credentials {
-            background-color: #e3f2fd;
-            border-left: 4px solid #2196f3;
-            padding: 20px;
-            margin: 25px 0;
-            border-radius: 0 5px 5px 0;
-        }
-        
-        .credentials h4 {
-            color: #1976d2;
-            margin-bottom: 15px;
-            font-size: 16px;
-        }
-        
-        .credentials p {
-            margin-bottom: 8px;
-            font-size: 14px;
-        }
-        
-        .credentials strong {
-            color: #333;
-        }
-        
-        .next-steps {
-            background-color: #fff3e0;
-            border-left: 4px solid #ff9800;
-            padding: 20px;
-            margin: 25px 0;
-            border-radius: 0 5px 5px 0;
-        }
-        
-        .next-steps h4 {
-            color: #f57c00;
-            margin-bottom: 15px;
-            font-size: 16px;
-        }
-        
-        .next-steps ol {
-            margin-left: 20px;
-        }
-        
-        .next-steps li {
-            margin-bottom: 8px;
-            font-size: 14px;
-            color: #666;
-        }
-        
-        .footer {
-            background-color: #f8f9fa;
-            padding: 30px;
-            text-align: center;
-            border-top: 1px solid #e9ecef;
-        }
-        
-        .footer p {
-            font-size: 14px;
-            color: #666;
-            margin-bottom: 10px;
-        }
-        
-        .footer .company {
-            font-weight: 600;
-            color: #2c3e50;
-        }
-        
-        .social-links {
-            margin-top: 20px;
-        }
-        
-        .social-links a {
-            color: #28a745;
-            text-decoration: none;
-            margin: 0 10px;
-            font-size: 14px;
-        }
-        
-        @media (max-width: 600px) {
-            .container {
-                margin: 10px;
-                border-radius: 5px;
-            }
-            
-            .content {
-                padding: 20px;
-            }
-            
-            .header {
-                padding: 30px 20px;
-            }
-            
-            .header h1 {
-                font-size: 28px;
-            }
-            
-            .greeting {
-                font-size: 20px;
-            }
-            
-            .features {
-                padding: 20px;
-            }
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="color-scheme" content="dark">
+  <meta name="supported-color-schemes" content="dark">
+  <title>Bem-vindo(a) ao Minutor</title>
+  <!--[if mso]>
+  <noscript>
+    <xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>
+  </noscript>
+  <![endif]-->
+  <style>
+    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
+    body { margin: 0 !important; padding: 0 !important; background-color: #0A0A0B; }
+    a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !important; }
+    @media only screen and (max-width: 620px) {
+      .wrapper { width: 100% !important; }
+      .card { border-radius: 12px !important; margin: 0 12px !important; }
+      .pd-main { padding: 28px 20px !important; }
+      .pd-header { padding: 32px 20px 24px !important; }
+      .logo-text { font-size: 22px !important; }
+      .h1 { font-size: 22px !important; }
+      .btn-td { padding: 28px 20px !important; }
+      .hide-mobile { display: none !important; }
+    }
+  </style>
 </head>
-<body>
-    <div class="container">
-        <div class="header">
-            <div class="welcome-icon">🎉</div>
-            <h1>Bem-vindo(a)!</h1>
-            <p>Sua conta foi criada com sucesso</p>
-        </div>
-        
-        <div class="content">
-            <div class="greeting">
-                Olá, {{ $user->name ?? 'Usuário' }}!
-            </div>
-            
-            <div class="message">
-                É um prazer ter você conosco no <strong>{{ config('app.name') }}</strong>. Sua conta foi criada com sucesso e você já pode começar a usar nosso sistema de gestão empresarial.
-            </div>
-            
-            @if(isset($temporaryPassword))
-            <div class="credentials">
-                <h4>🔐 Suas credenciais de acesso:</h4>
-                <p><strong>Email:</strong> {{ $user->email }}</p>
-                <p><strong>Senha temporária:</strong> {{ $temporaryPassword }}</p>
-                <p style="margin-top: 15px; color: #d32f2f; font-size: 13px;">
-                    <strong>⚠️ Importante:</strong> Altere sua senha no primeiro acesso por segurança.
-                </p>
-            </div>
-            @endif
-            
-            <div class="features">
-                <h3>🚀 O que você pode fazer agora:</h3>
-                <ul class="feature-list">
-                    <li>Gerenciar projetos e clientes</li>
-                    <li>Controlar horas trabalhadas</li>
-                    <li>Acompanhar despesas</li>
-                    <li>Gerar relatórios detalhados</li>
-                    <li>Colaborar com sua equipe</li>
-                    <li>Monitorar performance</li>
-                </ul>
-            </div>
-            
-            <div class="button">
-                <a href="{{ config('app.frontend_url') }}" class="btn">Acessar o Sistema</a>
-            </div>
-            
-            <div class="next-steps">
-                <h4>📋 Primeiros passos recomendados:</h4>
-                <ol>
-                    <li>Faça login no sistema</li>
-                    <li>Complete seu perfil</li>
-                    <li>Configure suas preferências</li>
-                    <li>Explore as funcionalidades</li>
-                    <li>Entre em contato se precisar de ajuda</li>
-                </ol>
-            </div>
-        </div>
-        
-        <div class="footer">
-            <p class="company">{{ config('app.name') }}</p>
-            <p>Sistema de Gestão Empresarial</p>
-            <p>Precisa de ajuda? Entre em contato com nosso suporte.</p>
-            
-            <div class="social-links">
-                <a href="#">Documentação</a>
-                <a href="#">Suporte</a>
-                <a href="#">FAQ</a>
-            </div>
-        </div>
-    </div>
+<body style="margin:0;padding:0;background-color:#0A0A0B;font-family:'Segoe UI',Arial,sans-serif;">
+
+  {{-- Outer wrapper --}}
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
+    style="background-color:#0A0A0B;min-height:100vh;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+
+        {{-- Card container --}}
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600"
+          class="wrapper card"
+          style="background-color:#161618;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,0.06);">
+
+          {{-- ── HEADER ── --}}
+          <tr>
+            <td class="pd-header" align="center"
+              style="padding:40px 40px 32px;background-color:#111113;border-bottom:1px solid rgba(255,255,255,0.06);">
+
+              {{-- Logo Minutor (4 barras) --}}
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center" style="padding-bottom:14px;">
+                    <img src="{{ rtrim(config('app.frontend_url', 'https://app.minutor.com.br'), '/') }}/logo.png"
+                      alt="Minutor" width="44" height="44"
+                      style="display:inline-block;width:44px;height:44px;object-fit:contain;" />
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center">
+                    <span class="logo-text"
+                      style="font-size:26px;font-weight:700;letter-spacing:-0.5px;color:#FFFFFF;font-family:'Segoe UI',Arial,sans-serif;">
+                      Minutor
+                    </span>
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="padding-top:4px;">
+                    <span style="font-size:12px;color:#71717A;letter-spacing:0.5px;text-transform:uppercase;
+                      font-family:'Segoe UI',Arial,sans-serif;">
+                      Gestão de Projetos e Serviços
+                    </span>
+                  </td>
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+
+          {{-- ── SAUDAÇÃO ── --}}
+          <tr>
+            <td class="pd-main" align="left" style="padding:36px 40px 0;">
+              <h1 class="h1"
+                style="margin:0 0 8px;font-size:24px;font-weight:700;color:#FFFFFF;
+                  font-family:'Segoe UI',Arial,sans-serif;line-height:1.3;">
+                Bem-vindo(a), {{ $user->name ?? 'usuário' }}!
+              </h1>
+              <p style="margin:0;font-size:15px;color:#A1A1AA;line-height:1.6;
+                font-family:'Segoe UI',Arial,sans-serif;">
+                Sua conta foi criada com sucesso. Você já pode acessar o sistema com as credenciais abaixo.
+              </p>
+            </td>
+          </tr>
+
+          {{-- ── CREDENCIAIS ── --}}
+          @if(isset($temporaryPassword))
+          <tr>
+            <td style="padding:24px 40px 0;">
+
+              {{-- Bloco de credenciais --}}
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
+                style="background-color:#1C1C1F;border-radius:12px;border:1px solid rgba(0,245,255,0.12);">
+                <tr>
+                  <td style="padding:6px 20px 0;">
+                    <span style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;
+                      color:#00F5FF;font-family:'Segoe UI',Arial,sans-serif;">
+                      Dados de acesso
+                    </span>
+                  </td>
+                </tr>
+
+                {{-- Email --}}
+                <tr>
+                  <td style="padding:12px 20px 0;">
+                    <span style="font-size:11px;color:#71717A;font-family:'Segoe UI',Arial,sans-serif;
+                      text-transform:uppercase;letter-spacing:0.5px;">E-mail</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:4px 20px 16px;">
+                    <span style="font-size:14px;color:#FFFFFF;font-weight:500;
+                      font-family:'Courier New',Courier,monospace;">
+                      {{ $user->email }}
+                    </span>
+                  </td>
+                </tr>
+
+                {{-- Divisor --}}
+                <tr>
+                  <td style="padding:0 20px;">
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                      <tr><td style="border-top:1px solid rgba(255,255,255,0.06);font-size:0;line-height:0;">&nbsp;</td></tr>
+                    </table>
+                  </td>
+                </tr>
+
+                {{-- Senha --}}
+                <tr>
+                  <td style="padding:16px 20px 0;">
+                    <span style="font-size:11px;color:#71717A;font-family:'Segoe UI',Arial,sans-serif;
+                      text-transform:uppercase;letter-spacing:0.5px;">Senha temporária</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:4px 20px 16px;">
+                    <span style="font-size:16px;color:#00F5FF;font-weight:700;letter-spacing:1px;
+                      font-family:'Courier New',Courier,monospace;">
+                      {{ $temporaryPassword }}
+                    </span>
+                  </td>
+                </tr>
+
+              </table>
+
+            </td>
+          </tr>
+
+          {{-- ── ALERTA ── --}}
+          <tr>
+            <td style="padding:16px 40px 0;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
+                style="background-color:#1F1A0E;border-radius:8px;border:1px solid rgba(251,191,36,0.2);">
+                <tr>
+                  <td style="padding:12px 16px;">
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="vertical-align:middle;padding-right:10px;">
+                          <span style="font-size:16px;line-height:1;">⚠️</span>
+                        </td>
+                        <td>
+                          <span style="font-size:13px;color:#FCD34D;font-family:'Segoe UI',Arial,sans-serif;line-height:1.5;">
+                            <strong>Altere sua senha no primeiro acesso.</strong>
+                            Esta é uma senha temporária por segurança.
+                          </span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          @endif
+
+          {{-- ── BENEFÍCIOS ── --}}
+          <tr>
+            <td style="padding:28px 40px 0;">
+              <p style="margin:0 0 14px;font-size:13px;font-weight:600;color:#FFFFFF;
+                font-family:'Segoe UI',Arial,sans-serif;text-transform:uppercase;letter-spacing:0.5px;">
+                O que você pode fazer no Minutor
+              </p>
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                @foreach([
+                  'Gerenciar projetos e demandas',
+                  'Controlar horas trabalhadas',
+                  'Acompanhar consumo de contratos',
+                  'Visualizar relatórios',
+                  'Colaborar com a equipe',
+                ] as $item)
+                <tr>
+                  <td style="padding:5px 0;">
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="vertical-align:middle;padding-right:10px;width:20px;">
+                          <span style="display:inline-block;width:6px;height:6px;background-color:#00F5FF;
+                            border-radius:50%;"></span>
+                        </td>
+                        <td>
+                          <span style="font-size:14px;color:#A1A1AA;font-family:'Segoe UI',Arial,sans-serif;
+                            line-height:1.5;">{{ $item }}</span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                @endforeach
+              </table>
+            </td>
+          </tr>
+
+          {{-- ── BOTÃO ── --}}
+          <tr>
+            <td class="btn-td" align="center" style="padding:32px 40px 36px;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center"
+                    style="border-radius:10px;background:linear-gradient(135deg,#3B82F6 0%,#8B5CF6 100%);">
+                    <a href="{{ config('app.frontend_url', 'https://app.minutor.com.br') }}"
+                      target="_blank"
+                      style="display:inline-block;padding:14px 36px;font-size:15px;font-weight:600;
+                        color:#FFFFFF;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;
+                        letter-spacing:0.2px;">
+                      Acessar o Minutor &rarr;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          {{-- ── DIVISOR ── --}}
+          <tr>
+            <td style="padding:0 40px;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                <tr><td style="border-top:1px solid rgba(255,255,255,0.06);font-size:0;line-height:0;">&nbsp;</td></tr>
+              </table>
+            </td>
+          </tr>
+
+          {{-- ── RODAPÉ ── --}}
+          <tr>
+            <td align="center" style="padding:24px 40px 32px;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center" style="padding-bottom:8px;">
+                    <span style="font-size:13px;font-weight:700;letter-spacing:0.5px;
+                      color:rgba(255,255,255,0.25);font-family:'Segoe UI',Arial,sans-serif;">
+                      ERPServ
+                    </span>
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center">
+                    <span style="font-size:11px;color:rgba(255,255,255,0.2);
+                      font-family:'Segoe UI',Arial,sans-serif;letter-spacing:0.3px;">
+                      Uma solução ERPServ
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+        {{-- /card --}}
+
+        {{-- Espaço inferior --}}
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600" class="wrapper">
+          <tr>
+            <td align="center" style="padding-top:20px;">
+              <span style="font-size:11px;color:rgba(255,255,255,0.15);font-family:'Segoe UI',Arial,sans-serif;">
+                Você está recebendo este e-mail porque uma conta foi criada em seu nome.
+              </span>
+            </td>
+          </tr>
+        </table>
+
+      </td>
+    </tr>
+  </table>
+
 </body>
 </html>

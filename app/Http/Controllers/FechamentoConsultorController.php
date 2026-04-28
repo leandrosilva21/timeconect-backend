@@ -164,6 +164,7 @@ class FechamentoConsultorController extends Controller
                     $total            = round($fixedSalary + $totalExtra, 2); // sem extrasConsultant: já virou horas no banco
 
                     $bancoHoras[] = array_merge($base, [
+                        'horas_trabalhadas'   => $calc['worked_hours'], // inclui inflação do consultant_extra_pct
                         'daily_hours'         => (float) ($user->daily_hours ?? 8.0),
                         'working_days'        => $calc['working_days'],
                         'expected_hours'      => $calc['expected_hours'],

@@ -383,8 +383,13 @@ class TimesheetController extends Controller
                 $totalHours   = intdiv($totalEffortMinutes, 60);
                 $totalMinutes = $totalEffortMinutes % 60;
 
+                $totalBillableOnlyMinutes = (int) (clone $query)
+                    ->where('timesheets.is_billable_only', true)
+                    ->sum('effort_minutes');
+
                 $totalConsultantExtraMinutes = (int) round(
                     (clone $query)
+                        ->where('timesheets.is_billable_only', false)
                         ->whereNotNull('consultant_extra_pct')
                         ->get(['effort_minutes', 'consultant_extra_pct'])
                         ->sum(fn ($t) => $t->effort_minutes * ((float) $t->consultant_extra_pct / 100))
@@ -408,6 +413,7 @@ class TimesheetController extends Controller
                     'items'                         => $items,
                     'totalEffortMinutes'             => $totalEffortMinutes,
                     'totalEffortHours'               => sprintf('%d:%02d', $totalHours, $totalMinutes),
+                    'totalBillableOnlyMinutes'       => $totalBillableOnlyMinutes,
                     'totalConsultantExtraMinutes'    => $totalConsultantExtraMinutes,
                 ];
             });

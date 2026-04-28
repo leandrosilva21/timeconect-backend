@@ -1461,6 +1461,7 @@ class ProjectController extends Controller
             'exceeded_hour_contribution' => $project->exceeded_hour_contribution,
             'initial_hours_balance' => $project->initial_hours_balance,
             'initial_cost' => $project->initial_cost,
+            'tipo_faturamento' => $project->tipo_faturamento,
             'has_child_projects' => $project->hasChildProjects(),
             // ✨ Novos campos calculados usando hour_contributions table
             'total_available_hours' => $project->getTotalAvailableHours(),
@@ -1642,7 +1643,11 @@ class ProjectController extends Controller
         }
 
         $aportesTotal     = $project->hourContributions->sum(fn($c) => (float)$c->contributed_hours * (float)$c->hourly_rate);
-        $receitaTotal     = (float)($project->project_value ?? 0) + $aportesTotal;
+        $isOnDemand       = $project->tipo_faturamento === 'on_demand';
+        $projectRevenue   = $isOnDemand
+            ? round($totalLoggedHours * (float)($project->hourly_rate ?? 0), 2)
+            : (float)($project->project_value ?? 0);
+        $receitaTotal     = $projectRevenue + $aportesTotal;
         $initialCost      = (float)($project->initial_cost ?? 0);
         $custoTotal       = $initialCost + $totalCost;
         $margin           = $receitaTotal - $custoTotal;
@@ -1654,6 +1659,8 @@ class ProjectController extends Controller
             'total_cost' => round($totalCost, 2),
             'approved_cost' => round($approvedCost, 2),
             'pending_cost' => round($pendingCost, 2),
+            'is_on_demand' => $isOnDemand,
+            'project_revenue' => round($projectRevenue, 2),
             'aportes_total' => round($aportesTotal, 2),
             'receita_total' => round($receitaTotal, 2),
             'custo_operacional' => round($totalCost, 2),

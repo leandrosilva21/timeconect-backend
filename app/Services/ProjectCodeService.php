@@ -66,13 +66,22 @@ class ProjectCodeService
      */
     public function generateChildCode(Project $parent): array
     {
-        $lastChild = Project::where('parent_project_id', $parent->id)
+        $lastChild = Project::withTrashed()
+            ->where('parent_project_id', $parent->id)
             ->whereNotNull('child_sequence')
             ->max('child_sequence');
 
         $childSeq = ($lastChild ?? 0) + 1;
-        $padded   = str_pad($childSeq, 2, '0', STR_PAD_LEFT);
-        $code     = $parent->code . '-' . $padded;
+
+        do {
+            $padded = str_pad($childSeq, 2, '0', STR_PAD_LEFT);
+            $code   = $parent->code . '-' . $padded;
+            if (Project::withTrashed()->where('code', $code)->exists()) {
+                $childSeq++;
+            } else {
+                break;
+            }
+        } while (true);
 
         return [
             'code'           => $code,

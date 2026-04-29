@@ -32,7 +32,7 @@ class MovideskWebhookController extends Controller
                 $ticketDetails = $service->fetchTicket((int) $ticketId);
 
                 if ($ticketDetails) {
-                    $created = $service->processLastActionOnly($ticketDetails);
+                    $created = $service->processTicket($ticketDetails);
                     Log::warning('🎫 [MOVIDESK WEBHOOK] Processado', ['timesheets_created' => $created]);
                 } else {
                     Log::warning('🎫 [MOVIDESK WEBHOOK] Ticket não encontrado na API', ['ticket_id' => $ticketId]);

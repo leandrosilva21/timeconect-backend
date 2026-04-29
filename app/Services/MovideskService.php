@@ -190,6 +190,17 @@ class MovideskService
         }
 
         try {
+            $effortHours   = $this->extractEffortHours($appointment);
+            $effortMinutes = $effortHours ? $this->calculateEffortMinutes($effortHours) : 0;
+
+            if ($effortMinutes < 5) {
+                Log::info('⏭️ [MOVIDESK] Apontamento ignorado (duração < 5 min)', [
+                    'effort_minutes'          => $effortMinutes,
+                    'movidesk_appointment_id' => $appointmentId,
+                ]);
+                return false;
+            }
+
             $userId = $this->extractUserId($action);
             if (!$userId) return false;
 
@@ -199,27 +210,9 @@ class MovideskService
             $projectId = $this->extractProjectId($customerId);
             if (!$projectId) return false;
 
-            $date = $this->extractDate($appointment);
-            if (!$date) return false;
-
-            $startTime = $this->extractTime($appointment, 'periodStart');
-            if (!$startTime) return false;
-
-            $endTime = $this->extractTime($appointment, 'periodEnd');
-            if (!$endTime) return false;
-
-            $effortHours = $this->extractEffortHours($appointment);
-            if (!$effortHours) return false;
-
-            $effortMinutes = $this->calculateEffortMinutes($effortHours);
-
-            if ($effortMinutes <= 1) {
-                Log::info('⏭️ [MOVIDESK] Apontamento ignorado (duração ≤ 1 min)', [
-                    'effort_minutes'          => $effortMinutes,
-                    'movidesk_appointment_id' => $appointmentId,
-                ]);
-                return false;
-            }
+            $date      = $this->extractDate($appointment)      ?? now()->format('Y-m-d');
+            $startTime = $this->extractTime($appointment, 'periodStart') ?? '00:00';
+            $endTime   = $this->extractTime($appointment, 'periodEnd')   ?? '00:00';
 
             $this->createTimesheet([
                 'user_id'                 => $userId,
@@ -254,19 +247,25 @@ class MovideskService
     {
         $email = $action['createdBy']['email'] ?? null;
 
-        if (!$email) {
-            Log::warning('⚠️ [MOVIDESK] Email não encontrado na ação', ['action_id' => $action['id'] ?? null]);
-            return null;
+        if ($email) {
+            $user = User::where('email', $email)->where('enabled', true)->first();
+            if ($user) return $user->id;
+            Log::warning('⚠️ [MOVIDESK] Usuário não encontrado ou inativo — usando usuário padrão', ['email' => $email]);
+        } else {
+            Log::warning('⚠️ [MOVIDESK] Email ausente na ação — usando usuário padrão', ['action_id' => $action['id'] ?? null]);
         }
 
-        $user = User::where('email', $email)->where('enabled', true)->first();
+        return $this->getDefaultUserId();
+    }
 
-        if (!$user) {
-            Log::warning('⚠️ [MOVIDESK] Usuário não encontrado ou inativo', ['email' => $email]);
+    private function getDefaultUserId(): ?int
+    {
+        $id = SystemSetting::get('movidesk_default_user_id');
+        if (!$id) {
+            Log::error('🚨 [MOVIDESK] movidesk_default_user_id não configurado — apontamento descartado');
             return null;
         }
-
-        return $user->id;
+        return (int) $id;
     }
 
     private function extractCustomerId(array $ticket): ?int
@@ -371,18 +370,10 @@ class MovideskService
             return null;
         }
 
-        if (!$project->isActive()) {
-            Log::error('🚨 [MOVIDESK] Projeto padrão está inativo — apontamento descartado', [
-                'project_id'   => $project->id,
-                'project_name' => $project->name,
-                'status'       => $project->status,
-            ]);
-            return null;
-        }
-
         Log::info('ℹ️ [MOVIDESK] Usando projeto padrão', [
             'project_id'   => $project->id,
             'project_name' => $project->name,
+            'status'       => $project->status,
         ]);
 
         return $project->id;

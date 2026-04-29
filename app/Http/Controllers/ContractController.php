@@ -679,20 +679,50 @@ class ContractController extends Controller
     // Mover projeto de fase de execução (em_andamento → liberado_para_testes → encerrado)
     public function projectMove(Request $request, \App\Models\Project $project): JsonResponse
     {
-        $request->validate(['status' => 'required|string|in:awaiting_start,started,liberado_para_testes,paused,cancelled,finished']);
+        $validated = $request->validate([
+            'status'              => 'nullable|string|in:awaiting_start,started,liberado_para_testes,paused,cancelled,finished',
+            'coordinator_id'      => 'nullable|integer|exists:users,id',
+            'from_coordinator_id' => 'nullable|integer|exists:users,id',
+        ]);
 
         $user = auth()->user();
         if ($user?->isConsultor()) {
             return response()->json(['message' => 'Sem permissão para mover projetos.'], 403);
         }
 
+        // Coordinator reassignment
+        if ($validated['coordinator_id'] ?? null) {
+            $newCoordId  = (int) $validated['coordinator_id'];
+            $fromCoordId = isset($validated['from_coordinator_id']) ? (int) $validated['from_coordinator_id'] : null;
+
+            if ($fromCoordId && $project->coordinators()->where('users.id', $fromCoordId)->exists()) {
+                $project->coordinators()->detach($fromCoordId);
+            }
+            if (!$project->coordinators()->where('users.id', $newCoordId)->exists()) {
+                $project->coordinators()->attach($newCoordId);
+            }
+
+            if ($project->contract_id) {
+                \App\Models\Contract::where('id', $project->contract_id)
+                    ->where('kanban_coordinator_id', $fromCoordId)
+                    ->update(['kanban_coordinator_id' => $newCoordId]);
+            }
+
+            return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'consultants'])));
+        }
+
+        // Status move
+        if (!($validated['status'] ?? null)) {
+            return response()->json(['message' => 'status ou coordinator_id é obrigatório.'], 422);
+        }
+
         $fromStatus = $project->status;
-        $project->update(['status' => $request->input('status')]);
+        $project->update(['status' => $validated['status']]);
 
         ProjectKanbanLog::create([
             'project_id'  => $project->id,
             'from_status' => $fromStatus,
-            'to_status'   => $request->input('status'),
+            'to_status'   => $validated['status'],
             'moved_by_id' => auth()->id(),
         ]);
 

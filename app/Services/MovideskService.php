@@ -214,8 +214,10 @@ class MovideskService
             $startTime = $this->extractTime($appointment, 'periodStart') ?? '00:00';
             $endTime   = $this->extractTime($appointment, 'periodEnd')   ?? '00:00';
 
-            // isPublic === false → Ação interna; ausente ou true → Ação pública
-            $isInternal = array_key_exists('isPublic', $action) && $action['isPublic'] === false;
+            // isPublic === false → Ação interna; ausente → fallback para type === 2
+            $isInternal = array_key_exists('isPublic', $action)
+                ? ($action['isPublic'] === false)
+                : (($action['type'] ?? 0) === 2);
 
             $this->createTimesheet([
                 'user_id'                 => $userId,

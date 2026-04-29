@@ -1515,6 +1515,31 @@ class TimesheetController extends Controller
         ]);
     }
 
+    public function reverseRelease(int $id): JsonResponse
+    {
+        $timesheet = Timesheet::find($id);
+
+        if (!$timesheet) {
+            return response()->json(['success' => false, 'message' => 'Apontamento não encontrado'], 404);
+        }
+
+        if (!$timesheet->is_internal_action) {
+            return response()->json(['success' => false, 'message' => 'Apenas ações internas podem ter liberação estornada'], 422);
+        }
+
+        if (!$timesheet->reverseRelease()) {
+            return response()->json(['success' => false, 'message' => 'Não foi possível estornar. Status atual: ' . $timesheet->status], 422);
+        }
+
+        $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
+
+        return response()->json([
+            'success' => true,
+            'data'    => $timesheet,
+            'message' => 'Liberação estornada com sucesso!',
+        ]);
+    }
+
     /**
      * @OA\Post(
      *     path="/api/v1/timesheets/{id}/reject",

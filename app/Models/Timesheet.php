@@ -383,6 +383,22 @@ class Timesheet extends Model
     }
 
     /**
+     * Estornar liberação de ação interna
+     */
+    public function reverseRelease(): bool
+    {
+        if ($this->status !== self::STATUS_RELEASED) {
+            return false;
+        }
+
+        $this->status      = self::STATUS_INTERNAL;
+        $this->reviewed_by = null;
+        $this->reviewed_at = null;
+
+        return $this->save();
+    }
+
+    /**
      * Solicitar ajuste no timesheet
      */
     public function requestAdjustment(User $approver, string $reason): bool

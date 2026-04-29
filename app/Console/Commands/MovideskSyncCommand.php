@@ -17,7 +17,7 @@ class MovideskSyncCommand extends Command
     protected $description = 'Sincroniza apontamentos do Movidesk via API (fallback do webhook)';
 
     // Overlap para compensar delays da API do Movidesk
-    private const OVERLAP_MINUTES = 20;
+    private const OVERLAP_MINUTES = 5;
 
     // Janela mínima de busca (garante que nunca deixamos passar apontamentos
     // mesmo que o last_sync tenha sido gravado após um sync sem importações)

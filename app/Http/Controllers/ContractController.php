@@ -437,6 +437,11 @@ class ContractController extends Controller
             $projectQuery->whereHas('consultants', fn($q) => $q->where('users.id', $user->id));
         } elseif ($isCliente && $user->customer_id) {
             $projectQuery->where('customer_id', $user->customer_id);
+        } elseif ($user?->isCoordenador()) {
+            $projectQuery->where(function ($q) {
+                $q->whereDoesntHave('serviceType')
+                  ->orWhereHas('serviceType', fn($sq) => $sq->whereRaw("LOWER(name) NOT SIMILAR TO '%(sustentac|cloud|bizify)%'"));
+            });
         }
 
         $projects    = $projectQuery->get();

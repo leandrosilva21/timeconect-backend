@@ -214,6 +214,15 @@ class MovideskService
             $startTime = $this->extractTime($appointment, 'periodStart') ?? '00:00';
             $endTime   = $this->extractTime($appointment, 'periodEnd')   ?? '00:00';
 
+            // Log para diagnóstico de detecção de ação interna
+            Log::info('🔍 [MOVIDESK] Campos da action para diagnóstico', [
+                'appointment_id' => $appointmentId,
+                'action_type'    => $action['type'] ?? 'AUSENTE',
+                'isPublic'       => array_key_exists('isPublic', $action) ? $action['isPublic'] : 'AUSENTE',
+                'origin'         => $action['origin'] ?? 'AUSENTE',
+                'all_keys'       => array_keys($action),
+            ]);
+
             // isPublic === false → Ação interna; ausente → fallback para type === 2
             $isInternal = array_key_exists('isPublic', $action)
                 ? ($action['isPublic'] === false)

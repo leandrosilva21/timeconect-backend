@@ -76,6 +76,7 @@ class HourBankService
             ->whereYear('date', $year)
             ->whereMonth('date', $month)
             ->where('is_billable_only', false)
+            ->where('is_internal_action', false)
             ->whereIn('status', ['approved', 'pending']);
 
         if ($startDate) {

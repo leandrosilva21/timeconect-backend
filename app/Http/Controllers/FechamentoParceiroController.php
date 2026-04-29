@@ -178,6 +178,7 @@ class FechamentoParceiroController extends Controller
                 ->whereBetween('date', [$from, $to])
                 ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
                 ->whereNull('deleted_at')
+                ->where('is_internal_action', false)
                 ->sum('effort_minutes');
 
             $horas = round($minutos / 60, 2);

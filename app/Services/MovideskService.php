@@ -214,6 +214,9 @@ class MovideskService
             $startTime = $this->extractTime($appointment, 'periodStart') ?? '00:00';
             $endTime   = $this->extractTime($appointment, 'periodEnd')   ?? '00:00';
 
+            // isPublic === false → Ação interna; ausente ou true → Ação pública
+            $isInternal = array_key_exists('isPublic', $action) && $action['isPublic'] === false;
+
             $this->createTimesheet([
                 'user_id'                 => $userId,
                 'customer_id'             => $customerId,
@@ -226,6 +229,7 @@ class MovideskService
                 'observation'             => $this->buildObservation($ticket, $action),
                 'ticket'                  => $ticket['id'] ?? null,
                 'movidesk_appointment_id' => $appointmentId,
+                'is_internal_action'      => $isInternal,
             ]);
 
             return true;
@@ -473,6 +477,7 @@ class MovideskService
             $timesheet->observation             = $data['observation'];
             $timesheet->ticket                  = $data['ticket'];
             $timesheet->movidesk_appointment_id = $data['movidesk_appointment_id'] ?? null;
+            $timesheet->is_internal_action      = $data['is_internal_action'] ?? false;
             $timesheet->origin                  = 'webhook';
             $timesheet->status                  = $conflict
                 ? Timesheet::STATUS_CONFLICTED

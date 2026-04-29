@@ -70,6 +70,7 @@ class FechamentoController extends Controller
         ])
             ->whereBetween('date', [$from, $to])
             ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
+            ->where('is_internal_action', false)
             ->whereNull('deleted_at')
             ->get();
 
@@ -127,6 +128,7 @@ class FechamentoController extends Controller
         $timesheets = Timesheet::with('user:id,name,type,hourly_rate,rate_type')
             ->whereBetween('date', [$from, $to])
             ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
+            ->where('is_internal_action', false)
             ->whereNull('deleted_at')
             ->get();
 
@@ -458,6 +460,7 @@ class FechamentoController extends Controller
         ])
             ->whereBetween('date', [$from, $to])
             ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
+            ->where('is_internal_action', false)
             ->whereNull('deleted_at')
             ->get();
 
@@ -504,6 +507,7 @@ class FechamentoController extends Controller
         $timesheets = Timesheet::with('user:id,name,type,hourly_rate,rate_type')
             ->whereBetween('date', [$from, $to])
             ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
+            ->where('is_internal_action', false)
             ->whereNull('deleted_at')
             ->get();
 

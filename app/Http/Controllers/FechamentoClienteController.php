@@ -430,6 +430,7 @@ class FechamentoClienteController extends Controller
         $hoursByProject = Timesheet::whereBetween('date', [$from, $to])
             ->whereNotIn('status', $excludeStatuses)
             ->whereNull('deleted_at')
+            ->where('is_internal_action', false)
             ->whereIn('project_id', $projectIds)
             ->selectRaw('project_id, SUM(effort_minutes) as total_minutes')
             ->groupBy('project_id')
@@ -437,6 +438,7 @@ class FechamentoClienteController extends Controller
 
         $totalConsumedByProject = Timesheet::whereNotIn('status', $excludeStatuses)
             ->whereNull('deleted_at')
+            ->where('is_internal_action', false)
             ->whereIn('project_id', $projectIds)
             ->selectRaw('project_id, SUM(effort_minutes) as total_minutes')
             ->groupBy('project_id')
@@ -446,6 +448,7 @@ class FechamentoClienteController extends Controller
         $weightedMinutesByProject = Timesheet::whereBetween('date', [$from, $to])
             ->whereNotIn('status', $excludeStatuses)
             ->whereNull('deleted_at')
+            ->where('is_internal_action', false)
             ->whereIn('project_id', $projectIds)
             ->selectRaw('project_id, SUM(effort_minutes * (1 + COALESCE(client_extra_pct, 0) / 100.0)) as weighted_minutes')
             ->groupBy('project_id')

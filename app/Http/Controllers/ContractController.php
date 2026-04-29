@@ -382,6 +382,7 @@ class ContractController extends Controller
                 'contractType:id,name',
                 'serviceType:id,name',
                 'kanbanCoordinator:id,name',
+                'executivoConta:id,name',
                 'project:id,code,name,status',
             ])->where(function ($q) {
                 $q->whereIn('kanban_status', array_merge(Contract::DEMAND_COLUMNS, [Contract::KANBAN_INICIO_AUTORIZADO, Contract::KANBAN_ALOCADO, 'novo', 'novo_contrato']))
@@ -423,6 +424,7 @@ class ContractController extends Controller
             'consultants:id,name',
             'contractType:id,name',
             'serviceType:id,name',
+            'executivoConta:id,name',
         ])->where(function ($q) use ($demandProjectIds) {
             $q->where(function ($inner) {
                 $inner->whereNotNull('contract_id')
@@ -992,6 +994,7 @@ class ContractController extends Controller
             'kanban_status'    => $contract->kanban_status ?? Contract::KANBAN_BACKLOG,
             'kanban_coordinator_id' => $contract->kanban_coordinator_id,
             'kanban_coordinator'    => $contract->kanbanCoordinator?->name,
+            'executivo_conta_name'  => $contract->executivoConta?->name,
             'kanban_order'     => $contract->kanban_order,
             'status'           => $contract->status,
             'project_id'       => $contract->project_id,
@@ -1026,6 +1029,7 @@ class ContractController extends Controller
             'coordinator_ids'       => $project->coordinators->pluck('id'),
             'coordinators'          => $project->coordinators->pluck('name'),
             'consultants'           => $project->consultants->pluck('name'),
+            'executivo_conta_name'  => $project->executivoConta?->name,
             'contract_type'         => $project->contractType?->name,
             'service_type'          => $project->serviceType?->name,
             'is_complete'           => true,

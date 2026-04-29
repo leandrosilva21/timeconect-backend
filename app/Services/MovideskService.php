@@ -232,6 +232,7 @@ class MovideskService
                 'ticket'                  => $ticket['id'] ?? null,
                 'movidesk_appointment_id' => $appointmentId,
                 'is_internal_action'      => $isInternal,
+                'status'                  => $isInternal ? 'internal' : 'pending',
             ]);
 
             return true;
@@ -480,10 +481,15 @@ class MovideskService
             $timesheet->ticket                  = $data['ticket'];
             $timesheet->movidesk_appointment_id = $data['movidesk_appointment_id'] ?? null;
             $timesheet->is_internal_action      = $data['is_internal_action'] ?? false;
-            $timesheet->origin                  = 'webhook';
-            $timesheet->status                  = $conflict
-                ? Timesheet::STATUS_CONFLICTED
-                : Timesheet::STATUS_PENDING;
+            $timesheet->origin = 'webhook';
+
+            if ($data['is_internal_action'] ?? false) {
+                $timesheet->status = Timesheet::STATUS_INTERNAL;
+            } else {
+                $timesheet->status = $conflict
+                    ? Timesheet::STATUS_CONFLICTED
+                    : Timesheet::STATUS_PENDING;
+            }
             $timesheet->save();
 
             DB::commit();

@@ -1488,6 +1488,33 @@ class TimesheetController extends Controller
         ], 500);
     }
 
+    public function release(int $id): JsonResponse
+    {
+        $user = Auth::user();
+
+        $timesheet = Timesheet::find($id);
+
+        if (!$timesheet) {
+            return response()->json(['success' => false, 'message' => 'Apontamento não encontrado'], 404);
+        }
+
+        if (!$timesheet->is_internal_action) {
+            return response()->json(['success' => false, 'message' => 'Apenas ações internas podem ser liberadas'], 422);
+        }
+
+        if (!$timesheet->release($user)) {
+            return response()->json(['success' => false, 'message' => 'Não foi possível liberar. Status atual: ' . $timesheet->status], 422);
+        }
+
+        $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
+
+        return response()->json([
+            'success' => true,
+            'data'    => $timesheet,
+            'message' => 'Ação interna liberada com sucesso!',
+        ]);
+    }
+
     /**
      * @OA\Post(
      *     path="/api/v1/timesheets/{id}/reject",

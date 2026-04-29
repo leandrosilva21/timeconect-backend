@@ -422,9 +422,10 @@ Route::prefix('v1')->group(function () {
         Route::patch('/timesheets/{timesheet}', [TimesheetController::class, 'update'])->name('timesheets.patch');
         Route::delete('/timesheets/{timesheet}', [TimesheetController::class, 'destroy'])->name('timesheets.destroy');
 
-        // Aprovação e rejeição
+        // Aprovação, liberação e rejeição
         Route::middleware('permission.or.admin:hours.approve')->group(function () {
             Route::post('/timesheets/{timesheet}/approve', [TimesheetController::class, 'approve'])->name('timesheets.approve');
+            Route::post('/timesheets/{timesheet}/release', [TimesheetController::class, 'release'])->name('timesheets.release');
         });
 
         Route::middleware('permission.or.admin:hours.reject')->group(function () {

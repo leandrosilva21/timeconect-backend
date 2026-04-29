@@ -21,6 +21,8 @@ class Timesheet extends Model
     public const STATUS_REJECTED = 'rejected';
     public const STATUS_CONFLICTED = 'conflicted';
     public const STATUS_ADJUSTMENT_REQUESTED = 'adjustment_requested';
+    public const STATUS_INTERNAL = 'internal';
+    public const STATUS_RELEASED = 'released';
 
     /**
      * The attributes that are mass assignable.
@@ -108,6 +110,8 @@ class Timesheet extends Model
             self::STATUS_REJECTED             => 'Rejeitado',
             self::STATUS_CONFLICTED           => 'Conflitante',
             self::STATUS_ADJUSTMENT_REQUESTED => 'Ajuste Solicitado',
+            self::STATUS_INTERNAL             => 'Ação Interna',
+            self::STATUS_RELEASED             => 'Liberado',
         ];
     }
 
@@ -358,6 +362,22 @@ class Timesheet extends Model
         $this->reviewed_by = $approver->id;
         $this->reviewed_at = now();
         $this->rejection_reason = $reason;
+
+        return $this->save();
+    }
+
+    /**
+     * Liberar ação interna
+     */
+    public function release(User $reviewer): bool
+    {
+        if ($this->status !== self::STATUS_INTERNAL) {
+            return false;
+        }
+
+        $this->status      = self::STATUS_RELEASED;
+        $this->reviewed_by = $reviewer->id;
+        $this->reviewed_at = now();
 
         return $this->save();
     }

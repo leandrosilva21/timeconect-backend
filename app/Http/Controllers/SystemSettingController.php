@@ -191,6 +191,7 @@ class SystemSettingController extends Controller
                 'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
                 'movidesk_default_customer_id' => 'nullable|integer|exists:customers,id',
                 'movidesk_default_project_id' => 'nullable|integer|exists:projects,id',
+                'movidesk_default_user_id' => 'nullable|integer|exists:users,id',
             ], [
                 'timesheet_retroactive_limit_days.integer' => 'O prazo deve ser um número inteiro.',
                 'timesheet_retroactive_limit_days.min' => 'O prazo não pode ser negativo.',
@@ -199,6 +200,8 @@ class SystemSettingController extends Controller
                 'movidesk_default_customer_id.exists' => 'O cliente selecionado não existe.',
                 'movidesk_default_project_id.integer' => 'O projeto padrão deve ser um número inteiro.',
                 'movidesk_default_project_id.exists' => 'O projeto selecionado não existe.',
+                'movidesk_default_user_id.integer' => 'O usuário padrão deve ser um número inteiro.',
+                'movidesk_default_user_id.exists' => 'O usuário selecionado não existe.',
             ]);
 
             if ($validator->fails()) {
@@ -264,6 +267,7 @@ class SystemSettingController extends Controller
             'timesheet_retroactive_limit_days' => 'integer',
             'movidesk_default_customer_id' => 'integer',
             'movidesk_default_project_id' => 'integer',
+            'movidesk_default_user_id' => 'integer',
             default => 'string',
         };
     }
@@ -277,6 +281,7 @@ class SystemSettingController extends Controller
             'timesheet_retroactive_limit_days' => 'timesheets',
             'movidesk_default_customer_id' => 'general',
             'movidesk_default_project_id' => 'general',
+            'movidesk_default_user_id' => 'general',
             default => 'general',
         };
     }
@@ -290,6 +295,7 @@ class SystemSettingController extends Controller
             'timesheet_retroactive_limit_days' => 'Quantidade de dias após a data do serviço que o consultor pode lançar horas',
             'movidesk_default_customer_id' => 'ID do cliente padrão para integração com Movidesk',
             'movidesk_default_project_id' => 'ID do projeto padrão para integração com Movidesk',
+            'movidesk_default_user_id' => 'ID do usuário padrão para integração com Movidesk',
             default => '',
         };
     }

@@ -183,6 +183,7 @@ class ProjectController extends Controller
         $withTeam = $request->get('with_team', 'true') !== 'false';
         if ($gestaoMode && !$parentProjectsOnly) {
             $withRelations[] = 'coordinators';
+            $withRelations[] = 'executivoConta';
             if ($withTeam) {
                 $withRelations[] = 'consultants';
             }

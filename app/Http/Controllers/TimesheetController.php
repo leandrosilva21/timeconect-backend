@@ -1308,6 +1308,29 @@ class TimesheetController extends Controller
                 $timesheet->attachment_original_name = $file->getClientOriginalName();
             }
 
+            // Bloquear edição manual que criaria sobreposição de horários
+            if ($timesheet->start_time && $timesheet->end_time && $timesheet->origin !== 'webhook') {
+                $hasOverlap = Timesheet::where('user_id', $timesheet->user_id)
+                    ->where('date', $timesheet->date)
+                    ->where('id', '!=', $timesheet->id)
+                    ->whereNotIn('status', [Timesheet::STATUS_REJECTED])
+                    ->whereNotNull('start_time')
+                    ->whereNotNull('end_time')
+                    ->where('start_time', '<', $timesheet->end_time)
+                    ->where('end_time', '>', $timesheet->start_time)
+                    ->exists();
+
+                if ($hasOverlap) {
+                    DB::rollBack();
+                    return response()->json([
+                        'code'          => 'TIMESHEET_CONFLICT',
+                        'type'          => 'error',
+                        'message'       => 'Conflito de horário',
+                        'detailMessage' => 'O horário informado conflita com outro apontamento já registrado para este dia.',
+                    ], 422);
+                }
+            }
+
             $timesheet->save();
 
             // Re-detectar conflitos após a edição (somente quando há horários definidos)

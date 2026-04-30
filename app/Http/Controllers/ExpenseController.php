@@ -1004,7 +1004,7 @@ class ExpenseController extends Controller
             ], 422);
         }
 
-        if (!$user->isAdmin() && !$expense->canBeReversedBy($user)) {
+        if (!$user->isAdmin() && !$user->isAdministrativo() && !$expense->canBeReversedBy($user)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Você não tem permissão para estornar esta aprovação',

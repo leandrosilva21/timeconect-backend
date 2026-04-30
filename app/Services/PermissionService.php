@@ -80,8 +80,8 @@ class PermissionService
             // Apontamentos
             'timesheets.view', 'timesheets.manage', 'timesheets.approve', 'timesheets.view_project_full',
             'hours.view_all', 'hours.update_all', 'hours.delete_all',
-            // Despesas — incluindo pagamento
-            'expenses.view', 'expenses.manage', 'expenses.approve', 'expenses.view_all', 'expenses.pay',
+            // Despesas — incluindo pagamento e estorno
+            'expenses.view', 'expenses.manage', 'expenses.approve', 'expenses.reject', 'expenses.view_all', 'expenses.pay',
             // Clientes — acesso total
             'customers.view', 'customers.create', 'customers.update', 'customers.delete',
             'customers.manage',

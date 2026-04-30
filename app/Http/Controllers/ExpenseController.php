@@ -990,34 +990,31 @@ class ExpenseController extends Controller
         if ($expense->status !== 'approved') {
             return response()->json([
                 'success' => false,
-                'message' => 'Apenas despesas aprovadas podem ser estornadas'
+                'message' => 'Apenas despesas aprovadas podem ser estornadas',
             ], 422);
         }
 
-        // Administradores podem estornar qualquer aprovação
+        if ($expense->is_paid) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Despesas pagas não podem ser estornadas',
+            ], 422);
+        }
+
         if (!$user->isAdmin() && !$expense->canBeReversedBy($user)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Você não tem permissão para estornar esta aprovação ou o período permitido expirou'
+                'message' => 'Você não tem permissão para estornar esta aprovação',
             ], 403);
-        }
-
-        $validator = Validator::make($request->all(), [
-            'reason' => 'required|string|max:1000'
-        ]);
-
-        if ($validator->fails()) {
-            return $this->validationErrorResponse($validator->errors()->all());
         }
 
         try {
             \DB::beginTransaction();
 
-            // Registrar estorno (tabela pode não existir em ambientes legados — ignora silenciosamente)
             try {
                 $expense->reversals()->create([
                     'reversed_by'            => $user->id,
-                    'reversal_reason'        => $request->reason,
+                    'reversal_reason'        => $request->input('reason', 'Estorno de aprovação'),
                     'original_approver_id'   => $expense->reviewed_by ?? $user->id,
                     'original_approval_date' => $expense->reviewed_at ?? now(),
                 ]);
@@ -1025,14 +1022,16 @@ class ExpenseController extends Controller
                 // Tabela expense_reversals ainda não migrada — continua sem o log
             }
 
-            $expense->status      = 'pending';
-            $expense->reviewed_by = null;
-            $expense->reviewed_at = null;
+            $expense->status           = 'pending';
+            $expense->reviewed_by      = null;
+            $expense->reviewed_at      = null;
             $expense->rejection_reason = null;
             $expense->charge_client    = false;
             $expense->save();
 
             \DB::commit();
+
+            $this->invalidateListCache('expenses');
 
             $expense->load(['user', 'project.customer', 'category']);
 

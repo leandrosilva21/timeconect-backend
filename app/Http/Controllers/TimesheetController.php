@@ -405,6 +405,33 @@ class TimesheetController extends Controller
                     if (isset($arr['ticket_solicitante']) && is_string($arr['ticket_solicitante'])) {
                         $arr['ticket_solicitante'] = json_decode($arr['ticket_solicitante'], true);
                     }
+                    // Para timesheets em conflito, inclui os apontamentos sobrepostos
+                    if ($ts->status === Timesheet::STATUS_CONFLICTED && $ts->start_time && $ts->end_time) {
+                        $arr['conflicting_timesheets'] = Timesheet::with(['customer', 'project.customer'])
+                            ->where('user_id', $ts->user_id)
+                            ->where('date', $ts->date->format('Y-m-d'))
+                            ->where('id', '!=', $ts->id)
+                            ->whereNotIn('status', [Timesheet::STATUS_REJECTED])
+                            ->whereNotNull('start_time')
+                            ->whereNotNull('end_time')
+                            ->where('start_time', '<', $ts->end_time->format('H:i:s'))
+                            ->where('end_time', '>', $ts->start_time->format('H:i:s'))
+                            ->get()
+                            ->map(fn($c) => [
+                                'id'            => $c->id,
+                                'date'          => $c->date->format('Y-m-d'),
+                                'start_time'    => $c->start_time?->format('H:i'),
+                                'end_time'      => $c->end_time?->format('H:i'),
+                                'effort_hours'  => $c->effort_hours,
+                                'customer_name' => $c->customer?->name ?? $c->project?->customer?->name,
+                                'project_name'  => $c->project?->name,
+                                'origin'        => $c->origin,
+                            ])
+                            ->values()
+                            ->all();
+                    } else {
+                        $arr['conflicting_timesheets'] = [];
+                    }
                     return $arr;
                 })->all();
 

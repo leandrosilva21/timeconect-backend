@@ -188,20 +188,24 @@ class SystemSettingController extends Controller
 
             // Validação
             $validator = Validator::make($request->all(), [
-                'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
-                'movidesk_default_customer_id' => 'nullable|integer|exists:customers,id',
-                'movidesk_default_project_id' => 'nullable|integer|exists:projects,id',
-                'movidesk_default_user_id' => 'nullable|integer|exists:users,id',
+                'timesheet_retroactive_limit_days'      => 'nullable|integer|min:0|max:365',
+                'movidesk_default_customer_id'          => 'nullable|integer|exists:customers,id',
+                'movidesk_default_project_id'           => 'nullable|integer|exists:projects,id',
+                'movidesk_default_user_id'              => 'nullable|integer|exists:users,id',
+                'movidesk_sync_orgs_interval_minutes'   => 'nullable|integer|in:5,10,15,20,30,60',
+                'movidesk_portal_sync_interval_minutes' => 'nullable|integer|in:5,10,15,20,30,60',
             ], [
-                'timesheet_retroactive_limit_days.integer' => 'O prazo deve ser um número inteiro.',
-                'timesheet_retroactive_limit_days.min' => 'O prazo não pode ser negativo.',
-                'timesheet_retroactive_limit_days.max' => 'O prazo não pode ser maior que 365 dias.',
-                'movidesk_default_customer_id.integer' => 'O cliente padrão deve ser um número inteiro.',
-                'movidesk_default_customer_id.exists' => 'O cliente selecionado não existe.',
-                'movidesk_default_project_id.integer' => 'O projeto padrão deve ser um número inteiro.',
-                'movidesk_default_project_id.exists' => 'O projeto selecionado não existe.',
-                'movidesk_default_user_id.integer' => 'O usuário padrão deve ser um número inteiro.',
-                'movidesk_default_user_id.exists' => 'O usuário selecionado não existe.',
+                'timesheet_retroactive_limit_days.integer'         => 'O prazo deve ser um número inteiro.',
+                'timesheet_retroactive_limit_days.min'             => 'O prazo não pode ser negativo.',
+                'timesheet_retroactive_limit_days.max'             => 'O prazo não pode ser maior que 365 dias.',
+                'movidesk_default_customer_id.integer'             => 'O cliente padrão deve ser um número inteiro.',
+                'movidesk_default_customer_id.exists'              => 'O cliente selecionado não existe.',
+                'movidesk_default_project_id.integer'              => 'O projeto padrão deve ser um número inteiro.',
+                'movidesk_default_project_id.exists'               => 'O projeto selecionado não existe.',
+                'movidesk_default_user_id.integer'                 => 'O usuário padrão deve ser um número inteiro.',
+                'movidesk_default_user_id.exists'                  => 'O usuário selecionado não existe.',
+                'movidesk_sync_orgs_interval_minutes.in'           => 'Intervalo inválido para sync-orgs. Use: 5, 10, 15, 20, 30 ou 60 minutos.',
+                'movidesk_portal_sync_interval_minutes.in'         => 'Intervalo inválido para portal-sync. Use: 5, 10, 15, 20, 30 ou 60 minutos.',
             ]);
 
             if ($validator->fails()) {
@@ -264,10 +268,12 @@ class SystemSettingController extends Controller
     private function getSettingType(string $key): string
     {
         return match ($key) {
-            'timesheet_retroactive_limit_days' => 'integer',
-            'movidesk_default_customer_id' => 'integer',
-            'movidesk_default_project_id' => 'integer',
-            'movidesk_default_user_id' => 'integer',
+            'timesheet_retroactive_limit_days'      => 'integer',
+            'movidesk_default_customer_id'          => 'integer',
+            'movidesk_default_project_id'           => 'integer',
+            'movidesk_default_user_id'              => 'integer',
+            'movidesk_sync_orgs_interval_minutes'   => 'integer',
+            'movidesk_portal_sync_interval_minutes' => 'integer',
             default => 'string',
         };
     }
@@ -278,10 +284,12 @@ class SystemSettingController extends Controller
     private function getSettingGroup(string $key): string
     {
         return match ($key) {
-            'timesheet_retroactive_limit_days' => 'timesheets',
-            'movidesk_default_customer_id' => 'general',
-            'movidesk_default_project_id' => 'general',
-            'movidesk_default_user_id' => 'general',
+            'timesheet_retroactive_limit_days'      => 'timesheets',
+            'movidesk_default_customer_id'          => 'movidesk',
+            'movidesk_default_project_id'           => 'movidesk',
+            'movidesk_default_user_id'              => 'movidesk',
+            'movidesk_sync_orgs_interval_minutes'   => 'movidesk',
+            'movidesk_portal_sync_interval_minutes' => 'movidesk',
             default => 'general',
         };
     }
@@ -292,10 +300,12 @@ class SystemSettingController extends Controller
     private function getSettingDescription(string $key): string
     {
         return match ($key) {
-            'timesheet_retroactive_limit_days' => 'Quantidade de dias após a data do serviço que o consultor pode lançar horas',
-            'movidesk_default_customer_id' => 'ID do cliente padrão para integração com Movidesk',
-            'movidesk_default_project_id' => 'ID do projeto padrão para integração com Movidesk',
-            'movidesk_default_user_id' => 'ID do usuário padrão para integração com Movidesk',
+            'timesheet_retroactive_limit_days'      => 'Quantidade de dias após a data do serviço que o consultor pode lançar horas',
+            'movidesk_default_customer_id'          => 'ID do cliente padrão para integração com Movidesk',
+            'movidesk_default_project_id'           => 'ID do projeto padrão para integração com Movidesk',
+            'movidesk_default_user_id'              => 'ID do usuário padrão para integração com Movidesk',
+            'movidesk_sync_orgs_interval_minutes'   => 'Intervalo em minutos para sincronização de organizações do Movidesk (5, 10, 15, 20, 30 ou 60)',
+            'movidesk_portal_sync_interval_minutes' => 'Intervalo em minutos para sincronização do Portal de Sustentação do Movidesk (5, 10, 15, 20, 30 ou 60)',
             default => '',
         };
     }

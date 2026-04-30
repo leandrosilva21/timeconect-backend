@@ -50,16 +50,18 @@ Schedule::command('movidesk:sync')
   ->runInBackground();
 
 // Sync do Portal de Sustentação (tickets dos últimos 90 dias com campos SLA)
+$portalSyncInterval = (int) \App\Models\SystemSetting::get('movidesk_portal_sync_interval_minutes', 30);
 Schedule::command('movidesk:portal-sync')
-  ->everyThirtyMinutes()
+  ->cron("*/{$portalSyncInterval} * * * *")
   ->name('movidesk-portal-sync')
   ->description('Sincroniza tickets do Movidesk para o Portal de Sustentação')
   ->withoutOverlapping()
   ->runInBackground();
 
 // Sync de organizações do Movidesk — popula CNPJ e customer_id nos tickets
+$syncOrgsInterval = (int) \App\Models\SystemSetting::get('movidesk_sync_orgs_interval_minutes', 30);
 Schedule::command('movidesk:sync-orgs')
-  ->everyThirtyMinutes()
+  ->cron("*/{$syncOrgsInterval} * * * *")
   ->name('movidesk-sync-orgs')
   ->description('Sincroniza organizações do Movidesk e popula CNPJs nos tickets')
   ->withoutOverlapping()

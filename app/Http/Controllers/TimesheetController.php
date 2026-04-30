@@ -1310,7 +1310,8 @@ class TimesheetController extends Controller
 
             // Bloquear edição manual que criaria sobreposição de horários
             if ($timesheet->start_time && $timesheet->end_time && $timesheet->origin !== 'webhook') {
-                $hasOverlap = Timesheet::where('user_id', $timesheet->user_id)
+                $overlappingTs = Timesheet::with(['customer', 'project.customer'])
+                    ->where('user_id', $timesheet->user_id)
                     ->where('date', $timesheet->date)
                     ->where('id', '!=', $timesheet->id)
                     ->whereNotIn('status', [Timesheet::STATUS_REJECTED])
@@ -1318,15 +1319,29 @@ class TimesheetController extends Controller
                     ->whereNotNull('end_time')
                     ->where('start_time', '<', $timesheet->end_time)
                     ->where('end_time', '>', $timesheet->start_time)
-                    ->exists();
+                    ->first();
 
-                if ($hasOverlap) {
+                if ($overlappingTs) {
                     DB::rollBack();
                     return response()->json([
                         'code'          => 'TIMESHEET_CONFLICT',
                         'type'          => 'error',
                         'message'       => 'Conflito de horário',
                         'detailMessage' => 'O horário informado conflita com outro apontamento já registrado para este dia.',
+                        'conflicting_timesheet' => [
+                            'date'          => $overlappingTs->date instanceof \Carbon\Carbon
+                                                ? $overlappingTs->date->format('Y-m-d')
+                                                : (string) $overlappingTs->date,
+                            'start_time'    => $overlappingTs->start_time instanceof \Carbon\Carbon
+                                                ? $overlappingTs->start_time->format('H:i')
+                                                : null,
+                            'end_time'      => $overlappingTs->end_time instanceof \Carbon\Carbon
+                                                ? $overlappingTs->end_time->format('H:i')
+                                                : null,
+                            'customer_name' => $overlappingTs->customer?->name
+                                                ?? $overlappingTs->project?->customer?->name,
+                            'project_name'  => $overlappingTs->project?->name,
+                        ],
                     ], 422);
                 }
             }

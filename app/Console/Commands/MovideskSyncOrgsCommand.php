@@ -76,10 +76,11 @@ class MovideskSyncOrgsCommand extends Command
             ->get()
             ->keyBy(fn($o) => strtolower(trim($o->name)));
 
-        $updatedTickets = 0;
+        $updatedTickets  = 0;
+        $ticketsByCustomer = []; // log: customer_name → qtd vinculada
 
         MovideskTicket::whereNotNull('solicitante')->orderBy('id')->each(
-            function (MovideskTicket $ticket) use ($orgs, $orgByName, $customersByCnpj, &$updatedTickets) {
+            function (MovideskTicket $ticket) use ($orgs, $orgByName, $customersByCnpj, &$updatedTickets, &$ticketsByCustomer) {
                 $orgName = trim($ticket->solicitante['organization'] ?? '');
                 $key     = strtolower($orgName);
                 $changed = false;
@@ -99,12 +100,21 @@ class MovideskSyncOrgsCommand extends Command
                 // 2º) Fallback: nome da org → movidesk_organizations
                 $cpfCnpjNorm   = preg_replace('/[^0-9]/', '', $ticket->solicitante['cpf_cnpj'] ?? '');
                 $newCustomerId = null;
+                $method        = null;
 
                 if ($cpfCnpjNorm) {
-                    $newCustomerId = $customersByCnpj[$cpfCnpjNorm]->id ?? null;
+                    $customer = $customersByCnpj[$cpfCnpjNorm] ?? null;
+                    if ($customer) {
+                        $newCustomerId = $customer->id;
+                        $method        = 'CNPJ';
+                    }
                 }
                 if (!$newCustomerId && $orgName) {
-                    $newCustomerId = ($orgByName[$key] ?? null)?->customer_id;
+                    $movideskOrg = $orgByName[$key] ?? null;
+                    if ($movideskOrg) {
+                        $newCustomerId = $movideskOrg->customer_id;
+                        $method        = 'Nome';
+                    }
                 }
 
                 if ($newCustomerId && $newCustomerId !== $ticket->customer_id) {
@@ -115,11 +125,21 @@ class MovideskSyncOrgsCommand extends Command
                 if ($changed) {
                     $ticket->save();
                     $updatedTickets++;
+                    $logKey = ($orgName ?: '(sem org)') . ($method ? " [{$method}]" : '');
+                    $ticketsByCustomer[$logKey] = ($ticketsByCustomer[$logKey] ?? 0) + 1;
                 }
             }
         );
 
         $this->info("{$updatedTickets} tickets atualizados.");
+
+        if (!empty($ticketsByCustomer)) {
+            arsort($ticketsByCustomer);
+            $this->table(
+                ['Organização (método)', 'Tickets atualizados'],
+                collect($ticketsByCustomer)->map(fn($count, $org) => [mb_substr($org, 0, 55), $count])->values()->toArray()
+            );
+        }
 
         // ── 3. Revincular timesheets ao projeto de sustentação correto ─────────
         $this->info('Revinculando apontamentos Movidesk ao projeto correto...');
@@ -136,13 +156,22 @@ class MovideskSyncOrgsCommand extends Command
             ->mapWithKeys(fn($p) => [$p->customer_id => $p->id])
             ->toArray();
 
-        $defaultProjectId = (int) SystemSetting::get('movidesk_default_project_id');
-        $relinkCount      = 0;
+        $defaultProjectId  = (int) SystemSetting::get('movidesk_default_project_id');
+        $relinkCount       = 0;
+        $relinkByProject   = []; // log: "Cliente → Projeto" → qtd apontamentos
+
+        // Mapa auxiliar para nomes (customer_id → nome, project_id → nome)
+        $customerNames = Customer::pluck('name', 'id')->toArray();
+        $projectNames  = Project::pluck('name', 'id')->toArray();
 
         MovideskTicket::whereNotNull('customer_id')
             ->whereNotNull('ticket_id')
             ->orderBy('id')
-            ->each(function (MovideskTicket $mt) use ($projectMap, $defaultProjectId, &$relinkCount) {
+            ->each(function (MovideskTicket $mt) use (
+                $projectMap, $defaultProjectId,
+                $customerNames, $projectNames,
+                &$relinkCount, &$relinkByProject
+            ) {
                 $correctCustomerId = $mt->customer_id;
                 $correctProjectId  = $projectMap[$correctCustomerId] ?? $defaultProjectId;
 
@@ -159,10 +188,24 @@ class MovideskSyncOrgsCommand extends Command
                         'project_id'  => $correctProjectId,
                     ]);
 
-                $relinkCount += $affected;
+                if ($affected > 0) {
+                    $relinkCount += $affected;
+                    $customerName = $customerNames[$correctCustomerId] ?? "Cliente #{$correctCustomerId}";
+                    $projectName  = $projectNames[$correctProjectId]  ?? "Projeto #{$correctProjectId}";
+                    $logKey       = "{$customerName} → {$projectName}";
+                    $relinkByProject[$logKey] = ($relinkByProject[$logKey] ?? 0) + $affected;
+                }
             });
 
         $this->info("{$relinkCount} apontamentos revinculados ao projeto correto.");
+
+        if (!empty($relinkByProject)) {
+            arsort($relinkByProject);
+            $this->table(
+                ['Cliente → Projeto', 'Apontamentos revinculados'],
+                collect($relinkByProject)->map(fn($count, $label) => [mb_substr($label, 0, 60), $count])->values()->toArray()
+            );
+        }
 
         return self::SUCCESS;
     }

@@ -406,8 +406,8 @@ class ExpenseController extends Controller
             'expense_date' => 'required|date|before_or_equal:today',
             'description' => 'required|string|max:1000',
             'amount' => 'required|numeric|min:0.01|max:999999.99',
-            'expense_type' => ['required', Rule::exists('expense_types', 'code')->where('is_active', true)],
-            'payment_method' => ['required', Rule::exists('payment_methods', 'code')->where('is_active', true)],
+            'expense_type' => ['nullable', 'string'],
+            'payment_method' => ['nullable', 'string'],
             'receipt' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120', // 5MB max
         ]);
 
@@ -455,6 +455,8 @@ class ExpenseController extends Controller
         // Definir o user_id final baseado nas permissões
         $expenseData['user_id'] = $targetUserId;
         $expenseData['status'] = Expense::STATUS_PENDING;
+        $expenseData['expense_type']   = $expenseData['expense_type']   ?? 'reimbursement';
+        $expenseData['payment_method'] = $expenseData['payment_method'] ?? 'pix';
 
         // Upload do comprovante se fornecido
         if ($request->hasFile('receipt')) {
@@ -587,8 +589,8 @@ class ExpenseController extends Controller
             'expense_date' => 'sometimes|date|before_or_equal:today',
             'description' => 'sometimes|string|max:1000',
             'amount' => 'sometimes|numeric|min:0.01|max:999999.99',
-            'expense_type' => ['sometimes', Rule::exists('expense_types', 'code')->where('is_active', true)],
-            'payment_method' => ['sometimes', Rule::exists('payment_methods', 'code')->where('is_active', true)],
+            'expense_type' => ['nullable', 'string'],
+            'payment_method' => ['nullable', 'string'],
             'receipt' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
         ]);
 

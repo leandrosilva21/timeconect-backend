@@ -7,7 +7,6 @@ use App\Models\MovideskAgent;
 use App\Models\MovideskOrganization;
 use App\Models\MovideskTicket;
 use App\Models\Project;
-use App\Models\ServiceType;
 use App\Models\SystemSetting;
 use App\Models\Timesheet;
 use App\Models\User;
@@ -106,17 +105,13 @@ class MovideskSyncOrgsCommand extends Command
         // ── 3. Revincular apontamentos (timesheets) ao projeto correto ────────
         $this->info('Revinculando apontamentos Movidesk ao projeto correto...');
 
-        $serviceType = ServiceType::where('code', 'sustentacao')
-            ->orWhere('name', 'Sustentação')
-            ->first();
-
-        if (!$serviceType) {
-            $this->warn('ServiceType sustentação não encontrado — relink de apontamentos ignorado.');
-            return self::SUCCESS;
-        }
-
-        // Mapa customer_id → project_id (projeto de sustentação ativo por cliente)
-        $projectMap = Project::where('service_type_id', $serviceType->id)
+        // Mesma lógica do SustentacaoController: busca parcial no nome (ilike)
+        $projectMap = Project::join('service_types', 'service_types.id', '=', 'projects.service_type_id')
+            ->where(function ($q) {
+                $q->where('service_types.code', 'sustentacao')
+                  ->orWhere('service_types.name', 'ilike', '%sustenta%');
+            })
+            ->select('projects.*')
             ->get()
             ->filter(fn($p) => $p->isActive())
             ->mapWithKeys(fn($p) => [$p->customer_id => $p->id])

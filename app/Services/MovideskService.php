@@ -352,29 +352,28 @@ class MovideskService
     private function extractProjectId(?int $customerId): ?int
     {
         if ($customerId) {
-            $serviceType = ServiceType::where('code', 'sustentacao')
-                ->orWhere('name', 'Sustentação')
+            // Mesma lógica do SustentacaoController: busca parcial no nome (ilike)
+            $project = Project::where('customer_id', $customerId)
+                ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
+                ->where(function ($q) {
+                    $q->where('service_types.code', 'sustentacao')
+                      ->orWhere('service_types.name', 'ilike', '%sustenta%');
+                })
+                ->select('projects.*')
                 ->first();
 
-            if ($serviceType) {
-                // Busca o projeto sem filtro de status para detectar projetos inativos
-                $project = Project::where('customer_id', $customerId)
-                    ->where('service_type_id', $serviceType->id)
-                    ->first();
-
-                if ($project) {
-                    if ($project->isActive()) {
-                        return $project->id;
-                    }
-
-                    // Projeto encontrado mas inativo → usa projeto padrão
-                    Log::warning('⚠️ [MOVIDESK] Projeto do cliente está inativo — usando projeto padrão', [
-                        'project_id'   => $project->id,
-                        'project_name' => $project->name,
-                        'status'       => $project->status,
-                        'customer_id'  => $customerId,
-                    ]);
+            if ($project) {
+                if ($project->isActive()) {
+                    return $project->id;
                 }
+
+                // Projeto encontrado mas inativo → usa projeto padrão
+                Log::warning('⚠️ [MOVIDESK] Projeto do cliente está inativo — usando projeto padrão', [
+                    'project_id'   => $project->id,
+                    'project_name' => $project->name,
+                    'status'       => $project->status,
+                    'customer_id'  => $customerId,
+                ]);
             }
         }
 

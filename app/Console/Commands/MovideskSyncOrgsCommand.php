@@ -3,13 +3,11 @@
 namespace App\Console\Commands;
 
 use App\Models\Customer;
-use App\Models\MovideskAgent;
 use App\Models\MovideskOrganization;
 use App\Models\MovideskTicket;
 use App\Models\Project;
 use App\Models\SystemSetting;
 use App\Models\Timesheet;
-use App\Models\User;
 use App\Services\MovideskService;
 use Illuminate\Console\Command;
 
@@ -34,8 +32,10 @@ class MovideskSyncOrgsCommand extends Command
             collect($orgs)->map(fn($o) => [mb_substr($o['name'], 0, 40), $o['cpfCnpj'] ?: '(vazio)'])->values()->toArray()
         );
 
-        // ── 1. Salva/atualiza tabela movidesk_organizations ───────────────────
+        // ── 1. Salva/atualiza movidesk_organizations com customer_id por CNPJ ──
         $this->info('Sincronizando tabela de organizações...');
+
+        // Índice: CNPJ normalizado → Customer (para match por CNPJ)
         $customersByCnpj = Customer::whereNotNull('cgc')
             ->get()
             ->keyBy(fn($c) => preg_replace('/[^0-9]/', '', $c->cgc));
@@ -46,13 +46,15 @@ class MovideskSyncOrgsCommand extends Command
 
             if ($cnpj) {
                 $cnpjNorm   = preg_replace('/[^0-9]/', '', $cnpj);
+                // 1º: tenta pelo CNPJ
                 $customerId = $customersByCnpj[$cnpjNorm]->id ?? null;
+            }
 
-                if (!$customerId) {
-                    $customerId = Customer::where('name', $org['name'])
-                        ->orWhere('company_name', $org['name'])
-                        ->value('id');
-                }
+            // 2º: fallback por nome (para orgs sem CNPJ ou CNPJ não cadastrado)
+            if (!$customerId) {
+                $customerId = Customer::where('name', $org['name'])
+                    ->orWhere('company_name', $org['name'])
+                    ->value('id');
             }
 
             MovideskOrganization::updateOrCreate(
@@ -66,46 +68,54 @@ class MovideskSyncOrgsCommand extends Command
             );
         }
 
-        // ── 2. Atualiza cpf_cnpj e customer_id nos movidesk_tickets ──────────
-        $this->info('Atualizando tickets...');
+        // ── 2. Atualiza movidesk_tickets usando movidesk_organizations (CNPJ) ──
+        // Índice: nome da org (lowercase) → movidesk_organization (com customer_id)
+        $this->info('Atualizando customer_id nos tickets via CNPJ...');
+
+        $orgByName = MovideskOrganization::whereNotNull('customer_id')
+            ->get()
+            ->keyBy(fn($o) => strtolower(trim($o->name)));
+
         $updatedTickets = 0;
 
-        MovideskTicket::whereNotNull('solicitante')->orderBy('id')->each(function (MovideskTicket $ticket) use ($orgs, &$updatedTickets) {
-            $orgName = trim($ticket->solicitante['organization'] ?? '');
-            if (!$orgName) return;
+        MovideskTicket::whereNotNull('solicitante')->orderBy('id')->each(
+            function (MovideskTicket $ticket) use ($orgs, $orgByName, &$updatedTickets) {
+                $orgName = trim($ticket->solicitante['organization'] ?? '');
+                if (!$orgName) return;
 
-            $key  = strtolower($orgName);
-            $org  = $orgs[$key] ?? null;
-            $cnpj = $org['cpfCnpj'] ?? null;
+                $key     = strtolower($orgName);
+                $changed = false;
 
-            $changed = false;
+                // Atualiza cpf_cnpj no solicitante
+                $org  = $orgs[$key] ?? null;
+                $cnpj = $org['cpfCnpj'] ?? null;
+                if ($cnpj) {
+                    $solicitante             = $ticket->solicitante;
+                    $solicitante['cpf_cnpj'] = $cnpj;
+                    $ticket->solicitante     = $solicitante;
+                    $changed = true;
+                }
 
-            if ($cnpj) {
-                $solicitante             = $ticket->solicitante;
-                $solicitante['cpf_cnpj'] = $cnpj;
-                $ticket->solicitante     = $solicitante;
-                $changed = true;
+                // Atualiza customer_id usando movidesk_organizations (resolvido por CNPJ)
+                $movideskOrg = $orgByName[$key] ?? null;
+                if ($movideskOrg && $movideskOrg->customer_id !== $ticket->customer_id) {
+                    $ticket->customer_id = $movideskOrg->customer_id;
+                    $changed = true;
+                }
 
-                if (!$ticket->customer_id) {
-                    $customerId = Customer::where('cgc', $cnpj)->value('id');
-                    if ($customerId) {
-                        $ticket->customer_id = $customerId;
-                    }
+                if ($changed) {
+                    $ticket->save();
+                    $updatedTickets++;
                 }
             }
+        );
 
-            if ($changed) {
-                $ticket->save();
-                $updatedTickets++;
-            }
-        });
+        $this->info("{$updatedTickets} tickets atualizados.");
 
-        $this->info("{$updatedTickets} tickets atualizados com CNPJ.");
-
-        // ── 3. Revincular apontamentos (timesheets) ao projeto correto ────────
+        // ── 3. Revincular timesheets ao projeto de sustentação correto ─────────
         $this->info('Revinculando apontamentos Movidesk ao projeto correto...');
 
-        // Mesma lógica do SustentacaoController: busca parcial no nome (ilike)
+        // Mesma lógica do SustentacaoController: ilike '%sustenta%'
         $projectMap = Project::join('service_types', 'service_types.id', '=', 'projects.service_type_id')
             ->where(function ($q) {
                 $q->where('service_types.code', 'sustentacao')
@@ -117,15 +127,13 @@ class MovideskSyncOrgsCommand extends Command
             ->mapWithKeys(fn($p) => [$p->customer_id => $p->id])
             ->toArray();
 
-        $defaultProjectId  = (int) SystemSetting::get('movidesk_default_project_id');
-        $defaultCustomerId = (int) SystemSetting::get('movidesk_default_customer_id');
-        $relinkCount       = 0;
+        $defaultProjectId = (int) SystemSetting::get('movidesk_default_project_id');
+        $relinkCount      = 0;
 
-        // Itera todos os movidesk_tickets com customer_id resolvido
         MovideskTicket::whereNotNull('customer_id')
             ->whereNotNull('ticket_id')
             ->orderBy('id')
-            ->each(function (MovideskTicket $mt) use ($projectMap, $defaultProjectId, $defaultCustomerId, &$relinkCount) {
+            ->each(function (MovideskTicket $mt) use ($projectMap, $defaultProjectId, &$relinkCount) {
                 $correctCustomerId = $mt->customer_id;
                 $correctProjectId  = $projectMap[$correctCustomerId] ?? $defaultProjectId;
 

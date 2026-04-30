@@ -891,7 +891,13 @@ class SustentacaoController extends Controller
             }
             ignore_user_abort(true);
             set_time_limit(300);
-            Artisan::call('movidesk:sync-orgs');
+            error_log('[sync-orgs] callback iniciado em ' . date('H:i:s'));
+            try {
+                $exitCode = Artisan::call('movidesk:sync-orgs');
+                error_log('[sync-orgs] concluído. exit=' . $exitCode . ' | ' . Artisan::output());
+            } catch (\Throwable $e) {
+                error_log('[sync-orgs] ERRO: ' . $e->getMessage());
+            }
         });
 
         return response()->json([

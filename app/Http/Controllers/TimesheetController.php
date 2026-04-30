@@ -406,31 +406,41 @@ class TimesheetController extends Controller
                         $arr['ticket_solicitante'] = json_decode($arr['ticket_solicitante'], true);
                     }
                     // Para timesheets em conflito, inclui os apontamentos sobrepostos
-                    if ($ts->status === Timesheet::STATUS_CONFLICTED && $ts->start_time && $ts->end_time) {
-                        $arr['conflicting_timesheets'] = Timesheet::with(['customer', 'project.customer'])
-                            ->where('user_id', $ts->user_id)
-                            ->where('date', $ts->date->format('Y-m-d'))
-                            ->where('id', '!=', $ts->id)
-                            ->whereNotIn('status', [Timesheet::STATUS_REJECTED])
-                            ->whereNotNull('start_time')
-                            ->whereNotNull('end_time')
-                            ->where('start_time', '<', $ts->end_time->format('H:i:s'))
-                            ->where('end_time', '>', $ts->start_time->format('H:i:s'))
-                            ->get()
-                            ->map(fn($c) => [
-                                'id'            => $c->id,
-                                'date'          => $c->date->format('Y-m-d'),
-                                'start_time'    => $c->start_time?->format('H:i'),
-                                'end_time'      => $c->end_time?->format('H:i'),
-                                'effort_hours'  => $c->effort_hours,
-                                'customer_name' => $c->customer?->name ?? $c->project?->customer?->name,
-                                'project_name'  => $c->project?->name,
-                                'origin'        => $c->origin,
-                            ])
-                            ->values()
-                            ->all();
-                    } else {
-                        $arr['conflicting_timesheets'] = [];
+                    $arr['conflicting_timesheets'] = [];
+                    if ($ts->status === Timesheet::STATUS_CONFLICTED && $ts->start_time && $ts->end_time && $ts->date) {
+                        try {
+                            $dateStr  = $ts->date instanceof \Carbon\Carbon ? $ts->date->format('Y-m-d') : (string) $ts->date;
+                            $endStr   = $ts->end_time instanceof \Carbon\Carbon   ? $ts->end_time->format('H:i:s')   : substr((string) $ts->end_time,   0, 8);
+                            $startStr = $ts->start_time instanceof \Carbon\Carbon ? $ts->start_time->format('H:i:s') : substr((string) $ts->start_time, 0, 8);
+
+                            $arr['conflicting_timesheets'] = Timesheet::with(['customer', 'project.customer'])
+                                ->where('user_id', $ts->user_id)
+                                ->whereDate('date', $dateStr)
+                                ->where('id', '!=', $ts->id)
+                                ->whereNotIn('status', [Timesheet::STATUS_REJECTED])
+                                ->whereNotNull('start_time')
+                                ->whereNotNull('end_time')
+                                ->where('start_time', '<', $endStr)
+                                ->where('end_time', '>', $startStr)
+                                ->get()
+                                ->map(fn($c) => [
+                                    'id'            => $c->id,
+                                    'date'          => $c->date instanceof \Carbon\Carbon ? $c->date->format('Y-m-d') : (string) $c->date,
+                                    'start_time'    => $c->start_time instanceof \Carbon\Carbon ? $c->start_time->format('H:i') : null,
+                                    'end_time'      => $c->end_time instanceof \Carbon\Carbon   ? $c->end_time->format('H:i')   : null,
+                                    'effort_hours'  => $c->effort_hours,
+                                    'customer_name' => $c->customer?->name ?? $c->project?->customer?->name,
+                                    'project_name'  => $c->project?->name,
+                                    'origin'        => $c->origin,
+                                ])
+                                ->values()
+                                ->all();
+                        } catch (\Throwable $e) {
+                            \Illuminate\Support\Facades\Log::warning('conflicting_timesheets lookup failed', [
+                                'timesheet_id' => $ts->id,
+                                'error'        => $e->getMessage(),
+                            ]);
+                        }
                     }
                     return $arr;
                 })->all();

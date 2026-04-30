@@ -661,6 +661,33 @@ class TimesheetController extends Controller
 
         $hasConflict = $hasConflict ?? false;
 
+        // Bloquear criação manual que criaria sobreposição de horários
+        if ($hasConflict && isset($overlappingIds) && $overlappingIds->isNotEmpty()) {
+            $conflictingTs = Timesheet::with(['customer', 'project.customer'])
+                ->whereIn('id', $overlappingIds)
+                ->first();
+            return response()->json([
+                'code'          => 'TIMESHEET_CONFLICT',
+                'type'          => 'error',
+                'message'       => 'Conflito de horário',
+                'detailMessage' => 'O horário informado conflita com outro apontamento já registrado para este dia.',
+                'conflicting_timesheet' => [
+                    'date'          => $conflictingTs->date instanceof \Carbon\Carbon
+                                        ? $conflictingTs->date->format('Y-m-d')
+                                        : (string) $conflictingTs->date,
+                    'start_time'    => $conflictingTs->start_time instanceof \Carbon\Carbon
+                                        ? $conflictingTs->start_time->format('H:i')
+                                        : null,
+                    'end_time'      => $conflictingTs->end_time instanceof \Carbon\Carbon
+                                        ? $conflictingTs->end_time->format('H:i')
+                                        : null,
+                    'customer_name' => $conflictingTs->customer?->name
+                                        ?? $conflictingTs->project?->customer?->name,
+                    'project_name'  => $conflictingTs->project?->name,
+                ],
+            ], 422);
+        }
+
         DB::beginTransaction();
         try {
             $validatedData = $validator->validated();
@@ -1308,8 +1335,8 @@ class TimesheetController extends Controller
                 $timesheet->attachment_original_name = $file->getClientOriginalName();
             }
 
-            // Bloquear edição manual que criaria sobreposição de horários
-            if ($timesheet->start_time && $timesheet->end_time && $timesheet->origin !== 'webhook') {
+            // Bloquear edição que criaria sobreposição de horários
+            if ($timesheet->start_time && $timesheet->end_time) {
                 $overlappingTs = Timesheet::with(['customer', 'project.customer'])
                     ->where('user_id', $timesheet->user_id)
                     ->where('date', $timesheet->date)

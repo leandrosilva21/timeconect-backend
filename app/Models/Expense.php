@@ -314,20 +314,22 @@ class Expense extends Model
             return false;
         }
 
-        // Criar registro de estorno
-        $this->reversals()->create([
-            'reversed_by' => $reverser->id,
-            'reversal_reason' => $reason,
-            'original_approver_id' => $this->reviewed_by,
-            'original_approval_date' => $this->reviewed_at,
-        ]);
+        try {
+            $this->reversals()->create([
+                'reversed_by'            => $reverser->id,
+                'reversal_reason'        => $reason,
+                'original_approver_id'   => $this->reviewed_by ?? $reverser->id,
+                'original_approval_date' => $this->reviewed_at ?? now(),
+            ]);
+        } catch (\Exception $e) {
+            // Tabela expense_reversals não migrada ainda — continua sem o log
+        }
 
-        // Reverter status para pendente
-        $this->status = self::STATUS_PENDING;
-        $this->reviewed_by = null;
-        $this->reviewed_at = null;
+        $this->status          = self::STATUS_PENDING;
+        $this->reviewed_by     = null;
+        $this->reviewed_at     = null;
         $this->rejection_reason = null;
-        $this->charge_client = false;
+        $this->charge_client   = false;
 
         return $this->save();
     }

@@ -883,17 +883,20 @@ class SustentacaoController extends Controller
     {
         $this->authorize();
 
-        set_time_limit(300);
-
-        $exitCode = Artisan::call('movidesk:sync-orgs');
-        $output   = Artisan::output();
+        // Responde imediatamente e roda o comando APÓS fechar a conexão HTTP
+        // (evita o timeout de 30s do proxy do Render)
+        app()->terminating(function () {
+            if (function_exists('fastcgi_finish_request')) {
+                fastcgi_finish_request();
+            }
+            ignore_user_abort(true);
+            set_time_limit(300);
+            Artisan::call('movidesk:sync-orgs');
+        });
 
         return response()->json([
-            'success' => $exitCode === 0,
-            'message' => $exitCode === 0
-                ? 'Integração concluída. Verifique os logs do Render para o detalhamento.'
-                : 'Erro na integração. Verifique os logs do Render.',
-            'output'  => $output,
+            'success' => true,
+            'message' => 'Integração iniciada. Aguarde ~1 minuto e recarregue a aba.',
         ]);
     }
 

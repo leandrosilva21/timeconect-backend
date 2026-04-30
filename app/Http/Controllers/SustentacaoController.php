@@ -883,15 +883,17 @@ class SustentacaoController extends Controller
     {
         $this->authorize();
 
-        $php     = PHP_BINARY;
-        $artisan = base_path('artisan');
-        $log     = storage_path('logs/sync-orgs.log');
+        set_time_limit(300);
 
-        exec("{$php} {$artisan} movidesk:sync-orgs >> {$log} 2>&1 &");
+        $exitCode = Artisan::call('movidesk:sync-orgs');
+        $output   = Artisan::output();
 
         return response()->json([
-            'success' => true,
-            'message' => 'Integração iniciada em background. Aguarde ~1 minuto e recarregue a aba. Verifique os logs do Render para o resultado detalhado.',
+            'success' => $exitCode === 0,
+            'message' => $exitCode === 0
+                ? 'Integração concluída. Verifique os logs do Render para o detalhamento.'
+                : 'Erro na integração. Verifique os logs do Render.',
+            'output'  => $output,
         ]);
     }
 

@@ -2,6 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Customer;
+use App\Models\MovideskOrganization;
+use App\Models\Project;
 use App\Models\SystemSetting;
 use App\Models\Timesheet;
 use App\Services\MovideskService;
@@ -175,5 +178,93 @@ class MovideskAdminController extends Controller
         }
 
         return response()->json($tests);
+    }
+
+    /**
+     * Diagnóstico do mapeamento org→cliente→projeto para o Movidesk.
+     * GET /api/v1/movidesk/debug-orgs
+     */
+    public function debugOrgs(): JsonResponse
+    {
+        $orgs = MovideskOrganization::orderBy('name')->get()->map(function ($o) {
+            $customer = $o->customer_id ? Customer::select('id', 'name', 'company_name')->find($o->customer_id) : null;
+
+            $project = null;
+            if ($o->customer_id) {
+                $project = Project::where('customer_id', $o->customer_id)
+                    ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
+                    ->where(function ($q) {
+                        $q->where('service_types.code', 'sustentacao')
+                          ->orWhere('service_types.name', 'ilike', '%sustenta%');
+                    })
+                    ->select('projects.id', 'projects.name', 'projects.status',
+                             'service_types.code as st_code', 'service_types.name as st_name')
+                    ->first();
+            }
+
+            return [
+                'org_id'        => $o->id,
+                'org_name'      => $o->name,
+                'cnpj'          => $o->cnpj,
+                'customer_id'   => $o->customer_id,
+                'customer_name' => $customer?->name ?? '(sem vínculo)',
+                'project_id'    => $project?->id,
+                'project_name'  => $project?->name ?? '(sem projeto sustentação)',
+                'project_status'=> $project?->status,
+                'st_code'       => $project?->st_code,
+                'is_active_proj'=> $project ? !in_array($project->status, ['cancelled', 'finished', 'paused']) : null,
+            ];
+        });
+
+        $defaultProjectId = SystemSetting::get('movidesk_default_project_id');
+        $defaultProject   = $defaultProjectId ? Project::select('id', 'name')->find($defaultProjectId) : null;
+
+        return response()->json([
+            'default_project_id'   => $defaultProjectId,
+            'default_project_name' => $defaultProject?->name ?? '(não configurado)',
+            'orgs'                 => $orgs,
+            'unlinked_count'       => $orgs->whereNull('customer_id')->count(),
+            'no_project_count'     => $orgs->whereNull('project_id')->count(),
+        ]);
+    }
+
+    /**
+     * Vincula manualmente uma org Movidesk a um cliente.
+     * POST /api/v1/movidesk/link-org
+     * Body: { "org_id": 1, "customer_id": 42 }
+     */
+    public function linkOrg(Request $request): JsonResponse
+    {
+        $key = $request->header('X-Admin-Key');
+        if ($key !== config('app.admin_exec_key')) {
+            return response()->json(['error' => 'Não autorizado'], 403);
+        }
+
+        $orgId      = $request->input('org_id');
+        $customerId = $request->input('customer_id');
+
+        if (!$orgId || !$customerId) {
+            return response()->json(['error' => 'org_id e customer_id são obrigatórios'], 422);
+        }
+
+        $org = MovideskOrganization::find($orgId);
+        if (!$org) {
+            return response()->json(['error' => "Org #{$orgId} não encontrada"], 404);
+        }
+
+        $customer = Customer::find($customerId);
+        if (!$customer) {
+            return response()->json(['error' => "Cliente #{$customerId} não encontrado"], 404);
+        }
+
+        $org->customer_id = (int) $customerId;
+        $org->save();
+
+        return response()->json([
+            'success'       => true,
+            'org_name'      => $org->name,
+            'customer_name' => $customer->name,
+            'message'       => 'Vínculo salvo. Execute sync-orgs para reprocessar os tickets.',
+        ]);
     }
 }

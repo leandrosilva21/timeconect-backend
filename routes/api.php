@@ -70,8 +70,9 @@ Route::prefix('v1')->group(function () {
         ->name('webhooks.movidesk.ticket');
 
     // 🔍 DEBUG temporário - diagnóstico da API Movidesk (sem auth)
-    Route::get('/movidesk/debug', [\App\Http\Controllers\MovideskAdminController::class, 'debug'])
-        ->name('movidesk.debug.public');
+    Route::get('/movidesk/debug',      [\App\Http\Controllers\MovideskAdminController::class, 'debug'])->name('movidesk.debug.public');
+    Route::get('/movidesk/debug-orgs', [\App\Http\Controllers\MovideskAdminController::class, 'debugOrgs'])->name('movidesk.debug.orgs');
+    Route::post('/movidesk/link-org',  [\App\Http\Controllers\MovideskAdminController::class, 'linkOrg'])->name('movidesk.link.org');
 
     /**
      * @OA\Get(

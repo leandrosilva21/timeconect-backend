@@ -125,4 +125,6 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+    'admin_exec_key' => env('ADMIN_EXEC_KEY', ''),
+
 ];

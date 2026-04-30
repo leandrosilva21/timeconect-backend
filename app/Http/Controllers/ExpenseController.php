@@ -987,6 +987,13 @@ class ExpenseController extends Controller
             return $this->notFoundResponse('Despesa não encontrada');
         }
 
+        if ($expense->status !== 'approved') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Apenas despesas aprovadas podem ser estornadas'
+            ], 422);
+        }
+
         // Administradores podem estornar qualquer aprovação
         if (!$user->isAdmin() && !$expense->canBeReversedBy($user)) {
             return response()->json([
@@ -1003,20 +1010,44 @@ class ExpenseController extends Controller
             return $this->validationErrorResponse($validator->errors()->all());
         }
 
-        if ($expense->reverseApproval($user, $request->reason)) {
-            $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
+        try {
+            \DB::beginTransaction();
+
+            // Registrar estorno (tabela pode não existir em ambientes legados — ignora silenciosamente)
+            try {
+                $expense->reversals()->create([
+                    'reversed_by'            => $user->id,
+                    'reversal_reason'        => $request->reason,
+                    'original_approver_id'   => $expense->reviewed_by ?? $user->id,
+                    'original_approval_date' => $expense->reviewed_at ?? now(),
+                ]);
+            } catch (\Exception $e) {
+                // Tabela expense_reversals ainda não migrada — continua sem o log
+            }
+
+            $expense->status      = 'pending';
+            $expense->reviewed_by = null;
+            $expense->reviewed_at = null;
+            $expense->rejection_reason = null;
+            $expense->charge_client    = false;
+            $expense->save();
+
+            \DB::commit();
+
+            $expense->load(['user', 'project.customer', 'category']);
 
             return response()->json([
                 'success' => true,
-                'data' => $expense,
-                'message' => 'Aprovação estornada com sucesso!'
+                'data'    => $expense,
+                'message' => 'Aprovação estornada com sucesso!',
             ]);
+        } catch (\Exception $e) {
+            \DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Erro ao estornar aprovação: ' . $e->getMessage(),
+            ], 500);
         }
-
-        return response()->json([
-            'success' => false,
-            'message' => 'Erro ao estornar aprovação'
-        ], 500);
     }
 
     /**

@@ -902,24 +902,40 @@ class SustentacaoController extends Controller
             'project_name'  => $p->name,
             'st_code'       => $p->st_code,
             'st_name'       => $p->st_name,
-            'is_active'     => $p->isActive(),
         ])->values();
 
-        // Customers que têm tickets mas não aparecem no mapa
+        // Customers com tickets mas sem projeto no mapa — inclui projetos existentes para diagnóstico
         $mappedCustomerIds = $projectMap->pluck('customer_id')->unique()->toArray();
-        $orphans = MovideskTicket::whereNotNull('customer_id')
+
+        $orphanCustomerIds = MovideskTicket::whereNotNull('customer_id')
             ->whereNotIn('customer_id', $mappedCustomerIds)
-            ->select('customer_id', \DB::raw('count(*) as tickets'), \DB::raw('count(ticket_id) as com_ticket'))
-            ->groupBy('customer_id')
+            ->pluck('customer_id')
+            ->unique()
+            ->toArray();
+
+        // Para cada orphan, busca TODOS os projetos (qualquer service_type) para diagnóstico
+        $orphanProjects = Project::leftJoin('service_types', 'service_types.id', '=', 'projects.service_type_id')
+            ->whereIn('projects.customer_id', $orphanCustomerIds)
+            ->select('projects.id', 'projects.customer_id', 'projects.name', 'projects.status',
+                     'service_types.code as st_code', 'service_types.name as st_name')
             ->get()
-            ->map(fn($r) => [
-                'customer_id'   => $r->customer_id,
-                'customer_name' => $customerNames[$r->customer_id] ?? "(#{$r->customer_id})",
-                'tickets'       => $r->tickets,
-                'com_ticket'    => $r->com_ticket,
-            ])
-            ->sortByDesc('com_ticket')
-            ->values();
+            ->groupBy('customer_id');
+
+        $orphans = collect($orphanCustomerIds)->map(function ($customerId) use ($customerNames, $orphanProjects) {
+            $projects = ($orphanProjects[$customerId] ?? collect())->map(fn($p) => [
+                'project_id'   => $p->id,
+                'project_name' => $p->name,
+                'status'       => $p->status,
+                'st_code'      => $p->st_code,
+                'st_name'      => $p->st_name,
+            ])->values();
+
+            return [
+                'customer_id'   => $customerId,
+                'customer_name' => $customerNames[$customerId] ?? "(#{$customerId})",
+                'projects'      => $projects,
+            ];
+        })->values();
 
         return response()->json([
             'default_project_id' => $defaultProjectId ?: null,

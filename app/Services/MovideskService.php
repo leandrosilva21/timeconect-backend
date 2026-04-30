@@ -319,10 +319,13 @@ class MovideskService
             return $org->customer_id;
         }
 
-        // 2. Fallback: busca direta por nome no customers
-        $customer = Customer::where(function ($q) use ($orgName) {
-            $q->where('name', $orgName)->orWhere('company_name', $orgName);
-        })->where('active', true)->first();
+        // 2. Fallback: busca direta por nome no customers (case-insensitive)
+        $nameLower = strtolower(trim($orgName));
+        $customer  = Customer::where('active', true)
+            ->where(function ($q) use ($nameLower) {
+                $q->whereRaw('LOWER(TRIM(name)) = ?', [$nameLower])
+                  ->orWhereRaw('LOWER(TRIM(company_name)) = ?', [$nameLower]);
+            })->first();
 
         if (!$customer) {
             Log::warning('⚠️ [MOVIDESK] Cliente não encontrado no sistema', ['organization' => $orgName]);

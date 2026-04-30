@@ -51,21 +51,27 @@ class MovideskSyncOrgsCommand extends Command
                 $customerId = $customersByCnpj[$cnpjNorm]->id ?? null;
             }
 
-            // 2º: fallback por nome (para orgs sem CNPJ ou CNPJ não cadastrado)
+            // 2º: fallback por nome case-insensitive
             if (!$customerId) {
-                $customerId = Customer::where('name', $org['name'])
-                    ->orWhere('company_name', $org['name'])
+                $nameLower  = strtolower(trim($org['name']));
+                $customerId = Customer::whereRaw('LOWER(TRIM(name)) = ?', [$nameLower])
+                    ->orWhereRaw('LOWER(TRIM(company_name)) = ?', [$nameLower])
                     ->value('id');
+            }
+
+            $updateData = [
+                'name'      => $org['name'],
+                'cnpj'      => $cnpj ?: null,
+                'is_active' => $org['isActive'] ?? true,
+            ];
+            // Só sobrescreve customer_id quando encontramos um vínculo — preserva links manuais
+            if ($customerId) {
+                $updateData['customer_id'] = $customerId;
             }
 
             MovideskOrganization::updateOrCreate(
                 ['movidesk_id' => (string) $org['id']],
-                [
-                    'name'        => $org['name'],
-                    'cnpj'        => $cnpj ?: null,
-                    'is_active'   => $org['isActive'] ?? true,
-                    'customer_id' => $customerId,
-                ]
+                $updateData
             );
         }
 

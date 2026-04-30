@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Customer;
+use App\Models\MovideskOrganization;
 use App\Models\Project;
 use App\Models\SystemSetting;
 use Illuminate\Console\Command;
@@ -65,6 +66,18 @@ class MovideskDebugProjectsCommand extends Command
                     $p->id, mb_substr($p->name, 0, 40), $p->status, $p->st_code ?? '(null)', $p->st_name ?? '(null)'
                 ])->toArray()
             );
+        }
+
+        // ── 4. Orgs Movidesk SEM customer_id vinculado ──────────────────────────
+        $unlinked = MovideskOrganization::whereNull('customer_id')->get();
+        if ($unlinked->isNotEmpty()) {
+            $this->warn('=== ORGS SEM VÍNCULO (' . $unlinked->count() . ') — use movidesk:link-org para corrigir ===');
+            $this->table(
+                ['id', 'nome', 'cnpj'],
+                $unlinked->map(fn($o) => [$o->id, mb_substr($o->name, 0, 45), $o->cnpj ?: '(sem CNPJ)'])->toArray()
+            );
+        } else {
+            $this->info('Todas as orgs têm customer_id vinculado.');
         }
 
         return self::SUCCESS;

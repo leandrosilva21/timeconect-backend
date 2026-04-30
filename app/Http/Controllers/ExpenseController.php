@@ -777,6 +777,7 @@ class ExpenseController extends Controller
 
         if ($expense->approve($user, $chargeClient)) {
             $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
+            $this->invalidateListCache('expenses');
 
             return response()->json([
                 'success' => true,
@@ -853,6 +854,7 @@ class ExpenseController extends Controller
 
         if ($expense->reject($user, $request->reason)) {
             $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
+            $this->invalidateListCache('expenses');
 
             return response()->json([
                 'success' => true,
@@ -929,6 +931,7 @@ class ExpenseController extends Controller
 
         if ($expense->requestAdjustment($user, $request->reason)) {
             $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
+            $this->invalidateListCache('expenses');
 
             return response()->json([
                 'success' => true,
@@ -1190,6 +1193,7 @@ class ExpenseController extends Controller
 
         if ($expense->reverseRejection($user, $request->reason)) {
             $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
+            $this->invalidateListCache('expenses');
 
             return response()->json([
                 'success' => true,

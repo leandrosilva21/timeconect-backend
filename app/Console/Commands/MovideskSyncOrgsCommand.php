@@ -68,10 +68,10 @@ class MovideskSyncOrgsCommand extends Command
             );
         }
 
-        // ── 2. Atualiza movidesk_tickets usando movidesk_organizations (CNPJ) ──
-        // Índice: nome da org (lowercase) → movidesk_organization (com customer_id)
+        // ── 2. Atualiza movidesk_tickets usando CNPJ ──────────────────────────
         $this->info('Atualizando customer_id nos tickets via CNPJ...');
 
+        // Índice por nome (lowercase) → movidesk_organization (fallback)
         $orgByName = MovideskOrganization::whereNotNull('customer_id')
             ->get()
             ->keyBy(fn($o) => strtolower(trim($o->name)));
@@ -79,27 +79,36 @@ class MovideskSyncOrgsCommand extends Command
         $updatedTickets = 0;
 
         MovideskTicket::whereNotNull('solicitante')->orderBy('id')->each(
-            function (MovideskTicket $ticket) use ($orgs, $orgByName, &$updatedTickets) {
+            function (MovideskTicket $ticket) use ($orgs, $orgByName, $customersByCnpj, &$updatedTickets) {
                 $orgName = trim($ticket->solicitante['organization'] ?? '');
-                if (!$orgName) return;
-
                 $key     = strtolower($orgName);
                 $changed = false;
 
-                // Atualiza cpf_cnpj no solicitante
+                // Enriquece cpf_cnpj via fetchOrganizations (se disponível pelo nome)
                 $org  = $orgs[$key] ?? null;
                 $cnpj = $org['cpfCnpj'] ?? null;
-                if ($cnpj) {
+                if ($cnpj && ($ticket->solicitante['cpf_cnpj'] ?? null) !== $cnpj) {
                     $solicitante             = $ticket->solicitante;
                     $solicitante['cpf_cnpj'] = $cnpj;
                     $ticket->solicitante     = $solicitante;
                     $changed = true;
                 }
 
-                // Atualiza customer_id usando movidesk_organizations (resolvido por CNPJ)
-                $movideskOrg = $orgByName[$key] ?? null;
-                if ($movideskOrg && $movideskOrg->customer_id !== $ticket->customer_id) {
-                    $ticket->customer_id = $movideskOrg->customer_id;
+                // Resolve customer_id:
+                // 1º) CNPJ já gravado em solicitante['cpf_cnpj'] → busca em customers
+                // 2º) Fallback: nome da org → movidesk_organizations
+                $cpfCnpjNorm   = preg_replace('/[^0-9]/', '', $ticket->solicitante['cpf_cnpj'] ?? '');
+                $newCustomerId = null;
+
+                if ($cpfCnpjNorm) {
+                    $newCustomerId = $customersByCnpj[$cpfCnpjNorm]->id ?? null;
+                }
+                if (!$newCustomerId && $orgName) {
+                    $newCustomerId = ($orgByName[$key] ?? null)?->customer_id;
+                }
+
+                if ($newCustomerId && $newCustomerId !== $ticket->customer_id) {
+                    $ticket->customer_id = $newCustomerId;
                     $changed = true;
                 }
 

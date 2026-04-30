@@ -10,6 +10,7 @@ use App\Models\SystemSetting;
 use App\Models\Timesheet;
 use App\Services\MovideskService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Log;
 
 class MovideskSyncOrgsCommand extends Command
 {
@@ -132,9 +133,10 @@ class MovideskSyncOrgsCommand extends Command
         );
 
         $this->info("{$updatedTickets} tickets atualizados.");
+        arsort($ticketsByCustomer);
+        Log::info('[sync-orgs] Tickets atualizados: ' . $updatedTickets, $ticketsByCustomer);
 
         if (!empty($ticketsByCustomer)) {
-            arsort($ticketsByCustomer);
             $this->table(
                 ['Organização (método)', 'Tickets atualizados'],
                 collect($ticketsByCustomer)->map(fn($count, $org) => [mb_substr($org, 0, 55), $count])->values()->toArray()
@@ -198,14 +200,17 @@ class MovideskSyncOrgsCommand extends Command
             });
 
         $this->info("{$relinkCount} apontamentos revinculados ao projeto correto.");
+        arsort($relinkByProject);
+        Log::info('[sync-orgs] Apontamentos revinculados: ' . $relinkCount, $relinkByProject);
 
         if (!empty($relinkByProject)) {
-            arsort($relinkByProject);
             $this->table(
                 ['Cliente → Projeto', 'Apontamentos revinculados'],
                 collect($relinkByProject)->map(fn($count, $label) => [mb_substr($label, 0, 60), $count])->values()->toArray()
             );
         }
+
+        Log::info('[sync-orgs] Concluído.');
 
         return self::SUCCESS;
     }

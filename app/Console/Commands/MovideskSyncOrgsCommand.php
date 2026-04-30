@@ -158,9 +158,13 @@ class MovideskSyncOrgsCommand extends Command
             ->mapWithKeys(fn($p) => [$p->customer_id => $p->id])
             ->toArray();
 
-        $defaultProjectId  = (int) SystemSetting::get('movidesk_default_project_id');
-        $relinkCount       = 0;
-        $relinkByProject   = []; // log: "Cliente → Projeto" → qtd apontamentos
+        $defaultProjectId = (int) SystemSetting::get('movidesk_default_project_id');
+
+        $this->line('  projectMap: ' . count($projectMap) . ' projetos de sustentação encontrados.');
+        $this->line('  defaultProjectId: ' . ($defaultProjectId ?: '(não configurado)'));
+
+        $relinkCount     = 0;
+        $relinkByProject = [];
 
         // Mapa auxiliar para nomes (customer_id → nome, project_id → nome)
         $customerNames = Customer::pluck('name', 'id')->toArray();
@@ -175,26 +179,31 @@ class MovideskSyncOrgsCommand extends Command
                 &$relinkCount, &$relinkByProject
             ) {
                 $correctCustomerId = $mt->customer_id;
-                $correctProjectId  = $projectMap[$correctCustomerId] ?? $defaultProjectId;
+                $correctProjectId  = $projectMap[$correctCustomerId] ?? $defaultProjectId ?: null;
 
-                if (!$correctProjectId) return;
+                // Sempre atualiza customer_id; atualiza project_id só se souber o correto
+                $updates = ['customer_id' => $correctCustomerId];
+                if ($correctProjectId) {
+                    $updates['project_id'] = $correctProjectId;
+                }
 
                 $affected = Timesheet::where('ticket', $mt->ticket_id)
                     ->where('origin', 'webhook')
                     ->where(function ($q) use ($correctCustomerId, $correctProjectId) {
-                        $q->where('customer_id', '!=', $correctCustomerId)
-                          ->orWhere('project_id', '!=', $correctProjectId);
+                        $q->where('customer_id', '!=', $correctCustomerId);
+                        if ($correctProjectId) {
+                            $q->orWhere('project_id', '!=', $correctProjectId);
+                        }
                     })
-                    ->update([
-                        'customer_id' => $correctCustomerId,
-                        'project_id'  => $correctProjectId,
-                    ]);
+                    ->update($updates);
 
                 if ($affected > 0) {
                     $relinkCount += $affected;
                     $customerName = $customerNames[$correctCustomerId] ?? "Cliente #{$correctCustomerId}";
-                    $projectName  = $projectNames[$correctProjectId]  ?? "Projeto #{$correctProjectId}";
-                    $logKey       = "{$customerName} → {$projectName}";
+                    $projectName  = $correctProjectId
+                        ? ($projectNames[$correctProjectId] ?? "Projeto #{$correctProjectId}")
+                        : '(sem projeto definido)';
+                    $logKey = "{$customerName} → {$projectName}";
                     $relinkByProject[$logKey] = ($relinkByProject[$logKey] ?? 0) + $affected;
                 }
             });

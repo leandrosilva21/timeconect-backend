@@ -899,10 +899,10 @@ class SustentacaoController extends Controller
                 $exitCode = Artisan::call('movidesk:sync-orgs');
                 $out = trim(Artisan::output());
                 file_put_contents($debugFile, date('H:i:s') . " done exit=$exitCode\n$out\n", FILE_APPEND | LOCK_EX);
-                fwrite(STDERR, "[sync-orgs] concluído exit=$exitCode" . PHP_EOL);
+                fwrite(\STDERR, "[sync-orgs] concluído exit=$exitCode" . PHP_EOL);
             } catch (\Throwable $e) {
                 file_put_contents($debugFile, date('H:i:s') . " ERRO: " . $e->getMessage() . "\n", FILE_APPEND | LOCK_EX);
-                fwrite(STDERR, '[sync-orgs] ERRO: ' . $e->getMessage() . PHP_EOL);
+                fwrite(\STDERR, '[sync-orgs] ERRO: ' . $e->getMessage() . PHP_EOL);
             }
         });
 

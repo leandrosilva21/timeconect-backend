@@ -879,6 +879,55 @@ class SustentacaoController extends Controller
         ]);
     }
 
+    public function debugProjectMap(): JsonResponse
+    {
+        $this->authorize();
+
+        $projectMap = Project::join('service_types', 'service_types.id', '=', 'projects.service_type_id')
+            ->where(function ($q) {
+                $q->where('service_types.code', 'sustentacao')
+                  ->orWhere('service_types.name', 'ilike', '%sustenta%');
+            })
+            ->select('projects.*', 'service_types.code as st_code', 'service_types.name as st_name')
+            ->get()
+            ->filter(fn($p) => $p->isActive());
+
+        $defaultProjectId = (int) SystemSetting::get('movidesk_default_project_id');
+        $customerNames    = Customer::pluck('name', 'id');
+
+        $rows = $projectMap->map(fn($p) => [
+            'customer_id'   => $p->customer_id,
+            'customer_name' => $customerNames[$p->customer_id] ?? "(#{$p->customer_id})",
+            'project_id'    => $p->id,
+            'project_name'  => $p->name,
+            'st_code'       => $p->st_code,
+            'st_name'       => $p->st_name,
+            'is_active'     => $p->isActive(),
+        ])->values();
+
+        // Customers que têm tickets mas não aparecem no mapa
+        $mappedCustomerIds = $projectMap->pluck('customer_id')->unique()->toArray();
+        $orphans = MovideskTicket::whereNotNull('customer_id')
+            ->whereNotIn('customer_id', $mappedCustomerIds)
+            ->select('customer_id', \DB::raw('count(*) as tickets'), \DB::raw('count(ticket_id) as com_ticket'))
+            ->groupBy('customer_id')
+            ->get()
+            ->map(fn($r) => [
+                'customer_id'   => $r->customer_id,
+                'customer_name' => $customerNames[$r->customer_id] ?? "(#{$r->customer_id})",
+                'tickets'       => $r->tickets,
+                'com_ticket'    => $r->com_ticket,
+            ])
+            ->sortByDesc('com_ticket')
+            ->values();
+
+        return response()->json([
+            'default_project_id' => $defaultProjectId ?: null,
+            'project_map'        => $rows,
+            'orphan_customers'   => $orphans,
+        ]);
+    }
+
     public function syncOrgs(): JsonResponse
     {
         $this->authorize();

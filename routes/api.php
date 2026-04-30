@@ -800,6 +800,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/executive',           [SustentacaoController::class, 'executive'])->name('sustentacao.executive');
             Route::get('/debug-clientes',      [SustentacaoController::class, 'debugClientes'])->name('sustentacao.debug-clientes');
             Route::get('/debug-responsaveis',  [SustentacaoController::class, 'debugResponsaveis'])->name('sustentacao.debug-responsaveis');
+            Route::get('/debug-project-map',   [SustentacaoController::class, 'debugProjectMap'])->name('sustentacao.debug-project-map');
             Route::post('/sync-orgs',          [SustentacaoController::class, 'syncOrgs'])->name('sustentacao.sync-orgs');
             Route::post('/sync-agents',        [SustentacaoController::class, 'syncAgents'])->name('sustentacao.sync-agents');
         });

@@ -885,19 +885,13 @@ class SustentacaoController extends Controller
 
         // Responde imediatamente e roda o comando APÓS fechar a conexão HTTP
         // (evita o timeout de 30s do proxy do Render)
-        // Diagnóstico: grava em arquivo para confirmar se o callback executa
         $debugFile = storage_path('logs/sync-orgs-debug.txt');
         file_put_contents($debugFile, date('H:i:s') . " syncOrgs chamado\n", FILE_APPEND | LOCK_EX);
 
+        // fastcgi_finish_request() agora fica em public/index.php (antes do terminate),
+        // garantindo que a resposta chegue ao browser antes do callback rodar
         app()->terminating(function () use ($debugFile) {
             file_put_contents($debugFile, date('H:i:s') . " terminating INICIO\n", FILE_APPEND | LOCK_EX);
-            fwrite(STDERR, '[sync-orgs] terminating iniciado ' . date('H:i:s') . PHP_EOL);
-
-            if (function_exists('fastcgi_finish_request')) {
-                fastcgi_finish_request();
-            }
-
-            file_put_contents($debugFile, date('H:i:s') . " apos fastcgi_finish_request\n", FILE_APPEND | LOCK_EX);
             ignore_user_abort(true);
             set_time_limit(300);
 

@@ -17,4 +17,14 @@ require __DIR__.'/../vendor/autoload.php';
 /** @var Application $app */
 $app = require_once __DIR__.'/../bootstrap/app.php';
 
-$app->handleRequest(Request::capture());
+$kernel   = $app->make(Illuminate\Contracts\Http\Kernel::class);
+$request  = Request::capture();
+$response = $kernel->handle($request)->send();
+
+// Envia a resposta HTTP ao cliente antes de rodar callbacks de terminação
+// (permite que tarefas longas rodem após a resposta ser entregue no PHP-FPM)
+if (function_exists('fastcgi_finish_request')) {
+    fastcgi_finish_request();
+}
+
+$kernel->terminate($request, $response);

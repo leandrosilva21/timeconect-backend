@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Customer;
+use App\Models\MovideskOrganization;
 use App\Models\MovideskTicket;
 use App\Models\Project;
 use App\Models\ServiceType;
@@ -305,6 +306,20 @@ class MovideskService
             return $this->getDefaultCustomerId();
         }
 
+        // 1. Busca via movidesk_organizations (vinculada por CNPJ pelo sync-orgs)
+        $org = MovideskOrganization::where('name', $orgName)
+            ->whereNotNull('customer_id')
+            ->first();
+
+        if ($org) {
+            Log::info('✅ [MOVIDESK] Cliente resolvido via movidesk_organizations (CNPJ)', [
+                'organization' => $orgName,
+                'customer_id'  => $org->customer_id,
+            ]);
+            return $org->customer_id;
+        }
+
+        // 2. Fallback: busca direta por nome no customers
         $customer = Customer::where(function ($q) use ($orgName) {
             $q->where('name', $orgName)->orWhere('company_name', $orgName);
         })->where('active', true)->first();
@@ -313,6 +328,11 @@ class MovideskService
             Log::warning('⚠️ [MOVIDESK] Cliente não encontrado no sistema', ['organization' => $orgName]);
             return $this->getDefaultCustomerId();
         }
+
+        Log::info('✅ [MOVIDESK] Cliente resolvido via nome direto', [
+            'organization' => $orgName,
+            'customer_id'  => $customer->id,
+        ]);
 
         return $customer->id;
     }

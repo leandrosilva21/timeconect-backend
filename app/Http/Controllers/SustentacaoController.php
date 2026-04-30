@@ -885,18 +885,30 @@ class SustentacaoController extends Controller
 
         // Responde imediatamente e roda o comando APÓS fechar a conexão HTTP
         // (evita o timeout de 30s do proxy do Render)
-        app()->terminating(function () {
+        // Diagnóstico: grava em arquivo para confirmar se o callback executa
+        $debugFile = storage_path('logs/sync-orgs-debug.txt');
+        file_put_contents($debugFile, date('H:i:s') . " syncOrgs chamado\n", FILE_APPEND | LOCK_EX);
+
+        app()->terminating(function () use ($debugFile) {
+            file_put_contents($debugFile, date('H:i:s') . " terminating INICIO\n", FILE_APPEND | LOCK_EX);
+            fwrite(STDERR, '[sync-orgs] terminating iniciado ' . date('H:i:s') . PHP_EOL);
+
             if (function_exists('fastcgi_finish_request')) {
                 fastcgi_finish_request();
             }
+
+            file_put_contents($debugFile, date('H:i:s') . " apos fastcgi_finish_request\n", FILE_APPEND | LOCK_EX);
             ignore_user_abort(true);
             set_time_limit(300);
-            error_log('[sync-orgs] callback iniciado em ' . date('H:i:s'));
+
             try {
                 $exitCode = Artisan::call('movidesk:sync-orgs');
-                error_log('[sync-orgs] concluído. exit=' . $exitCode . ' | ' . Artisan::output());
+                $out = trim(Artisan::output());
+                file_put_contents($debugFile, date('H:i:s') . " done exit=$exitCode\n$out\n", FILE_APPEND | LOCK_EX);
+                fwrite(STDERR, "[sync-orgs] concluído exit=$exitCode" . PHP_EOL);
             } catch (\Throwable $e) {
-                error_log('[sync-orgs] ERRO: ' . $e->getMessage());
+                file_put_contents($debugFile, date('H:i:s') . " ERRO: " . $e->getMessage() . "\n", FILE_APPEND | LOCK_EX);
+                fwrite(STDERR, '[sync-orgs] ERRO: ' . $e->getMessage() . PHP_EOL);
             }
         });
 

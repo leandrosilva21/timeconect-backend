@@ -51,7 +51,7 @@ class ContractMessageController extends Controller
             return response()->json(['message' => 'Mensagem ou anexo obrigatório.'], 422);
         }
 
-        $visibility = $user->isCliente() ? 'client' : $request->input('visibility', 'internal');
+        $visibility = $user->isCliente() ? 'client' : ($user->isAdmin() ? 'internal' : $request->input('visibility', 'internal'));
 
         $msg = ContractMessage::create([
             'contract_id' => $contract->id,

@@ -58,8 +58,8 @@ class ProjectMessageController extends Controller
             return response()->json(['message' => 'Mensagem ou anexo obrigatório.'], 422);
         }
 
-        // Clientes só podem enviar mensagens visíveis ao cliente
-        $visibility = $user->isCliente() ? 'client' : ($request->input('visibility', 'internal'));
+        // Clientes só enviam mensagens visíveis; admins sempre postam interno
+        $visibility = $user->isCliente() ? 'client' : ($user->isAdmin() ? 'internal' : $request->input('visibility', 'internal'));
 
         $msg = ProjectMessage::create([
             'project_id' => $project->id,

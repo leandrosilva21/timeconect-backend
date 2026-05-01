@@ -20,6 +20,8 @@ class ContractFlowSnapshot extends Model
         'updated_by',
         'version',
         'inconsistency_count',
+        'last_event_id',
+        'last_sequence',
     ];
 
     protected $casts = [

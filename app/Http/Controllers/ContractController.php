@@ -634,6 +634,9 @@ class ContractController extends Controller
                 });
             }
         } elseif (str_starts_with($toColumn, 'sust_')) {
+            if ($err = $this->validateSustentacaoContractType($contract, $toColumn)) {
+                return $err;
+            }
             // Mover para fila de sustentação — define sustentacao_column
             $contract->update([
                 'sustentacao_column' => $toColumn,
@@ -751,6 +754,10 @@ class ContractController extends Controller
         }
 
         $toColumn  = $request->input('to_column');
+
+        if ($err = $this->validateSustentacaoContractType($contract, $toColumn)) {
+            return $err;
+        }
         $projectId = $contract->project_id;
 
         if (!$projectId) {
@@ -969,6 +976,37 @@ class ContractController extends Controller
         ]);
 
         return response()->json(['ok' => true]);
+    }
+
+    private const SUST_COLUMN_CONTRACT_TYPE = [
+        'sust_bh_fixo'   => 'fixed_hours',
+        'sust_bh_mensal' => 'monthly_hours',
+        'sust_on_demand' => 'on_demand',
+        'sust_cloud'     => 'cloud',
+    ];
+
+    private function validateSustentacaoContractType(Contract $contract, string $toColumn): ?\Illuminate\Http\JsonResponse
+    {
+        $expectedCode = self::SUST_COLUMN_CONTRACT_TYPE[$toColumn] ?? null;
+        if (!$expectedCode) return null;
+
+        $contract->loadMissing('contractType');
+        $actualCode = $contract->contractType?->code;
+
+        if ($actualCode !== $expectedCode) {
+            $labels = [
+                'sust_bh_fixo'   => 'Banco de Horas Fixo',
+                'sust_bh_mensal' => 'Banco de Horas Mensal',
+                'sust_on_demand' => 'On Demand',
+                'sust_cloud'     => 'Cloud',
+            ];
+            $actual = $contract->contractType?->name ?? 'não definido';
+            return response()->json([
+                'message' => "Esta coluna aceita apenas contratos do tipo \"{$labels[$toColumn]}\". Este contrato é do tipo \"{$actual}\".",
+            ], 422);
+        }
+
+        return null;
     }
 
     private function resolveColumnName(Contract $contract): string

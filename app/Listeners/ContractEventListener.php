@@ -8,16 +8,23 @@ use App\Models\ContractEvent;
 use App\Models\ContractFlowSnapshot;
 use App\Models\Project;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 class ContractEventListener implements ShouldQueue
 {
-    public bool $afterCommit = true;
-    public int  $tries       = 3;
-    public array $backoff    = [5, 15, 30];
+    public bool  $afterCommit = true;
+    public int   $tries       = 3;
+    public array $backoff     = [5, 15, 30];
 
     private const SNAPSHOT_TYPES  = ['status_changed', 'kanban_moved'];
     private const SNAPSHOT_FIELDS = ['status', 'kanban_status', 'sustentacao_column', 'project_id', 'categoria'];
+    private const CACHE_TTL       = 60; // segundos
+
+    public static function cacheKey(int $contractId): string
+    {
+        return "contract_snapshot_{$contractId}";
+    }
 
     public function handle(ContractEventCreated $event): void
     {
@@ -37,10 +44,25 @@ class ContractEventListener implements ShouldQueue
             $snap = ContractFlowSnapshot::where('contract_id', $contract->id)->first();
 
             // Idempotência: este evento (ou mais recente) já foi processado
-            if ($snap && $snap->last_event_id !== null && $snap->last_event_id >= $ce->id) return;
+            if ($snap && $snap->last_event_id !== null && $snap->last_event_id >= $ce->id) {
+                Log::debug('ContractEventListener: evento ignorado (idempotência)', [
+                    'contract_id'   => $contract->id,
+                    'event_id'      => $ce->id,
+                    'last_event_id' => $snap->last_event_id,
+                ]);
+                return;
+            }
 
-            // Ordem: sequência já processada ou mais recente — evita regressão de estado
-            if ($snap && $snap->last_sequence >= $ce->sequence_number) return;
+            // Ordem: sequência já processada — evita regressão de estado
+            if ($snap && $snap->last_sequence >= $ce->sequence_number) {
+                Log::debug('ContractEventListener: evento ignorado (ordem)', [
+                    'contract_id'   => $contract->id,
+                    'event_id'      => $ce->id,
+                    'sequence'      => $ce->sequence_number,
+                    'last_sequence' => $snap->last_sequence,
+                ]);
+                return;
+            }
 
             $projectStatus = $contract->project_id
                 ? Project::where('id', $contract->project_id)->value('status')
@@ -63,6 +85,8 @@ class ContractEventListener implements ShouldQueue
                         'contract_id' => $contract->id,
                         'version'     => 1,
                     ]));
+                    Cache::forget(self::cacheKey($contract->id));
+                    Log::info('ContractEventListener: snapshot criado', ['contract_id' => $contract->id, 'event_id' => $ce->id]);
                     return;
                 } catch (\Illuminate\Database\UniqueConstraintViolationException) {
                     usleep(random_int(10_000, 50_000));
@@ -75,13 +99,27 @@ class ContractEventListener implements ShouldQueue
                 ->where('version', $snap->version)
                 ->update(array_merge($data, ['version' => $snap->version + 1]));
 
-            if ($affected === 1) return;
+            if ($affected === 1) {
+                Cache::forget(self::cacheKey($contract->id));
+                Log::info('ContractEventListener: snapshot atualizado', [
+                    'contract_id' => $contract->id,
+                    'event_id'    => $ce->id,
+                    'sequence'    => $ce->sequence_number,
+                    'version'     => $snap->version + 1,
+                    'attempt'     => $attempt + 1,
+                ]);
+                return;
+            }
 
             // Conflito de versão — outro evento ganhou; retentar com estado fresco
+            Log::debug('ContractEventListener: conflito de versão', [
+                'contract_id' => $contract->id,
+                'attempt'     => $attempt + 1,
+            ]);
             usleep(random_int(10_000, 50_000));
         }
 
-        Log::warning('ContractEventListener: conflito de versão após retries', [
+        Log::warning('ContractEventListener: conflito após todos os retries', [
             'contract_id' => $contract->id,
             'event_id'    => $ce->id,
             'sequence'    => $ce->sequence_number,

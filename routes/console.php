@@ -3,6 +3,7 @@
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
+use App\Jobs\CleanupContractEventsJob;
 use App\Jobs\NormalizeContractStateJob;
 use App\Jobs\UpdateAccumulatedSoldHoursJob;
 
@@ -75,4 +76,11 @@ Schedule::job(new NormalizeContractStateJob)
   ->cron('*/30 * * * *')
   ->name('normalize-contract-state')
   ->description('Fallback: detecta e corrige inconsistências nos snapshots de contratos')
+  ->withoutOverlapping();
+
+// Limpeza de eventos antigos — mantém histórico dos últimos 180 dias
+Schedule::job(new CleanupContractEventsJob)
+  ->weekly()
+  ->name('cleanup-contract-events')
+  ->description('Remove eventos de contrato com mais de 180 dias')
   ->withoutOverlapping();

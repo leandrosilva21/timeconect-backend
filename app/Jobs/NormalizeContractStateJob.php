@@ -10,6 +10,8 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use App\Listeners\ContractEventListener;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -48,6 +50,7 @@ class NormalizeContractStateJob implements ShouldQueue
                         'last_event_id'      => $lastEventId,
                         'last_sequence'      => $lastSeq,
                     ]);
+                    Cache::forget(ContractEventListener::cacheKey($contract->id));
                     $created++;
                 }
             });
@@ -99,6 +102,7 @@ class NormalizeContractStateJob implements ShouldQueue
                     'inconsistency_count' => DB::raw('inconsistency_count + 1'),
                 ]);
 
+            Cache::forget(ContractEventListener::cacheKey($row->id));
             $fixed++;
         }
 
@@ -106,6 +110,42 @@ class NormalizeContractStateJob implements ShouldQueue
             Log::info('NormalizeContractState: concluído', [
                 'snapshots_criados'       => $created,
                 'divergencias_corrigidas' => $fixed,
+            ]);
+        }
+
+        $this->checkAlerts();
+    }
+
+    private function checkAlerts(): void
+    {
+        // Alerta: contratos com inconsistência recorrente (possível bug no observer/listener)
+        $highRisk = DB::table('contract_flow_snapshots')
+            ->where('inconsistency_count', '>', 5)
+            ->count();
+
+        if ($highRisk > 0) {
+            Log::error('NormalizeContractState: contratos com inconsistency_count alto', [
+                'count'     => $highRisk,
+                'threshold' => 5,
+            ]);
+        }
+
+        // Alerta: fila com acúmulo de jobs (worker pode estar parado)
+        $pendingJobs = DB::table('jobs')->count();
+        if ($pendingJobs > 50) {
+            Log::warning('NormalizeContractState: fila com muitos jobs pendentes', [
+                'pending' => $pendingJobs,
+            ]);
+        }
+
+        // Alerta: jobs com falha não resolvida
+        $failedJobs = DB::table('failed_jobs')
+            ->where('failed_at', '>=', now()->subHours(24))
+            ->count();
+
+        if ($failedJobs > 0) {
+            Log::error('NormalizeContractState: jobs falhando nas últimas 24h', [
+                'failed' => $failedJobs,
             ]);
         }
     }

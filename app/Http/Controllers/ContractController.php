@@ -21,6 +21,9 @@ use App\Models\User;
 use App\Services\ProjectCodeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Events\ContractEventCreated;
+use App\Listeners\ContractEventListener;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
@@ -1097,10 +1100,83 @@ class ContractController extends Controller
 
     public function snapshot(Contract $contract): JsonResponse
     {
-        $snap = ContractFlowSnapshot::where('contract_id', $contract->id)
-            ->with('updatedBy:id,name')
-            ->first();
+        $snap = Cache::remember(
+            ContractEventListener::cacheKey($contract->id),
+            60,
+            fn () => ContractFlowSnapshot::where('contract_id', $contract->id)
+                ->with('updatedBy:id,name')
+                ->first()
+        );
 
         return response()->json(['data' => $snap]);
+    }
+
+    public function replay(Request $request, Contract $contract): JsonResponse
+    {
+        if (!$request->user()->isAdmin()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        $fromSequence = (int) $request->input('from_sequence', 0);
+
+        // Resetar ponteiros de tracking para permitir reprocessamento
+        ContractFlowSnapshot::where('contract_id', $contract->id)
+            ->update(['last_event_id' => null, 'last_sequence' => 0, 'version' => DB::raw('version + 1')]);
+
+        Cache::forget(ContractEventListener::cacheKey($contract->id));
+
+        $events = \App\Models\ContractEvent::where('contract_id', $contract->id)
+            ->where('sequence_number', '>', $fromSequence)
+            ->orderBy('sequence_number')
+            ->get();
+
+        // Processar sincronamente em ordem de sequência para garantir consistência
+        $listener  = app(ContractEventListener::class);
+        $processed = 0;
+
+        foreach ($events as $event) {
+            $listener->handle(new ContractEventCreated($event));
+            $processed++;
+        }
+
+        return response()->json([
+            'replayed'      => $processed,
+            'from_sequence' => $fromSequence,
+        ]);
+    }
+
+    public function consistencyReport(Request $request): JsonResponse
+    {
+        if (!$request->user()->isAdmin()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        $totalSnapshots = ContractFlowSnapshot::count();
+
+        $withInconsistencies = ContractFlowSnapshot::where('inconsistency_count', '>', 0)->count();
+
+        $topProblematic = ContractFlowSnapshot::where('inconsistency_count', '>', 0)
+            ->with('contract:id,project_name')
+            ->orderByDesc('inconsistency_count')
+            ->limit(10)
+            ->get(['contract_id', 'inconsistency_count', 'version', 'last_sequence']);
+
+        $queueDepth   = DB::table('jobs')->count();
+        $failedLast24 = DB::table('failed_jobs')
+            ->where('failed_at', '>=', now()->subHours(24))
+            ->count();
+
+        $contractsWithoutSnapshot = \App\Models\Contract::whereNotIn(
+            'id', ContractFlowSnapshot::select('contract_id')
+        )->count();
+
+        return response()->json([
+            'total_snapshots'             => $totalSnapshots,
+            'with_inconsistencies'        => $withInconsistencies,
+            'contracts_without_snapshot'  => $contractsWithoutSnapshot,
+            'top_problematic'             => $topProblematic,
+            'queue_depth'                 => $queueDepth,
+            'failed_jobs_last_24h'        => $failedLast24,
+        ]);
     }
 }

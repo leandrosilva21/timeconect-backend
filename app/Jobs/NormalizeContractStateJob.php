@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Listeners\ContractEventListener;
 use App\Models\Contract;
 use App\Models\ContractFlowSnapshot;
 use App\Models\Project;
@@ -10,7 +11,6 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use App\Listeners\ContractEventListener;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -19,15 +19,16 @@ class NormalizeContractStateJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public $tries   = 1;
-    public $timeout = 120;
+    public string $queue   = 'low';
+    public int    $tries   = 1;
+    public int    $timeout = 120;
 
     public function handle(): void
     {
         $fixed   = 0;
         $created = 0;
 
-        // Contratos sem snapshot — backfill com last_event_id e last_sequence
+        // Backfill: contratos sem snapshot (sempre verificar todos)
         Contract::whereNotIn('id', ContractFlowSnapshot::select('contract_id'))
             ->select(['id', 'status', 'kanban_status', 'sustentacao_column', 'project_id', 'categoria'])
             ->chunk(100, function ($contracts) use (&$created) {
@@ -55,33 +56,49 @@ class NormalizeContractStateJob implements ShouldQueue
                 }
             });
 
-        // Snapshots divergentes — comparar campo a campo via JOIN
+        // Amostragem: instáveis (inconsistency_count > 0) sempre; estáveis = 20% aleatório
+        $unstableIds = DB::table('contract_flow_snapshots')
+            ->where('inconsistency_count', '>', 0)
+            ->pluck('contract_id')
+            ->toArray();
+
+        $totalStable  = DB::table('contract_flow_snapshots')->where('inconsistency_count', 0)->count();
+        $sampleSize   = max(10, (int) ceil($totalStable * 0.2));
+        $stableIds    = DB::table('contract_flow_snapshots')
+            ->where('inconsistency_count', 0)
+            ->inRandomOrder()
+            ->limit($sampleSize)
+            ->pluck('contract_id')
+            ->toArray();
+
+        $contractIdsToCheck = array_unique(array_merge($unstableIds, $stableIds));
+
+        // Divergência: comparar campo a campo apenas nos contratos amostrados
         $divergent = DB::table('contract_flow_snapshots as s')
             ->join('contracts as c', 'c.id', '=', 's.contract_id')
+            ->whereIn('c.id', $contractIdsToCheck)
             ->where(function ($q) {
                 $q->whereColumn('c.status', '!=', 's.status')
                   ->orWhereColumn('c.kanban_status', '!=', 's.kanban_status')
                   ->orWhereColumn('c.project_id', '!=', 's.project_id')
                   ->orWhereColumn('c.categoria', '!=', 's.category')
-                  ->orWhere(function ($sq) {
-                      $sq->whereRaw('COALESCE(c.sustentacao_column, \'\') != COALESCE(s.sustentacao_column, \'\')');
-                  });
+                  ->orWhere(fn($sq) => $sq->whereRaw(
+                      "COALESCE(c.sustentacao_column, '') != COALESCE(s.sustentacao_column, '')"
+                  ));
             })
-            ->select('c.id', 'c.status', 'c.kanban_status', 'c.sustentacao_column', 'c.project_id', 'c.categoria', 's.last_event_id as snap_last_event_id')
+            ->select('c.id', 'c.status', 'c.kanban_status', 'c.sustentacao_column',
+                     'c.project_id', 'c.categoria', 's.last_event_id as snap_last_event_id')
             ->get();
 
         foreach ($divergent as $row) {
             [$lastEventId, $lastSeq] = $this->latestEvent($row->id);
 
-            // Não sobrescrever snapshot que já tem evento mais recente do que conhecemos
-            // (listener pode ter atualizado entre a detecção de divergência e aqui)
+            // Não sobrescrever snapshot mais recente que o evento mais recente conhecido
             if ($lastEventId !== null && $row->snap_last_event_id !== null && $row->snap_last_event_id >= $lastEventId) {
                 continue;
             }
 
-            Log::warning('NormalizeContractState: divergência detectada e corrigida', [
-                'contract_id' => $row->id,
-            ]);
+            Log::warning('NormalizeContractState: divergência corrigida', ['contract_id' => $row->id]);
 
             $projectStatus = $row->project_id
                 ? Project::where('id', $row->project_id)->value('status')
@@ -108,8 +125,9 @@ class NormalizeContractStateJob implements ShouldQueue
 
         if ($created > 0 || $fixed > 0) {
             Log::info('NormalizeContractState: concluído', [
-                'snapshots_criados'       => $created,
-                'divergencias_corrigidas' => $fixed,
+                'criados'   => $created,
+                'corrigidos' => $fixed,
+                'amostrados' => count($contractIdsToCheck),
             ]);
         }
 
@@ -118,35 +136,19 @@ class NormalizeContractStateJob implements ShouldQueue
 
     private function checkAlerts(): void
     {
-        // Alerta: contratos com inconsistência recorrente (possível bug no observer/listener)
-        $highRisk = DB::table('contract_flow_snapshots')
-            ->where('inconsistency_count', '>', 5)
-            ->count();
-
+        $highRisk = DB::table('contract_flow_snapshots')->where('inconsistency_count', '>', 5)->count();
         if ($highRisk > 0) {
-            Log::error('NormalizeContractState: contratos com inconsistency_count alto', [
-                'count'     => $highRisk,
-                'threshold' => 5,
-            ]);
+            Log::error('NormalizeContractState: inconsistency_count alto', ['count' => $highRisk]);
         }
 
-        // Alerta: fila com acúmulo de jobs (worker pode estar parado)
         $pendingJobs = DB::table('jobs')->count();
         if ($pendingJobs > 50) {
-            Log::warning('NormalizeContractState: fila com muitos jobs pendentes', [
-                'pending' => $pendingJobs,
-            ]);
+            Log::warning('NormalizeContractState: queue acumulada', ['pending' => $pendingJobs]);
         }
 
-        // Alerta: jobs com falha não resolvida
-        $failedJobs = DB::table('failed_jobs')
-            ->where('failed_at', '>=', now()->subHours(24))
-            ->count();
-
+        $failedJobs = DB::table('failed_jobs')->where('failed_at', '>=', now()->subHours(24))->count();
         if ($failedJobs > 0) {
-            Log::error('NormalizeContractState: jobs falhando nas últimas 24h', [
-                'failed' => $failedJobs,
-            ]);
+            Log::error('NormalizeContractState: jobs falhando 24h', ['failed' => $failedJobs]);
         }
     }
 

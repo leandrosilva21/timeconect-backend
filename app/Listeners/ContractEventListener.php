@@ -13,13 +13,14 @@ use Illuminate\Support\Facades\Log;
 
 class ContractEventListener implements ShouldQueue
 {
-    public bool  $afterCommit = true;
-    public int   $tries       = 3;
-    public array $backoff     = [5, 15, 30];
+    public string $queue      = 'high';
+    public bool   $afterCommit = true;
+    public int    $tries       = 3;
+    public array  $backoff     = [5, 15, 30];
 
     private const SNAPSHOT_TYPES  = ['status_changed', 'kanban_moved'];
     private const SNAPSHOT_FIELDS = ['status', 'kanban_status', 'sustentacao_column', 'project_id', 'categoria'];
-    private const CACHE_TTL       = 60; // segundos
+    public  const CACHE_TTL       = 30; // segundos
 
     public static function cacheKey(int $contractId): string
     {
@@ -45,21 +46,16 @@ class ContractEventListener implements ShouldQueue
 
             // Idempotência: este evento (ou mais recente) já foi processado
             if ($snap && $snap->last_event_id !== null && $snap->last_event_id >= $ce->id) {
-                Log::debug('ContractEventListener: evento ignorado (idempotência)', [
-                    'contract_id'   => $contract->id,
-                    'event_id'      => $ce->id,
-                    'last_event_id' => $snap->last_event_id,
+                Log::debug('ContractEventListener: ignorado (idempotência)', [
+                    'contract_id' => $contract->id, 'event_id' => $ce->id,
                 ]);
                 return;
             }
 
             // Ordem: sequência já processada — evita regressão de estado
             if ($snap && $snap->last_sequence >= $ce->sequence_number) {
-                Log::debug('ContractEventListener: evento ignorado (ordem)', [
-                    'contract_id'   => $contract->id,
-                    'event_id'      => $ce->id,
-                    'sequence'      => $ce->sequence_number,
-                    'last_sequence' => $snap->last_sequence,
+                Log::debug('ContractEventListener: ignorado (ordem)', [
+                    'contract_id' => $contract->id, 'sequence' => $ce->sequence_number,
                 ]);
                 return;
             }
@@ -81,11 +77,12 @@ class ContractEventListener implements ShouldQueue
 
             if (!$snap) {
                 try {
-                    ContractFlowSnapshot::create(array_merge($data, [
+                    $created = ContractFlowSnapshot::create(array_merge($data, [
                         'contract_id' => $contract->id,
                         'version'     => 1,
                     ]));
-                    Cache::forget(self::cacheKey($contract->id));
+                    // Write-through: nunca cachear null
+                    Cache::put(self::cacheKey($contract->id), $created, self::CACHE_TTL);
                     Log::info('ContractEventListener: snapshot criado', ['contract_id' => $contract->id, 'event_id' => $ce->id]);
                     return;
                 } catch (\Illuminate\Database\UniqueConstraintViolationException) {
@@ -94,13 +91,18 @@ class ContractEventListener implements ShouldQueue
                 }
             }
 
-            // Optimistic lock — só aplica se version não mudou desde a leitura
+            // Optimistic lock + snapshot guard — ambos devem passar
             $affected = ContractFlowSnapshot::where('contract_id', $contract->id)
                 ->where('version', $snap->version)
+                ->where('last_sequence', '<', $ce->sequence_number) // snapshot guard
                 ->update(array_merge($data, ['version' => $snap->version + 1]));
 
             if ($affected === 1) {
-                Cache::forget(self::cacheKey($contract->id));
+                // Write-through: cachear o estado atual (nunca null)
+                $fresh = ContractFlowSnapshot::where('contract_id', $contract->id)->first();
+                if ($fresh) {
+                    Cache::put(self::cacheKey($contract->id), $fresh, self::CACHE_TTL);
+                }
                 Log::info('ContractEventListener: snapshot atualizado', [
                     'contract_id' => $contract->id,
                     'event_id'    => $ce->id,
@@ -111,10 +113,8 @@ class ContractEventListener implements ShouldQueue
                 return;
             }
 
-            // Conflito de versão — outro evento ganhou; retentar com estado fresco
             Log::debug('ContractEventListener: conflito de versão', [
-                'contract_id' => $contract->id,
-                'attempt'     => $attempt + 1,
+                'contract_id' => $contract->id, 'attempt' => $attempt + 1,
             ]);
             usleep(random_int(10_000, 50_000));
         }

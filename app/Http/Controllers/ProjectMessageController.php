@@ -10,6 +10,7 @@ use App\Models\ProjectMessageRead;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 class ProjectMessageController extends Controller
@@ -122,6 +123,7 @@ class ProjectMessageController extends Controller
         }
 
         $query = ProjectMessage::where('project_id', $project->id)
+            ->where('user_id', '!=', $user->id)
             ->whereDoesntHave('reads', fn($q) => $q->where('user_id', $user->id));
 
         if ($user->isCliente()) {
@@ -140,6 +142,15 @@ class ProjectMessageController extends Controller
             ProjectMessageRead::upsert($rows, ['message_id', 'user_id']);
         }
 
+        // Cursor upsert — base para detecção de não-lidos sem N+1
+        DB::statement(
+            "INSERT INTO project_user_reads (user_id, project_id, last_read_at)
+             VALUES (?, ?, NOW())
+             ON CONFLICT (user_id, project_id)
+             DO UPDATE SET last_read_at = GREATEST(project_user_reads.last_read_at, EXCLUDED.last_read_at)",
+            [$user->id, $project->id]
+        );
+
         return response()->json(['marked' => $unreadIds->count()]);
     }
 
@@ -157,7 +168,13 @@ class ProjectMessageController extends Controller
             $query->whereHas('project', fn($q) => $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id)));
         }
 
-        $count = $query->whereDoesntHave('reads', fn($r) => $r->where('user_id', $user->id))->count();
+        $count = $query
+            ->where('user_id', '!=', $user->id)
+            ->whereRaw(
+                "project_messages.created_at > COALESCE((SELECT last_read_at FROM project_user_reads WHERE user_id = ? AND project_id = project_messages.project_id LIMIT 1), '1970-01-01'::timestamp)",
+                [$user->id]
+            )
+            ->count();
 
         return response()->json(['count' => $count]);
     }
@@ -177,7 +194,11 @@ class ProjectMessageController extends Controller
         }
 
         $projectIds = $query
-            ->whereDoesntHave('reads', fn($r) => $r->where('user_id', $user->id))
+            ->where('user_id', '!=', $user->id)
+            ->whereRaw(
+                "project_messages.created_at > COALESCE((SELECT last_read_at FROM project_user_reads WHERE user_id = ? AND project_id = project_messages.project_id LIMIT 1), '1970-01-01'::timestamp)",
+                [$user->id]
+            )
             ->pluck('project_id')
             ->unique()
             ->values();
@@ -201,7 +222,10 @@ class ProjectMessageController extends Controller
 
         $rows = $query
             ->where('user_id', '!=', $user->id)
-            ->whereDoesntHave('reads', fn($r) => $r->where('user_id', $user->id))
+            ->whereRaw(
+                "project_messages.created_at > COALESCE((SELECT last_read_at FROM project_user_reads WHERE user_id = ? AND project_id = project_messages.project_id LIMIT 1), '1970-01-01'::timestamp)",
+                [$user->id]
+            )
             ->with(['project:id,name,code', 'author:id,name'])
             ->latest()
             ->limit(10)

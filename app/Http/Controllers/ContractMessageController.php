@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\Contract;
 use App\Models\ContractMessage;
 use App\Models\ContractMessageAttachment;
-use App\Models\ContractMessageRead;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -148,23 +147,24 @@ class ContractMessageController extends Controller
 
         $visibilityFilter = $user->isCliente() ? ['client'] : ['internal', 'client'];
 
-        $unreadIds = ContractMessage::where('contract_id', $contract->id)
+        $unreadCount = ContractMessage::where('contract_id', $contract->id)
             ->where('user_id', '!=', $user->id)
             ->whereIn('visibility', $visibilityFilter)
-            ->whereDoesntHave('reads', fn($r) => $r->where('user_id', $user->id))
-            ->pluck('id');
+            ->whereRaw(
+                "created_at > COALESCE((SELECT last_read_at FROM contract_user_reads WHERE user_id = ? AND contract_id = ? LIMIT 1), '1970-01-01'::timestamp)",
+                [$user->id, $contract->id]
+            )
+            ->count();
 
-        if ($unreadIds->isNotEmpty()) {
-            $now  = now();
-            $rows = $unreadIds->map(fn($id) => [
-                'message_id' => $id,
-                'user_id'    => $user->id,
-                'read_at'    => $now,
-            ])->toArray();
-            DB::table('contract_message_reads')->insertOrIgnore($rows);
-        }
+        DB::statement(
+            "INSERT INTO contract_user_reads (user_id, contract_id, last_read_at)
+             VALUES (?, ?, NOW())
+             ON CONFLICT (user_id, contract_id)
+             DO UPDATE SET last_read_at = GREATEST(contract_user_reads.last_read_at, EXCLUDED.last_read_at)",
+            [$user->id, $contract->id]
+        );
 
-        return response()->json(['marked' => $unreadIds->count()]);
+        return response()->json(['marked' => $unreadCount]);
     }
 
     public function notifications(Request $request): JsonResponse
@@ -173,7 +173,10 @@ class ContractMessageController extends Controller
 
         $query = ContractMessage::query()
             ->where('user_id', '!=', $user->id)
-            ->whereDoesntHave('reads', fn($r) => $r->where('user_id', $user->id));
+            ->whereRaw(
+                "contract_messages.created_at > COALESCE((SELECT last_read_at FROM contract_user_reads WHERE user_id = ? AND contract_id = contract_messages.contract_id LIMIT 1), '1970-01-01'::timestamp)",
+                [$user->id]
+            );
 
         if ($user->isCliente()) {
             $query->where('visibility', 'client')
@@ -208,7 +211,10 @@ class ContractMessageController extends Controller
 
         $query = ContractMessage::query()
             ->where('user_id', '!=', $user->id)
-            ->whereDoesntHave('reads', fn($r) => $r->where('user_id', $user->id));
+            ->whereRaw(
+                "contract_messages.created_at > COALESCE((SELECT last_read_at FROM contract_user_reads WHERE user_id = ? AND contract_id = contract_messages.contract_id LIMIT 1), '1970-01-01'::timestamp)",
+                [$user->id]
+            );
 
         if ($user->isCliente()) {
             $query->where('visibility', 'client')

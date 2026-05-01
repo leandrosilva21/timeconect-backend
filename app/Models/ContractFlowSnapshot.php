@@ -22,6 +22,7 @@ class ContractFlowSnapshot extends Model
         'inconsistency_count',
         'last_event_id',
         'last_sequence',
+        'replay_in_progress',
     ];
 
     protected $casts = [

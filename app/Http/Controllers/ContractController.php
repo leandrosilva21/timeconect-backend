@@ -22,6 +22,7 @@ use App\Services\ProjectCodeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Events\ContractEventCreated;
+use App\Jobs\ReplayContractEventsJob;
 use App\Listeners\ContractEventListener;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -1100,13 +1101,20 @@ class ContractController extends Controller
 
     public function snapshot(Contract $contract): JsonResponse
     {
-        $snap = Cache::remember(
-            ContractEventListener::cacheKey($contract->id),
-            60,
-            fn () => ContractFlowSnapshot::where('contract_id', $contract->id)
-                ->with('updatedBy:id,name')
-                ->first()
-        );
+        $cached = Cache::get(ContractEventListener::cacheKey($contract->id));
+
+        if ($cached !== null) {
+            return response()->json(['data' => $cached]);
+        }
+
+        $snap = ContractFlowSnapshot::where('contract_id', $contract->id)
+            ->with('updatedBy:id,name')
+            ->first();
+
+        // Nunca cachear null
+        if ($snap !== null) {
+            Cache::put(ContractEventListener::cacheKey($contract->id), $snap, ContractEventListener::CACHE_TTL);
+        }
 
         return response()->json(['data' => $snap]);
     }
@@ -1117,32 +1125,28 @@ class ContractController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        $fromSequence = (int) $request->input('from_sequence', 0);
+        $snap = ContractFlowSnapshot::where('contract_id', $contract->id)->first();
 
-        // Resetar ponteiros de tracking para permitir reprocessamento
-        ContractFlowSnapshot::where('contract_id', $contract->id)
-            ->update(['last_event_id' => null, 'last_sequence' => 0, 'version' => DB::raw('version + 1')]);
+        if ($snap && $snap->replay_in_progress) {
+            return response()->json(['message' => 'Replay já em andamento para este contrato'], 409);
+        }
+
+        // Marcar como em andamento antes de despachar
+        if ($snap) {
+            $snap->update(['replay_in_progress' => true]);
+        }
 
         Cache::forget(ContractEventListener::cacheKey($contract->id));
 
-        $events = \App\Models\ContractEvent::where('contract_id', $contract->id)
-            ->where('sequence_number', '>', $fromSequence)
-            ->orderBy('sequence_number')
-            ->get();
+        $fromSequence = (int) $request->input('from_sequence', 0);
 
-        // Processar sincronamente em ordem de sequência para garantir consistência
-        $listener  = app(ContractEventListener::class);
-        $processed = 0;
-
-        foreach ($events as $event) {
-            $listener->handle(new ContractEventCreated($event));
-            $processed++;
-        }
+        dispatch(new ReplayContractEventsJob($contract->id, $fromSequence));
 
         return response()->json([
-            'replayed'      => $processed,
+            'status'        => 'queued',
+            'contract_id'   => $contract->id,
             'from_sequence' => $fromSequence,
-        ]);
+        ], 202);
     }
 
     public function consistencyReport(Request $request): JsonResponse

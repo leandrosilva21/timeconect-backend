@@ -993,6 +993,14 @@ class ContractController extends Controller
         $contract->loadMissing('contractType');
         $actualCode = $contract->contractType?->code;
 
+        // Fechado, cancelado e pausado transitam livremente entre colunas
+        if ($actualCode === 'closed') return null;
+        if ($contract->project_id) {
+            $contract->loadMissing('project');
+            $projectStatus = $contract->project?->status;
+            if (in_array($projectStatus, ['cancelled', 'paused'])) return null;
+        }
+
         if ($actualCode !== $expectedCode) {
             $labels = [
                 'sust_bh_fixo'   => 'Banco de Horas Fixo',

@@ -71,7 +71,7 @@ services:
       - ./:/var/www
       - ./docker/php/local.ini:/usr/local/etc/php/conf.d/local.ini
     # Usa o driver padrão configurado no .env (database ou redis)
-    command: php artisan queue:work --sleep=3 --tries=3 --max-time=3600
+    command: php artisan queue:work --queue=high,default,low --sleep=3 --tries=3 --max-time=3600
     depends_on:
       - app
       - db

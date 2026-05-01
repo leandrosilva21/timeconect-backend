@@ -721,6 +721,18 @@ class ContractController extends Controller
                     ->update(['kanban_coordinator_id' => $newCoordId]);
             }
 
+            // Reativação: muda status junto com coordenador (ex: terminal → awaiting_start)
+            if ($validated['status'] ?? null) {
+                $fromStatus = $project->status;
+                $project->update(['status' => $validated['status']]);
+                ProjectKanbanLog::create([
+                    'project_id'  => $project->id,
+                    'from_status' => $fromStatus,
+                    'to_status'   => $validated['status'],
+                    'moved_by_id' => auth()->id(),
+                ]);
+            }
+
             return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'consultants'])));
         }
 

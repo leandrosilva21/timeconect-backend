@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Mail\Events\MessageSent;
+use App\Events\ContractEventCreated;
+use App\Listeners\ContractEventListener;
 use App\Listeners\EmailSentListener;
 use App\Models\Contract;
 use App\Models\Project;
@@ -34,6 +36,9 @@ class AppServiceProvider extends ServiceProvider
         // Registrar listeners de email para debug
         Event::listen(MessageSending::class, EmailSentListener::class);
         Event::listen(MessageSent::class, EmailSentListener::class);
+
+        // Snapshot em tempo real — reage à criação de eventos de contrato
+        Event::listen(ContractEventCreated::class, ContractEventListener::class);
 
         // Registrar observers
         Project::observe(ProjectObserver::class);

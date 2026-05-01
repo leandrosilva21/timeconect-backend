@@ -7,7 +7,6 @@ use App\Models\ContractEvent;
 use App\Models\ContractFlowSnapshot;
 use App\Models\Project;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class ContractObserver
@@ -29,7 +28,7 @@ class ContractObserver
 
     public function created(Contract $contract): void
     {
-        $this->upsertSnapshot($contract);
+        // logEvent dispara ContractEventCreated → ContractEventListener cria o snapshot
         $this->logEvent($contract, 'status_changed', 'status', null, $contract->status);
     }
 
@@ -60,43 +59,7 @@ class ContractObserver
             }
         }
 
-        if ($contract->wasChanged(['status', 'kanban_status', 'sustentacao_column', 'project_id', 'categoria'])) {
-            $this->upsertSnapshot($contract);
-        }
-
         $this->validateConsistency($contract);
-    }
-
-    private function upsertSnapshot(Contract $contract): void
-    {
-        try {
-            $projectStatus = $contract->project_id
-                ? Project::find($contract->project_id)?->status
-                : null;
-
-            $data = [
-                'status'             => $contract->status,
-                'kanban_status'      => $contract->kanban_status,
-                'sustentacao_column' => $contract->sustentacao_column,
-                'project_status'     => $projectStatus,
-                'project_id'         => $contract->project_id,
-                'category'           => $contract->categoria,
-                'updated_by'         => Auth::id(),
-            ];
-
-            $snap = ContractFlowSnapshot::where('contract_id', $contract->id)->first();
-
-            if ($snap) {
-                $snap->update(array_merge($data, ['version' => DB::raw('version + 1')]));
-            } else {
-                ContractFlowSnapshot::create(array_merge(['contract_id' => $contract->id, 'version' => 1], $data));
-            }
-        } catch (\Throwable $e) {
-            Log::error('ContractObserver: falha ao atualizar snapshot', [
-                'contract_id' => $contract->id,
-                'error'       => $e->getMessage(),
-            ]);
-        }
     }
 
     private function logEvent(Contract $contract, string $type, ?string $field,
@@ -123,14 +86,11 @@ class ContractObserver
 
     private function validateConsistency(Contract $contract): void
     {
-        if ($contract->project_id) {
-            $project = Project::find($contract->project_id);
-            if (!$project) {
-                Log::warning('ContractConsistency: project_id aponta para projeto inexistente', [
-                    'contract_id' => $contract->id,
-                    'project_id'  => $contract->project_id,
-                ]);
-            }
+        if ($contract->project_id && !Project::find($contract->project_id)) {
+            Log::warning('ContractConsistency: project_id aponta para projeto inexistente', [
+                'contract_id' => $contract->id,
+                'project_id'  => $contract->project_id,
+            ]);
         }
 
         if ($contract->kanban_status === 'alocado' && !$contract->project_id) {

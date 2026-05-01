@@ -72,7 +72,7 @@ Schedule::command('movidesk:sync-orgs')
 
 // Normalização de snapshots de contratos — detecta e corrige divergências
 Schedule::job(new NormalizeContractStateJob)
-  ->cron('*/5 * * * *')
+  ->cron('*/30 * * * *')
   ->name('normalize-contract-state')
-  ->description('Detecta e corrige inconsistências nos snapshots de contratos')
+  ->description('Fallback: detecta e corrige inconsistências nos snapshots de contratos')
   ->withoutOverlapping();

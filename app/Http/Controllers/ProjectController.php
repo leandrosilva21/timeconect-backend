@@ -380,6 +380,12 @@ class ProjectController extends Controller
             $query->where('id', '!=', $request->get('exclude_id'));
         }
 
+        // Projetos de Investimento Comercial ficam ocultos na listagem padrão;
+        // só aparecem quando explicitamente solicitados (ex: dropdowns de apontamento).
+        if (!$request->boolean('include_investimento_comercial')) {
+            $query->where('is_investimento_comercial', false);
+        }
+
         // Mapeamento de campos virtuais/computados para colunas reais ou joins
         $virtualFieldMap = [
             'contract_type_display' => 'contract_types.name',

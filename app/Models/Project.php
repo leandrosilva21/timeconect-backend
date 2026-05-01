@@ -81,6 +81,7 @@ class Project extends Model
         'child_sequence',
         'is_manual_code',
         'contract_request_id',
+        'is_investimento_comercial',
     ];
 
     /**
@@ -110,6 +111,7 @@ class Project extends Model
         'timesheet_retroactive_limit_days' => 'integer',
         'allow_manual_timesheets' => 'boolean',
         'allow_negative_balance' => 'boolean',
+        'is_investimento_comercial' => 'boolean',
         'save_erpserv' => 'decimal:2',
         'start_date' => 'date:Y-m-d',
         'expected_end_date' => 'date:Y-m-d',

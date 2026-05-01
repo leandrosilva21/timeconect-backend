@@ -153,7 +153,8 @@ class FechamentoClienteController extends Controller
             ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
             ->whereNull('deleted_at')
             ->whereHas('project', function ($q) use ($customerId, $contractCode) {
-                $q->where('customer_id', $customerId);
+                $q->where('customer_id', $customerId)
+                  ->where('is_investimento_comercial', false);
                 if ($contractCode) {
                     $q->whereHas('contractType', fn ($q2) => $q2->where('code', $contractCode));
                 }
@@ -565,7 +566,7 @@ class FechamentoClienteController extends Controller
             ->whereNotIn('status', [Expense::STATUS_REJECTED, Expense::STATUS_ADJUSTMENT_REQUESTED])
             ->where('is_paid', false)
             ->whereBetween('expense_date', [$from, $to])
-            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
+            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)->where('is_investimento_comercial', false))
             ->get()
             ->map(fn ($e) => [
                 'id'          => $e->id,
@@ -587,7 +588,7 @@ class FechamentoClienteController extends Controller
             'user:id,name,type,hourly_rate,rate_type,partner_id,consultant_type',
             'user.partner:id,name,pricing_type,hourly_rate',
         ])
-            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
+            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)->where('is_investimento_comercial', false))
             ->whereBetween('date', [$from, $to])
             ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
             ->whereNull('deleted_at')

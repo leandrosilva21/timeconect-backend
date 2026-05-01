@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ContractType;
 use App\Models\Customer;
+use App\Models\Project;
+use App\Models\ServiceType;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\ValidationException;
@@ -236,6 +239,8 @@ class CustomerController extends Controller
 
         // Só agora cria no banco, pois sabemos que é válido
         $customer = Customer::create($validated);
+
+        $this->createInvestimentoComercialProject($customer);
 
         // Resposta PO-UI
         return response()->json($customer->load('executive'), 201);
@@ -525,5 +530,26 @@ class CustomerController extends Controller
         $customer->delete();
 
         return response()->json([], 204);
+    }
+
+    private function createInvestimentoComercialProject(Customer $customer): void
+    {
+        $serviceTypeId  = ServiceType::where('code', 'projeto')->value('id');
+        $contractTypeId = ContractType::where('code', 'on_demand')->value('id');
+
+        if (!$serviceTypeId || !$contractTypeId) {
+            return;
+        }
+
+        Project::create([
+            'name'                      => 'Investimento Comercial',
+            'code'                      => 'IC-' . $customer->id,
+            'customer_id'               => $customer->id,
+            'service_type_id'           => $serviceTypeId,
+            'contract_type_id'          => $contractTypeId,
+            'status'                    => 'started',
+            'is_investimento_comercial' => true,
+            'is_manual_code'            => true,
+        ]);
     }
 }

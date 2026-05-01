@@ -602,7 +602,7 @@ class ApprovalController extends Controller
             'project.serviceType:id,name',
             'category:id,name,parent_id'
         ])
-        ->whereIn('status', [Expense::STATUS_PENDING, Expense::STATUS_ADJUSTMENT_REQUESTED])
+        ->where('status', Expense::STATUS_PENDING)
         ->orderBy('expense_date', 'desc')
         ->orderBy('created_at', 'desc');
 

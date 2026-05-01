@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Contract;
 use App\Models\ContractAttachment;
 use App\Models\ContractContact;
+use App\Models\ContractEvent;
+use App\Models\ContractFlowSnapshot;
 use App\Models\ContractKanbanLog;
 use App\Models\Expense;
 use App\Models\Timesheet;
@@ -680,6 +682,16 @@ class ContractController extends Controller
             'coordinator_id' => $coordinatorId ?? null,
         ]);
 
+        ContractEvent::create([
+            'contract_id'  => $contract->id,
+            'event_type'   => 'kanban_moved',
+            'field'        => 'kanban_status',
+            'from_value'   => $fromColumn,
+            'to_value'     => $toColumn,
+            'triggered_by' => auth()->id(),
+            'meta'         => $coordinatorId ? ['coordinator_id' => $coordinatorId] : null,
+        ]);
+
         return response()->json($this->formatKanbanCard($contract->fresh(['customer', 'contractType', 'serviceType', 'kanbanCoordinator', 'project'])));
     }
 
@@ -1080,5 +1092,25 @@ class ContractController extends Controller
         }
 
         return $project;
+    }
+
+    public function events(Contract $contract): JsonResponse
+    {
+        $events = ContractEvent::where('contract_id', $contract->id)
+            ->with('triggeredBy:id,name')
+            ->latest()
+            ->limit(100)
+            ->get();
+
+        return response()->json(['data' => $events]);
+    }
+
+    public function snapshot(Contract $contract): JsonResponse
+    {
+        $snap = ContractFlowSnapshot::where('contract_id', $contract->id)
+            ->with('updatedBy:id,name')
+            ->first();
+
+        return response()->json(['data' => $snap]);
     }
 }

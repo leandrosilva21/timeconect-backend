@@ -747,6 +747,8 @@ Route::prefix('v1')->group(function () {
         Route::patch('/contracts/{contract}/sustentacao-move',       [ContractController::class, 'sustentacaoMove'])->name('contracts.sustentacao-move');
         Route::patch('/projects/{project}/kanban-move',              [ContractController::class, 'projectMove'])->name('projects.kanban-move');
         Route::get('/contracts/{contract}/kanban-logs',              [\App\Http\Controllers\KanbanLogController::class, 'contractLogs'])->name('contracts.kanban-logs');
+        Route::get('/contracts/{contract}/events',                    [ContractController::class, 'events'])->name('contracts.events');
+        Route::get('/contracts/{contract}/snapshot',                  [ContractController::class, 'snapshot'])->name('contracts.snapshot');
         Route::get('/projects/{project}/kanban-logs',                [\App\Http\Controllers\KanbanLogController::class, 'projectLogs'])->name('projects.kanban-logs');
         Route::get('/contract-requests/{contractRequest}/kanban-logs', [\App\Http\Controllers\KanbanLogController::class, 'requestLogs'])->name('contract-requests.kanban-logs');
 

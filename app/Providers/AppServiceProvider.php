@@ -8,8 +8,10 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Mail\Events\MessageSent;
 use App\Listeners\EmailSentListener;
+use App\Models\Contract;
 use App\Models\Project;
 use App\Models\Timesheet;
+use App\Observers\ContractObserver;
 use App\Observers\ProjectObserver;
 use App\Policies\ProjectPolicy;
 use App\Policies\TimesheetPolicy;
@@ -35,6 +37,7 @@ class AppServiceProvider extends ServiceProvider
 
         // Registrar observers
         Project::observe(ProjectObserver::class);
+        Contract::observe(ContractObserver::class);
 
         // Registrar Policies
         Gate::policy(Timesheet::class, TimesheetPolicy::class);

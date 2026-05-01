@@ -562,7 +562,7 @@ class FechamentoClienteController extends Controller
             'category:id,name',
         ])
             ->where('charge_client', true)
-            ->where('status', 'approved')
+            ->whereNotIn('status', [Expense::STATUS_REJECTED, Expense::STATUS_ADJUSTMENT_REQUESTED])
             ->where('is_paid', false)
             ->whereBetween('expense_date', [$from, $to])
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))

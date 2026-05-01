@@ -99,7 +99,7 @@ class ContractTypeController extends Controller
         $search = $request->get('search');
         $filterStatus = $request->get('filter_status'); // 'all', 'active', 'inactive'
 
-        $query = ContractType::query();
+        $query = ContractType::query()->where('code', '!=', 'bizify');
 
         // Filtro de busca (nome ou código)
         if ($search) {

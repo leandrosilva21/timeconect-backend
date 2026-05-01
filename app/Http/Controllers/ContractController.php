@@ -741,15 +741,23 @@ class ContractController extends Controller
             return response()->json(['message' => 'status ou coordinator_id é obrigatório.'], 422);
         }
 
-        $fromStatus = $project->status;
-        $project->update(['status' => $validated['status']]);
+        $fromStatus  = $project->status;
+        $newStatus   = $validated['status'];
+        $project->update(['status' => $newStatus]);
 
         ProjectKanbanLog::create([
             'project_id'  => $project->id,
             'from_status' => $fromStatus,
-            'to_status'   => $validated['status'],
+            'to_status'   => $newStatus,
             'moved_by_id' => auth()->id(),
         ]);
+
+        // Projeto de sustentação encerrado/pausado/cancelado → sai da fila de sustentação
+        if (in_array($newStatus, ['paused', 'cancelled', 'finished']) && $project->contract_id) {
+            \App\Models\Contract::where('id', $project->contract_id)
+                ->whereNotNull('sustentacao_column')
+                ->update(['sustentacao_column' => null]);
+        }
 
         return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'consultants'])));
     }

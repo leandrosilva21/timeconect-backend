@@ -670,6 +670,13 @@ class ContractController extends Controller
             \App\Models\ContractRequest::where('linked_contract_id', $contract->id)
                 ->where('kanban_column', 'req_inicio_autorizado')
                 ->update(['kanban_column' => 'inicio_autorizado']);
+        } elseif (in_array($toColumn, ['cancelado', 'pausado'])) {
+            // Contrato sem projeto: cancelar ou pausar remove do kanban ativo
+            $contract->update([
+                'kanban_status'         => $toColumn,
+                'kanban_coordinator_id' => null,
+                'kanban_order'          => 0,
+            ]);
         } elseif (in_array($toColumn, $validDemandColumns)) {
             $contract->update([
                 'kanban_status'         => $toColumn,

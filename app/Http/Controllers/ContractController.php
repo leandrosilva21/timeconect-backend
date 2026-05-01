@@ -682,16 +682,6 @@ class ContractController extends Controller
             'coordinator_id' => $coordinatorId ?? null,
         ]);
 
-        ContractEvent::create([
-            'contract_id'  => $contract->id,
-            'event_type'   => 'kanban_moved',
-            'field'        => 'kanban_status',
-            'from_value'   => $fromColumn,
-            'to_value'     => $toColumn,
-            'triggered_by' => auth()->id(),
-            'meta'         => $coordinatorId ? ['coordinator_id' => $coordinatorId] : null,
-        ]);
-
         return response()->json($this->formatKanbanCard($contract->fresh(['customer', 'contractType', 'serviceType', 'kanbanCoordinator', 'project'])));
     }
 

@@ -18,6 +18,8 @@ class ContractFlowSnapshot extends Model
         'project_id',
         'category',
         'updated_by',
+        'version',
+        'inconsistency_count',
     ];
 
     protected $casts = [

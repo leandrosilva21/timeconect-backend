@@ -131,7 +131,12 @@ class ProjectMessageController extends Controller
         $unreadIds = $query->pluck('id');
 
         if ($unreadIds->isNotEmpty()) {
-            $rows = $unreadIds->map(fn($id) => ['message_id' => $id, 'user_id' => $user->id])->toArray();
+            $now  = now();
+            $rows = $unreadIds->map(fn($id) => [
+                'message_id' => $id,
+                'user_id'    => $user->id,
+                'read_at'    => $now,
+            ])->toArray();
             ProjectMessageRead::upsert($rows, ['message_id', 'user_id']);
         }
 

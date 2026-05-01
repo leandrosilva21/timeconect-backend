@@ -7,6 +7,7 @@ use App\Models\ContractEvent;
 use App\Models\ContractFlowSnapshot;
 use App\Models\Project;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class ContractObserver
@@ -38,13 +39,24 @@ class ContractObserver
 
         foreach ($this->trackedFields as $field) {
             if ($contract->wasChanged($field)) {
-                $this->logEvent(
-                    $contract,
-                    'field_changed',
-                    $field,
-                    $contract->getOriginal($field),
-                    $contract->$field
-                );
+                if ($field === 'kanban_status') {
+                    $this->logEvent(
+                        $contract,
+                        'kanban_moved',
+                        $field,
+                        $contract->getOriginal($field),
+                        $contract->$field,
+                        $contract->kanban_coordinator_id ? ['coordinator_id' => $contract->kanban_coordinator_id] : null
+                    );
+                } else {
+                    $this->logEvent(
+                        $contract,
+                        'field_changed',
+                        $field,
+                        $contract->getOriginal($field),
+                        $contract->$field
+                    );
+                }
             }
         }
 
@@ -62,18 +74,23 @@ class ContractObserver
                 ? Project::find($contract->project_id)?->status
                 : null;
 
-            ContractFlowSnapshot::updateOrCreate(
-                ['contract_id' => $contract->id],
-                [
-                    'status'             => $contract->status,
-                    'kanban_status'      => $contract->kanban_status,
-                    'sustentacao_column' => $contract->sustentacao_column,
-                    'project_status'     => $projectStatus,
-                    'project_id'         => $contract->project_id,
-                    'category'           => $contract->categoria,
-                    'updated_by'         => Auth::id(),
-                ]
-            );
+            $data = [
+                'status'             => $contract->status,
+                'kanban_status'      => $contract->kanban_status,
+                'sustentacao_column' => $contract->sustentacao_column,
+                'project_status'     => $projectStatus,
+                'project_id'         => $contract->project_id,
+                'category'           => $contract->categoria,
+                'updated_by'         => Auth::id(),
+            ];
+
+            $snap = ContractFlowSnapshot::where('contract_id', $contract->id)->first();
+
+            if ($snap) {
+                $snap->update(array_merge($data, ['version' => DB::raw('version + 1')]));
+            } else {
+                ContractFlowSnapshot::create(array_merge(['contract_id' => $contract->id, 'version' => 1], $data));
+            }
         } catch (\Throwable $e) {
             Log::error('ContractObserver: falha ao atualizar snapshot', [
                 'contract_id' => $contract->id,

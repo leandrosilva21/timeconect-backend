@@ -3,6 +3,7 @@
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
+use App\Jobs\NormalizeContractStateJob;
 use App\Jobs\UpdateAccumulatedSoldHoursJob;
 
 Artisan::command('inspire', function () {
@@ -66,5 +67,13 @@ Schedule::command('movidesk:sync-orgs')
   ->cron("*/{$syncOrgsInterval} * * * *")
   ->name('movidesk-sync-orgs')
   ->description('Sincroniza organizações do Movidesk e popula CNPJs nos tickets')
+  ->withoutOverlapping()
+  ->runInBackground();
+
+// Normalização de snapshots de contratos — detecta e corrige divergências
+Schedule::call(fn() => NormalizeContractStateJob::dispatch())
+  ->cron('*/5 * * * *')
+  ->name('normalize-contract-state')
+  ->description('Detecta e corrige inconsistências nos snapshots de contratos')
   ->withoutOverlapping()
   ->runInBackground();

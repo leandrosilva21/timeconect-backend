@@ -382,7 +382,9 @@ class ProjectController extends Controller
 
         // Projetos de Investimento Comercial ficam ocultos na listagem padrão;
         // só aparecem quando explicitamente solicitados (ex: dropdowns de apontamento).
-        if (!$request->boolean('include_investimento_comercial')) {
+        if ($request->boolean('only_investimento_comercial')) {
+            $query->where('is_investimento_comercial', true);
+        } elseif (!$request->boolean('include_investimento_comercial')) {
             $query->where('is_investimento_comercial', false);
         }
 

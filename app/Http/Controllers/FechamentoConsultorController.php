@@ -40,7 +40,7 @@ class FechamentoConsultorController extends Controller
             ->orderBy('name')
             ->get(['id', 'name', 'email', 'type', 'consultant_type', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date', 'guaranteed_hours']);
 
-        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED];
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
 
         $hoursByUser = Timesheet::whereBetween('date', [$from, $to])
             ->whereNotIn('status', $excludeStatuses)
@@ -229,7 +229,7 @@ class FechamentoConsultorController extends Controller
     {
         [$from, $to] = $this->period($yearMonth);
 
-        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED];
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
 
         $user          = User::find($userId, ['id', 'name', 'hourly_rate', 'rate_type', 'consultant_type']);
         $isBancoHoras  = $user?->consultant_type === 'banco_de_horas';

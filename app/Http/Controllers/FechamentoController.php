@@ -69,7 +69,7 @@ class FechamentoController extends Controller
             'project.customer:id,name',
         ])
             ->whereBetween('date', [$from, $to])
-            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
             ->where('is_internal_action', false)
             ->whereNull('deleted_at')
             ->get();
@@ -127,7 +127,7 @@ class FechamentoController extends Controller
 
         $timesheets = Timesheet::with('user:id,name,type,hourly_rate,rate_type')
             ->whereBetween('date', [$from, $to])
-            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
             ->where('is_internal_action', false)
             ->whereNull('deleted_at')
             ->get();
@@ -187,7 +187,7 @@ class FechamentoController extends Controller
 
         [$from, $to] = $this->period($yearMonth);
 
-        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED];
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
 
         // Projetos que tiveram apontamentos no período (exceto ajuste/rejeitado)
         $projectIds = Timesheet::whereBetween('date', [$from, $to])
@@ -459,7 +459,7 @@ class FechamentoController extends Controller
             'project.customer:id,name',
         ])
             ->whereBetween('date', [$from, $to])
-            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
             ->where('is_internal_action', false)
             ->whereNull('deleted_at')
             ->get();
@@ -506,7 +506,7 @@ class FechamentoController extends Controller
 
         $timesheets = Timesheet::with('user:id,name,type,hourly_rate,rate_type')
             ->whereBetween('date', [$from, $to])
-            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
             ->where('is_internal_action', false)
             ->whereNull('deleted_at')
             ->get();
@@ -557,7 +557,7 @@ class FechamentoController extends Controller
     {
         [$from, $to] = $this->period($yearMonth);
 
-        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED];
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
 
         $projectIds = Timesheet::whereBetween('date', [$from, $to])
             ->whereNotIn('status', $excludeStatuses)

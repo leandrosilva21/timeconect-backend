@@ -150,7 +150,7 @@ class FechamentoClienteController extends Controller
         $to   = Carbon::parse("{$toMonth}-01")->endOfMonth()->toDateString();
 
         $projectIds = Timesheet::whereBetween('date', [$from, $to])
-            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
             ->whereNull('deleted_at')
             ->whereHas('project', function ($q) use ($customerId, $contractCode) {
                 $q->where('customer_id', $customerId);
@@ -174,7 +174,7 @@ class FechamentoClienteController extends Controller
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_titulo', 'movidesk_tickets.solicitante as ticket_solicitante')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
             ->whereBetween('timesheets.date', [$from, $to])
-            ->whereNotIn('timesheets.status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
+            ->whereNotIn('timesheets.status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
             ->whereNull('timesheets.deleted_at')
             ->whereIn('timesheets.project_id', $projectIds)
             ->orderBy('timesheets.project_id')
@@ -410,7 +410,7 @@ class FechamentoClienteController extends Controller
     {
         [$from, $to] = $this->period($yearMonth);
 
-        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED];
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
 
         $projectIds = Timesheet::whereBetween('date', [$from, $to])
             ->whereNotIn('status', $excludeStatuses)
@@ -589,7 +589,7 @@ class FechamentoClienteController extends Controller
         ])
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
             ->whereBetween('date', [$from, $to])
-            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
             ->whereNull('deleted_at')
             ->get();
 

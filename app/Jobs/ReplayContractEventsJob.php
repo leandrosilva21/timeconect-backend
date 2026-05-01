@@ -19,7 +19,6 @@ class ReplayContractEventsJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public $queue   = 'default';
     public $tries   = 1;
     public $timeout = 300;
 
@@ -27,7 +26,9 @@ class ReplayContractEventsJob implements ShouldQueue
         public readonly int $contractId,
         public readonly int $fromSequence = 0,
         public readonly int $batchSize    = 200,
-    ) {}
+    ) {
+        $this->onQueue('default');
+    }
 
     public function handle(): void
     {

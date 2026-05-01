@@ -14,11 +14,13 @@ class CleanupContractEventsJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public $queue   = 'low';
     public $tries   = 1;
     public $timeout = 300;
 
-    public function __construct(public readonly int $keepDays = 180) {}
+    public function __construct(public readonly int $keepDays = 180)
+    {
+        $this->onQueue('low');
+    }
 
     public function handle(): void
     {

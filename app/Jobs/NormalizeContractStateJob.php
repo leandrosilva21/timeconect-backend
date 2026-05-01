@@ -19,9 +19,13 @@ class NormalizeContractStateJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public $queue   = 'low';
     public $tries   = 1;
     public $timeout = 120;
+
+    public function __construct()
+    {
+        $this->onQueue('low');
+    }
 
     public function handle(): void
     {

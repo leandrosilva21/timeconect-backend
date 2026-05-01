@@ -448,7 +448,7 @@ class ContractController extends Controller
         } elseif ($user?->isCoordenador()) {
             $projectQuery->where(function ($q) {
                 $q->whereDoesntHave('serviceType')
-                  ->orWhereHas('serviceType', fn($sq) => $sq->whereRaw("LOWER(name) NOT SIMILAR TO '%(sustentac|cloud|bizify)%'"));
+                  ->orWhereHas('serviceType', fn($sq) => $sq->whereRaw("LOWER(name) NOT SIMILAR TO '%(sustentac|cloud)%'"));
             });
         }
 
@@ -480,7 +480,6 @@ class ContractController extends Controller
             'sust_bh_mensal' => [],
             'sust_on_demand' => [],
             'sust_cloud'     => [],
-            'sust_bizify'    => [],
         ];
         $sustentacaoAutoCards = collect(); // backward compat
         if (!$isConsultor && !$isCliente) {
@@ -505,9 +504,7 @@ class ContractController extends Controller
                     $svcCode      = $c->serviceType?->code ?? '';
                     $svcName      = strtolower($c->serviceType?->name ?? '');
                     $contractName = strtolower($c->contractType?->name ?? '');
-                    if ($svcCode === 'bizify' || str_contains($contractName, 'bizify')) {
-                        $col = 'sust_bizify';
-                    } elseif (str_contains($svcName, 'cloud')) {
+                    if (str_contains($svcName, 'cloud')) {
                         $col = 'sust_cloud';
                     } elseif ($c->tipo_faturamento === 'banco_horas_mensal') {
                         $col = 'sust_bh_mensal';
@@ -745,7 +742,7 @@ class ContractController extends Controller
     public function sustentacaoMove(Request $request, Contract $contract): JsonResponse
     {
         $request->validate([
-            'to_column' => 'required|in:sust_bh_fixo,sust_bh_mensal,sust_on_demand,sust_cloud,sust_bizify',
+            'to_column' => 'required|in:sust_bh_fixo,sust_bh_mensal,sust_on_demand,sust_cloud',
         ]);
 
         $user = auth()->user();

@@ -13,10 +13,10 @@ use Illuminate\Support\Facades\Log;
 
 class ContractEventListener implements ShouldQueue
 {
-    public string $queue      = 'high';
-    public bool   $afterCommit = true;
-    public int    $tries       = 3;
-    public array  $backoff     = [5, 15, 30];
+    public $queue       = 'high';
+    public $afterCommit = true;
+    public $tries       = 3;
+    public $backoff     = [5, 15, 30];
 
     private const SNAPSHOT_TYPES  = ['status_changed', 'kanban_moved'];
     private const SNAPSHOT_FIELDS = ['status', 'kanban_status', 'sustentacao_column', 'project_id', 'categoria'];

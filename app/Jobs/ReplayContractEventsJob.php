@@ -19,9 +19,9 @@ class ReplayContractEventsJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public string $queue   = 'default';
-    public int    $tries   = 1;
-    public int    $timeout = 300;
+    public $queue   = 'default';
+    public $tries   = 1;
+    public $timeout = 300;
 
     public function __construct(
         public readonly int $contractId,

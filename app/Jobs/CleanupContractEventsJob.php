@@ -14,9 +14,9 @@ class CleanupContractEventsJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public string $queue   = 'low';
-    public int    $tries   = 1;
-    public int    $timeout = 300;
+    public $queue   = 'low';
+    public $tries   = 1;
+    public $timeout = 300;
 
     public function __construct(public readonly int $keepDays = 180) {}
 

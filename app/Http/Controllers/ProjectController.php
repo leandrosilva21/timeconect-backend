@@ -496,15 +496,16 @@ class ProjectController extends Controller
                     $project->accumulated_sold_hours = $accumulatedHours;
                     // total_available_hours = mensal + aportes (consistente com modo não-gestao)
                     $totalAvailable = ($project->sold_hours ?? 0) + ($project->hour_contribution ?? 0);
-                    $initialBalance = (float)($project->initial_hours_balance ?? 0);
-                    // saldo usa o acumulado real
-                    $project->general_hours_balance = round($accumulatedHours + ($project->hour_contribution ?? 0) - $consumed + $initialBalance, 2);
+                    // saldo usa o acumulado real; HS consumidas iniciais somadas às novas
+                    $initialConsumed = (float)($project->initial_hours_consumed ?? 0);
+                    $project->consumed_hours = round($consumed + $initialConsumed, 2);
+                    $project->general_hours_balance = round($accumulatedHours + ($project->hour_contribution ?? 0) - $consumed - $initialConsumed, 2);
                 } else {
                     $totalAvailable = ($project->sold_hours ?? 0) + ($project->hour_contribution ?? 0);
                     $project->general_hours_balance = round($totalAvailable - $consumed, 2);
+                    $project->consumed_hours = round($consumed, 2);
                 }
-                $project->consumed_hours = round($consumed, 2);
-                $project->balance_percentage = $totalAvailable > 0 ? round(($consumed / $totalAvailable) * 100, 2) : 0;
+                $project->balance_percentage = $totalAvailable > 0 ? round(($project->consumed_hours / $totalAvailable) * 100, 2) : 0;
                 $project->total_available_hours = round($totalAvailable, 2);
                 $project->total_contributions_hours = 0;
                 $project->total_project_value = null;
@@ -2043,8 +2044,8 @@ class ProjectController extends Controller
 
         // Calcular saldo base do projeto atual
         // IMPORTANTE: Para Banco de Horas Mensal, soldHours já é accumulated_sold_hours
-        $initialBalance = (float) ($project->initial_hours_balance ?? 0);
-        $balance = ($soldHours + $contributionHours) - $totalLoggedHours + $initialBalance;
+        $initialConsumed = (float) ($project->initial_hours_consumed ?? 0);
+        $balance = ($soldHours + $contributionHours) - $totalLoggedHours - $initialConsumed;
 
         // Sempre incluir projetos filhos no cálculo (se existirem)
         if ($project->relationLoaded('childProjects') && $project->childProjects->isNotEmpty()) {
@@ -2070,9 +2071,9 @@ class ProjectController extends Controller
                     $childLoggedMinutes = $childProject->total_logged_minutes ?? 0;
                     $childLoggedHours = round($childLoggedMinutes / 60, 2);
                     
-                    // Subtrair o saldo do filho: (accumulated_sold_hours + aportes + saldo inicial) - horas apontadas
-                    $childInitialBalance = (float) ($childProject->initial_hours_balance ?? 0);
-                    $childBalance = ($childSoldHours + $childContributionHours) - $childLoggedHours + $childInitialBalance;
+                    // Subtrair o saldo do filho: (accumulated_sold_hours + aportes) - horas apontadas - horas consumidas iniciais
+                    $childInitialConsumed = (float) ($childProject->initial_hours_consumed ?? 0);
+                    $childBalance = ($childSoldHours + $childContributionHours) - $childLoggedHours - $childInitialConsumed;
                     $balance -= $childBalance;
                 } else {
                     // Para outros tipos: subtrair normalmente pelas horas apontadas (já excluindo rejeitados)

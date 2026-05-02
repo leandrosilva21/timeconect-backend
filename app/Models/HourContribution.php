@@ -31,7 +31,7 @@ class HourContribution extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'contributed_hours' => 'integer',
+        'contributed_hours' => 'decimal:2',
         'hourly_rate' => 'decimal:2',
         'contributed_at' => 'datetime',
         'created_at' => 'datetime',

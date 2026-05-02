@@ -265,6 +265,10 @@ class TimesheetController extends Controller
             $query->where('timesheets.date', '<=', $request->end_date);
         }
 
+        if ($request->boolean('only_investimento_comercial')) {
+            $query->whereHas('project', fn ($q) => $q->where('is_investimento_comercial', true));
+        }
+
         // Busca geral
         if ($request->filled('search')) {
             $search = $request->get('search');

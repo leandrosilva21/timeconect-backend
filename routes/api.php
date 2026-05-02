@@ -364,6 +364,7 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:projects.view')->group(function () {
             Route::get('/projects', [ProjectController::class, 'index'])->name('projects.index');
+            Route::get('/projects/ic-summary', [ProjectController::class, 'icSummary'])->name('projects.ic-summary');
             Route::get('/projects/hours-per-consultant', [ProjectController::class, 'hoursPerConsultant'])->name('projects.hours-per-consultant');
             Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
             Route::get('/projects/{project}/change-history', [ProjectController::class, 'changeHistory'])->name('projects.change-history');

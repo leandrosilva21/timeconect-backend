@@ -2090,6 +2090,42 @@ class ProjectController extends Controller
         ]);
     }
 
+    public function icSummary(Request $request): JsonResponse
+    {
+        $from = $request->get('start_date');
+        $to   = $request->get('end_date');
+
+        $query = \App\Models\Timesheet::query()
+            ->join('projects', 'projects.id', '=', 'timesheets.project_id')
+            ->join('customers', 'customers.id', '=', 'projects.customer_id')
+            ->where('projects.is_investimento_comercial', true)
+            ->whereNull('timesheets.deleted_at')
+            ->whereNotIn('timesheets.status', [
+                \App\Models\Timesheet::STATUS_REJECTED,
+                \App\Models\Timesheet::STATUS_ADJUSTMENT_REQUESTED,
+                \App\Models\Timesheet::STATUS_CONFLICTED,
+            ])
+            ->selectRaw('projects.id as project_id, projects.code, customers.id as customer_id, customers.name as customer_name, COALESCE(SUM(timesheets.effort_minutes), 0) as total_minutes')
+            ->groupBy('projects.id', 'projects.code', 'customers.id', 'customers.name');
+
+        if ($from) {
+            $query->where('timesheets.date', '>=', $from);
+        }
+        if ($to) {
+            $query->where('timesheets.date', '<=', $to);
+        }
+
+        $rows = $query->get()->map(fn ($r) => [
+            'project_id'    => $r->project_id,
+            'code'          => $r->code,
+            'customer_id'   => $r->customer_id,
+            'customer_name' => $r->customer_name,
+            'total_hours'   => round($r->total_minutes / 60, 2),
+        ]);
+
+        return response()->json($rows);
+    }
+
     public function hoursPerConsultant(Request $request): JsonResponse
     {
         $user = $request->user();

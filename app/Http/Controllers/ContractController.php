@@ -499,10 +499,6 @@ class ContractController extends Controller
             ->get();
 
             foreach ($sustCards as $c) {
-                if ($c->project_id && $c->project && in_array($c->project->status, ['paused', 'cancelled', 'finished'])) {
-                    continue;
-                }
-
                 $col = $c->sustentacao_column;
                 if (!$col) {
                     $svcCode      = $c->serviceType?->code ?? '';
@@ -788,16 +784,6 @@ class ContractController extends Controller
 
         if ($err = $this->validateSustentacaoContractType($contract, $toColumn)) {
             return $err;
-        }
-
-        if ($contract->project_id && $contract->project) {
-            if (in_array($contract->project->status, ['paused', 'cancelled', 'finished'])) {
-                return response()->json(['message' => 'Não é possível mover para sustentação: o projeto está ' . match($contract->project->status) {
-                    'paused'    => 'pausado',
-                    'cancelled' => 'cancelado',
-                    'finished'  => 'encerrado',
-                }. '. Reative o projeto antes de movê-lo.'], 422);
-            }
         }
 
         $projectId = $contract->project_id;

@@ -499,6 +499,11 @@ class ContractController extends Controller
             ->get();
 
             foreach ($sustCards as $c) {
+                if ($c->project_id && $c->project && in_array($c->project->status, ['paused', 'cancelled', 'finished'])) {
+                    $c->update(['sustentacao_column' => null]);
+                    continue;
+                }
+
                 $col = $c->sustentacao_column;
                 if (!$col) {
                     $svcCode      = $c->serviceType?->code ?? '';

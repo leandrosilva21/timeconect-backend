@@ -483,8 +483,15 @@ class ProjectController extends Controller
             if ($gestaoMode) {
                 // Modo leve: usar apenas campos já presentes na query, sem relações extras
                 $consumed = ($project->total_logged_minutes ?? 0) / 60;
-                $totalAvailable = ($project->sold_hours ?? 0) + ($project->hour_contribution ?? 0);
-                $project->general_hours_balance = round($totalAvailable - $consumed, 2);
+                if ($project->isBankHoursMonthly()) {
+                    $soldHours    = (int)($project->accumulated_sold_hours ?? $project->sold_hours ?? 0);
+                    $totalAvailable = $soldHours + ($project->hour_contribution ?? 0);
+                    $initialBalance = (float)($project->initial_hours_balance ?? 0);
+                    $project->general_hours_balance = round($totalAvailable - $consumed + $initialBalance, 2);
+                } else {
+                    $totalAvailable = ($project->sold_hours ?? 0) + ($project->hour_contribution ?? 0);
+                    $project->general_hours_balance = round($totalAvailable - $consumed, 2);
+                }
                 $project->consumed_hours = round($consumed, 2);
                 $project->balance_percentage = $totalAvailable > 0 ? round(($consumed / $totalAvailable) * 100, 2) : 0;
                 $project->total_available_hours = round($totalAvailable, 2);

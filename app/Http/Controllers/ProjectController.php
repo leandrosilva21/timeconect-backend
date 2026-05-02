@@ -484,10 +484,21 @@ class ProjectController extends Controller
                 // Modo leve: usar apenas campos já presentes na query, sem relações extras
                 $consumed = ($project->total_logged_minutes ?? 0) / 60;
                 if ($project->isBankHoursMonthly()) {
-                    $soldHours    = (int)($project->accumulated_sold_hours ?? $project->sold_hours ?? 0);
-                    $totalAvailable = $soldHours + ($project->hour_contribution ?? 0);
+                    // accumulated_sold_hours: usa valor do DB ou calcula meses × sold_hours
+                    $dbAccum = $project->getRawOriginal('accumulated_sold_hours') ?? $project->accumulated_sold_hours;
+                    if ($dbAccum !== null && $dbAccum > 0) {
+                        $accumulatedHours = (int)$dbAccum;
+                    } else {
+                        $startDate = $project->start_date ? \Carbon\Carbon::parse($project->start_date) : null;
+                        $months = $startDate ? max(1, (int)$startDate->diffInMonths(\Carbon\Carbon::now()) + 1) : 1;
+                        $accumulatedHours = $months * (int)($project->sold_hours ?? 0);
+                    }
+                    $project->accumulated_sold_hours = $accumulatedHours;
+                    // total_available_hours = mensal + aportes (consistente com modo não-gestao)
+                    $totalAvailable = ($project->sold_hours ?? 0) + ($project->hour_contribution ?? 0);
                     $initialBalance = (float)($project->initial_hours_balance ?? 0);
-                    $project->general_hours_balance = round($totalAvailable - $consumed + $initialBalance, 2);
+                    // saldo usa o acumulado real
+                    $project->general_hours_balance = round($accumulatedHours + ($project->hour_contribution ?? 0) - $consumed + $initialBalance, 2);
                 } else {
                     $totalAvailable = ($project->sold_hours ?? 0) + ($project->hour_contribution ?? 0);
                     $project->general_hours_balance = round($totalAvailable - $consumed, 2);

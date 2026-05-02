@@ -46,7 +46,7 @@ class ImportProjectsSeeder extends Seeder
         $rows = [
             // [name, code, status_raw, cnpj, customer_name, sold_hours, hourly_rate,
             //  aporte_hours, initial_cost, initial_hours_balance, tipo_faturamento, coordinator_name]
-            ['[PROJETOS] BANCO DE HORAS 2025',                             'BLC011-24-PRJ', 'Em andamento', '08065022000141', 'BLASCOR',        0,       0,      0,    0,        0,          'Por hora (Banco de Horas Fixo)',    'Nao definido'],
+            ['[PROJETOS] BANCO DE HORAS 2025',                             'BLC011-24',     'Em andamento', '08065022000141', 'BLASCOR',        0,       0,      0,    0,        0,          'Por hora (Banco de Horas Fixo)',    'Nao definido'],
             ['IMPLANTAÇÃO E REVITALIZACAO DOS MODULOS PROTHEUS',           'ESP002-25',     'Em andamento', '06982873000123', 'EUREKA',          570,     148,    0,    19078.13, 264.75,     'Por hora (Banco de Horas Fixo)',    'Juliana Parreja'],
             ['IMPORTAÇÃO PEDIDO DE VENDA VIA PLANILHA',                    'ESP006-25',     'Em andamento', '06982873000123', 'EUREKA',          100,     0,      0,    4125,     45,         'Por serviço',                       'Nao definido'],
             ['SANEAMENTO CADASTRO DE FORNECEDORES',                        'ESP007-25',     'Em andamento', '06982873000123', 'EUREKA',          24,      0,      0,    1875,     -1,         'Por serviço',                       'Nao definido'],
@@ -65,9 +65,9 @@ class ImportProjectsSeeder extends Seeder
             ['REVITALIZAÇÃO DOS MODULOS PROTHEUS BANCO DE HORAS',         'INV003-25',     'Em andamento', '46946192000124', 'INVENTA',         1040,    150,    0,    51263.33, 14.73,      'Por hora (Banco de Horas Fixo)',    'Aline Toyoda'],
             ['GCT',                                                        'KNT005-24',     'Em andamento', '08911199000111', 'KONECTA',         0,       0,      0,    2880,     -32,        'Por hora (Banco de Horas Fixo)',    'Juliana Parreja'],
             ['[PROJETOS] APONTAMENTOS DIVERSOS',                          'MBJ006-26',     'Em andamento', '07497572000177', 'MINAS BOJO',      0,       0,      0,    53002.5,  -1241.83,   'Saas',                              'Aline Toyoda'],
-            ['CONSULTORIA RM BANCO DE HRS FIXO',                          'NET001-24',     'Em andamento', '31243041000132', 'NET MANAGER',     18,      134.4,  0,    800,      10,         'Por hora (Banco de Horas Fixo)',    'Nao definido'],
+            // NET MANAGER excluído (cliente não cadastrado em produção)
             ['MELHORIAS INTEGRAÇÃO PIPEDRIVE',                            'NSA003-26',     'Em andamento', '20041743000117', 'NLMK',            16,      195,    0,    0,        16,         'Por hora (Banco de Horas Fixo)',    'Aline Toyoda'],
-            ['CONFIGURADOR DE TRIBUTOS',                                   'QEP001-25',     'Em andamento', '08666285000106', 'QAIR BRASIL',     32,      0,      0,    1437.49,  3.25,       'Por hora (Banco de Horas Fixo)',    'Aline Toyoda'],
+            // QAIR BRASIL excluído (cliente não cadastrado em produção)
             ['IMPLANTAÇÃO CNAB ITAU',                                      'CFP002-25',     'Em andamento', '29229337846',   'SERRA FORMOSA',   80,      0,      0,    2400,     50,         'Por hora (Banco de Horas Fixo)',    'Nao definido'],
             ['BANCO DE HORAS SUPORTE',                                     'CFP004-25',     'Em andamento', '29229337846',   'SERRA FORMOSA',   10,      0,      0,    1050,     -8.5,       'Por hora (Banco de Horas Fixo)',    'Nao definido'],
             ['DESENVOLVIMENTO ETIQUETA',                                   'SLV008-24',     'Em andamento', '60433778000116', 'SOLVENTEX',       200,     0,      0,    16000,    0,          'Por hora (Banco de Horas Fixo)',    'Nao definido'],

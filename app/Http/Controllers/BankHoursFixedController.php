@@ -585,7 +585,39 @@ class BankHoursFixedController extends Controller
             $processProject($parentProject, $serviceTypeProjetoId, $projectsConsumedHours, $projectsMonthConsumedHours);
             $processProject($parentProject, $serviceTypeManutId,   $maintenanceConsumedHours, $maintenanceMonthConsumedHours);
 
-            if ($parentProject->hasChildProjects()) {
+            // Pai sustentação: somar initial_hours_consumed + filhos com qualquer service_type
+            if ($parentProject->service_type_id === $serviceTypeManutId) {
+                $maintenanceConsumedHours += (float) ($parentProject->initial_hours_consumed ?? 0);
+
+                if ($parentProject->hasChildProjects()) {
+                    foreach ($parentProject->childProjects as $childProject) {
+                        if ($childProject->isAusterFrozen()) continue;
+                        if ($childProject->service_type_id === $serviceTypeManutId) continue; // já contado pelo processProject
+
+                        $isClosedChild = $childProject->contractType &&
+                                         strtolower(trim($childProject->contractType->name)) === 'fechado';
+                        if ($isClosedChild) {
+                            $maintenanceConsumedHours      += $childProject->getTotalAvailableHours();
+                            if ($childProject->start_date) {
+                                $sd = \Carbon\Carbon::parse($childProject->start_date);
+                                if ($sd->year === $targetDate->year && $sd->month === $targetDate->month) {
+                                    $maintenanceMonthConsumedHours += $childProject->sold_hours ?? 0;
+                                }
+                            }
+                        } else {
+                            $cMins = $childProject->timesheets()->where('status', '!=', 'rejected')->sum('effort_minutes') ?? 0;
+                            $maintenanceConsumedHours += round($cMins / 60, 2);
+
+                            $cMonthMins = $childProject->timesheets()
+                                ->where('status', '!=', 'rejected')
+                                ->whereBetween('date', [$monthStart, $monthEnd])
+                                ->sum('effort_minutes') ?? 0;
+                            $maintenanceMonthConsumedHours += round($cMonthMins / 60, 2);
+                        }
+                    }
+                }
+            } elseif ($parentProject->hasChildProjects()) {
+                // Pai não-sustentação: processa filhos normalmente
                 foreach ($parentProject->childProjects as $childProject) {
                     $processProject($childProject, $serviceTypeProjetoId, $projectsConsumedHours, $projectsMonthConsumedHours);
                     $processProject($childProject, $serviceTypeManutId,   $maintenanceConsumedHours, $maintenanceMonthConsumedHours);

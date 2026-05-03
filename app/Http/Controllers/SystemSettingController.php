@@ -194,6 +194,7 @@ class SystemSettingController extends Controller
                 'movidesk_default_user_id'              => 'nullable|integer|exists:users,id',
                 'movidesk_sync_orgs_interval_minutes'   => 'nullable|integer|in:5,10,15,20,30,60',
                 'movidesk_portal_sync_interval_minutes' => 'nullable|integer|in:5,10,15,20,30,60',
+                'movidesk_import_start_date'            => 'nullable|date',
             ], [
                 'timesheet_retroactive_limit_days.integer'         => 'O prazo deve ser um número inteiro.',
                 'timesheet_retroactive_limit_days.min'             => 'O prazo não pode ser negativo.',
@@ -274,6 +275,7 @@ class SystemSettingController extends Controller
             'movidesk_default_user_id'              => 'integer',
             'movidesk_sync_orgs_interval_minutes'   => 'integer',
             'movidesk_portal_sync_interval_minutes' => 'integer',
+            'movidesk_import_start_date'            => 'string',
             default => 'string',
         };
     }
@@ -290,6 +292,7 @@ class SystemSettingController extends Controller
             'movidesk_default_user_id'              => 'movidesk',
             'movidesk_sync_orgs_interval_minutes'   => 'movidesk',
             'movidesk_portal_sync_interval_minutes' => 'movidesk',
+            'movidesk_import_start_date'            => 'movidesk',
             default => 'general',
         };
     }
@@ -306,6 +309,7 @@ class SystemSettingController extends Controller
             'movidesk_default_user_id'              => 'ID do usuário padrão para integração com Movidesk',
             'movidesk_sync_orgs_interval_minutes'   => 'Intervalo em minutos para sincronização de organizações do Movidesk (5, 10, 15, 20, 30 ou 60)',
             'movidesk_portal_sync_interval_minutes' => 'Intervalo em minutos para sincronização do Portal de Sustentação do Movidesk (5, 10, 15, 20, 30 ou 60)',
+            'movidesk_import_start_date'            => 'Data a partir da qual apontamentos Movidesk serão importados (filtro por data do apontamento)',
             default => '',
         };
     }

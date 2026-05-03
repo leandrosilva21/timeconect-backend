@@ -490,7 +490,11 @@ class ProjectController extends Controller
                         $accumulatedHours = (int)$dbAccum;
                     } else {
                         $startDate = $project->start_date ? \Carbon\Carbon::parse($project->start_date) : null;
-                        $months = $startDate ? max(1, (int)$startDate->diffInMonths(\Carbon\Carbon::now()) + 1) : 1;
+                        // Se encerramento_date definida, congela o acúmulo naquele mês
+                        $refDate = $project->encerramento_date
+                            ? \Carbon\Carbon::parse($project->encerramento_date)
+                            : \Carbon\Carbon::now();
+                        $months = $startDate ? max(1, (int)$startDate->diffInMonths($refDate) + 1) : 1;
                         $accumulatedHours = $months * (int)($project->sold_hours ?? 0);
                     }
                     $project->accumulated_sold_hours = $accumulatedHours;
@@ -645,6 +649,7 @@ class ProjectController extends Controller
             'additional_hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'start_date' => 'nullable|date',
             'expected_end_date' => 'nullable|date',
+            'encerramento_date' => 'nullable|date',
             'save_erpserv' => 'nullable|numeric|min:0|max:999999999.99',
             'max_expense_per_consultant' => 'nullable|numeric|min:0|max:999999999.99',
             'unlimited_expense' => 'nullable|boolean',
@@ -939,6 +944,7 @@ class ProjectController extends Controller
             'additional_hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'start_date' => 'nullable|date',
             'expected_end_date' => 'nullable|date',
+            'encerramento_date' => 'nullable|date',
             'save_erpserv' => 'nullable|numeric|min:0|max:999999999.99',
             'max_expense_per_consultant' => 'nullable|numeric|min:0|max:999999999.99',
             'unlimited_expense' => 'nullable|boolean',

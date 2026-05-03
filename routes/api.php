@@ -828,6 +828,7 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:system_settings.update')->group(function () {
             Route::post("/movidesk/sync", [\App\Http\Controllers\MovideskAdminController::class, "sync"])->name("movidesk.sync");
+            Route::post("/movidesk/history-import", [\App\Http\Controllers\MovideskAdminController::class, "historyImport"])->name("movidesk.history_import");
         });
     });
 });

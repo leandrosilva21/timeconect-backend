@@ -119,6 +119,44 @@ class MovideskAdminController extends Controller
     }
 
     /**
+     * Enfileira importação histórica do Movidesk desde uma data específica.
+     * Roda em background (queue) para evitar timeout HTTP.
+     * POST /api/v1/movidesk/history-import  { "since": "2026-04-01" }
+     */
+    public function historyImport(Request $request): JsonResponse
+    {
+        if (!config('services.movidesk.token')) {
+            return response()->json(['success' => false, 'message' => 'MOVIDESK_API_TOKEN não configurado.'], 422);
+        }
+
+        $since = $request->input('since');
+        if (!$since) {
+            return response()->json(['success' => false, 'message' => 'Parâmetro "since" é obrigatório.'], 422);
+        }
+
+        try {
+            $sinceCarbon = Carbon::parse($since)->startOfDay();
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => 'Data inválida.'], 422);
+        }
+
+        \Illuminate\Support\Facades\Artisan::queue('movidesk:sync', [
+            '--since' => $sinceCarbon->toIso8601String(),
+        ]);
+
+        Log::info('📥 [MOVIDESK] Importação histórica enfileirada', [
+            'since'        => $sinceCarbon->toIso8601String(),
+            'triggered_by' => auth()->user()?->email,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Importação histórica enfileirada desde {$sinceCarbon->format('d/m/Y')}. Acompanhe o progresso nos logs.",
+            'since'   => $sinceCarbon->toIso8601String(),
+        ], 202);
+    }
+
+    /**
      * Diagnóstico: chama a API Movidesk e retorna a resposta bruta para debug.
      * GET /api/v1/movidesk/debug
      */

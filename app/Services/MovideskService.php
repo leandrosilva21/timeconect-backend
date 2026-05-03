@@ -202,6 +202,20 @@ class MovideskService
                 return false;
             }
 
+            // Filtro por data mínima de apontamento (configurável no admin)
+            $importStartDate = SystemSetting::get('movidesk_import_start_date');
+            if ($importStartDate) {
+                $appointmentDate = $this->extractDate($appointment);
+                if ($appointmentDate && $appointmentDate < $importStartDate) {
+                    Log::info('⏭️ [MOVIDESK] Apontamento ignorado (data anterior ao início de importação)', [
+                        'appointment_date'        => $appointmentDate,
+                        'import_start_date'       => $importStartDate,
+                        'movidesk_appointment_id' => $appointmentId,
+                    ]);
+                    return false;
+                }
+            }
+
             $userId = $this->extractUserId($action);
             if (!$userId) return false;
 

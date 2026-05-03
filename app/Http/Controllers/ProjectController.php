@@ -507,8 +507,21 @@ class ProjectController extends Controller
                 } else {
                     $initialConsumed = (float)($project->initial_hours_consumed ?? 0);
                     $totalAvailable = ($project->sold_hours ?? 0) + ($project->hour_contribution ?? 0);
-                    $project->consumed_hours = round($consumed + $initialConsumed, 2);
-                    $project->general_hours_balance = round($totalAvailable - $consumed - $initialConsumed, 2);
+
+                    // Somar horas vendidas dos filhos Fechado (comprometidas no cadastro)
+                    $closedChildrenHours = 0.0;
+                    if ($project->relationLoaded('childProjects')) {
+                        foreach ($project->childProjects as $child) {
+                            if ($child->relationLoaded('contractType') &&
+                                $child->contractType &&
+                                strtolower(trim($child->contractType->name)) === 'fechado') {
+                                $closedChildrenHours += (float) ($child->sold_hours ?? 0);
+                            }
+                        }
+                    }
+
+                    $project->consumed_hours = round($consumed + $initialConsumed + $closedChildrenHours, 2);
+                    $project->general_hours_balance = round($totalAvailable - $consumed - $initialConsumed - $closedChildrenHours, 2);
                 }
                 $project->balance_percentage = $totalAvailable > 0 ? round(($project->consumed_hours / $totalAvailable) * 100, 2) : 0;
                 $project->total_available_hours = round($totalAvailable, 2);

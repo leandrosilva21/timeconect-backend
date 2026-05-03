@@ -364,10 +364,9 @@ class ProjectController extends Controller
             });
         }
 
-        // Filtro para apenas projetos que têm filhos (hierarquia pai/filho)
+        // Filtro para apenas projetos raiz (pai ou independentes)
         if ($request->get('parent_projects_only') === 'true') {
-            $query->whereNull('parent_project_id')
-                  ->whereHas('childProjects');
+            $query->whereNull('parent_project_id');
         }
 
         // Filtro para apenas projetos de nível raiz (sem pai), independente de ter filhos

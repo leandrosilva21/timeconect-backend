@@ -800,12 +800,22 @@ class BankHoursFixedController extends Controller
         }
 
         $projectsData = $projects->map(function($project) {
-            $totalAvailable  = $project->getTotalAvailableHours();
-            $balance         = round($project->getGeneralHoursBalance(), 2);
-            $initialConsumed = (float) ($project->initial_hours_consumed ?? 0);
-            // initial_hours_consumed: horas já consumidas antes do rastreamento no sistema
-            $consumed        = round(max(0, $totalAvailable - $balance) + $initialConsumed, 2);
-            $adjustedBalance = round($balance - $initialConsumed, 2);
+            $totalAvailable = $project->getTotalAvailableHours();
+
+            $isClosedContract = $project->contractType &&
+                                strtolower(trim($project->contractType->name)) === 'fechado';
+
+            if ($isClosedContract) {
+                // Fechado: compromete o total vendido do projeto pai — consumo = vendido, saldo = 0
+                $consumed        = (float) $totalAvailable;
+                $adjustedBalance = 0.0;
+            } else {
+                // BH Fixo e outros: consumo = apontamentos + horas iniciais já consumidas
+                $balance         = round($project->getGeneralHoursBalance(), 2);
+                $initialConsumed = (float) ($project->initial_hours_consumed ?? 0);
+                $consumed        = round(max(0, $totalAvailable - $balance) + $initialConsumed, 2);
+                $adjustedBalance = round($balance - $initialConsumed, 2);
+            }
             return [
                 'id' => $project->id,
                 'name' => $project->name,

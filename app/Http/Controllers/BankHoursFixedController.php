@@ -186,8 +186,9 @@ class BankHoursFixedController extends Controller
         $parentProjects = $query->get();
 
         foreach ($parentProjects as $parentProject) {
-            // Usar o método getGeneralHoursBalance que já calcula corretamente incluindo filhos
-            $projectBalance = $parentProject->getGeneralHoursBalance();
+            // getGeneralHoursBalance já exclui filhos frozen; subtrair initial_hours_consumed (histórico pré-importação)
+            $projectBalance = $parentProject->getGeneralHoursBalance()
+                - (float) ($parentProject->initial_hours_consumed ?? 0);
             $hoursBalance += $projectBalance;
         }
 
@@ -328,12 +329,18 @@ class BankHoursFixedController extends Controller
                         ->sum('effort_minutes') ?? 0;
                     $parentLoggedHours = round($parentLoggedMinutes / 60, 2);
                     $consumedHours += $parentLoggedHours;
+                    // Incluir horas consumidas do sistema anterior
+                    $consumedHours += (float) ($parentProject->initial_hours_consumed ?? 0);
                 }
             }
 
             // Processar projetos filhos
             if ($parentProject->hasChildProjects()) {
                 foreach ($parentProject->childProjects as $childProject) {
+                    // Subprojetos congelados (Auster histórico) não contam em nenhum totalizador
+                    if ($childProject->isAusterFrozen()) {
+                        continue;
+                    }
                     // Filtrar por tipo de serviço se especificado
                     if ($serviceTypeId && $childProject->service_type_id !== $serviceTypeId) {
                         continue;
@@ -621,6 +628,7 @@ class BankHoursFixedController extends Controller
             // Filhos: sempre processa para Projeto; para Manutenção apenas quando pai NÃO é sustentação
             if ($parentProject->hasChildProjects()) {
                 foreach ($parentProject->childProjects as $childProject) {
+                    if ($childProject->isAusterFrozen()) continue;
                     $processProject($childProject, $serviceTypeProjetoId, $projectsConsumedHours, $projectsMonthConsumedHours);
                     if ($parentProject->service_type_id !== $serviceTypeManutId) {
                         $processProject($childProject, $serviceTypeManutId, $maintenanceConsumedHours, $maintenanceMonthConsumedHours);

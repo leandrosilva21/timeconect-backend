@@ -714,15 +714,20 @@ class BankHoursFixedController extends Controller
 
         $projectId = $request->get('project_id');
 
-        // Buscar o tipo de serviço "Projeto"
-        $projectServiceType = ServiceType::where('code', 'projeto')
-            ->orWhere('name', 'Projeto')
+        // Usar o service_type_name do request (Projeto ou Sustentação); padrão = Projeto
+        $serviceTypeName = $request->get('service_type_name', 'Projeto');
+        $projectServiceType = ServiceType::where('name', 'like', "%{$serviceTypeName}%")
             ->first();
+
+        if (!$projectServiceType) {
+            // fallback para Projeto
+            $projectServiceType = ServiceType::where('code', 'projeto')->orWhere('name', 'Projeto')->first();
+        }
 
         if (!$projectServiceType) {
             return response()->json([
                 'success' => false,
-                'message' => 'Tipo de serviço "Projeto" não encontrado no sistema'
+                'message' => 'Tipo de serviço não encontrado no sistema'
             ], 404);
         }
 

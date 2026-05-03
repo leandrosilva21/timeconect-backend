@@ -585,7 +585,7 @@ class BankHoursFixedController extends Controller
             $processProject($parentProject, $serviceTypeProjetoId, $projectsConsumedHours, $projectsMonthConsumedHours);
             $processProject($parentProject, $serviceTypeManutId,   $maintenanceConsumedHours, $maintenanceMonthConsumedHours);
 
-            // Pai sustentação: somar initial_hours_consumed + filhos com qualquer service_type
+            // Pai sustentação: somar initial_hours_consumed + filhos não-sustentação na manutenção
             if ($parentProject->service_type_id === $serviceTypeManutId) {
                 $maintenanceConsumedHours += (float) ($parentProject->initial_hours_consumed ?? 0);
 
@@ -616,11 +616,15 @@ class BankHoursFixedController extends Controller
                         }
                     }
                 }
-            } elseif ($parentProject->hasChildProjects()) {
-                // Pai não-sustentação: processa filhos normalmente
+            }
+
+            // Filhos: sempre processa para Projeto; para Manutenção apenas quando pai NÃO é sustentação
+            if ($parentProject->hasChildProjects()) {
                 foreach ($parentProject->childProjects as $childProject) {
                     $processProject($childProject, $serviceTypeProjetoId, $projectsConsumedHours, $projectsMonthConsumedHours);
-                    $processProject($childProject, $serviceTypeManutId,   $maintenanceConsumedHours, $maintenanceMonthConsumedHours);
+                    if ($parentProject->service_type_id !== $serviceTypeManutId) {
+                        $processProject($childProject, $serviceTypeManutId, $maintenanceConsumedHours, $maintenanceMonthConsumedHours);
+                    }
                 }
             }
         }

@@ -511,6 +511,7 @@ class ProjectController extends Controller
                     $closedChildrenHours = 0.0;
                     if ($project->relationLoaded('childProjects')) {
                         foreach ($project->childProjects as $child) {
+                            if ($child->isAusterFrozen()) continue;
                             if (!$child->relationLoaded('contractType') || !$child->contractType) continue;
                             $childContractName = strtolower(trim($child->contractType->name));
                             if ($childContractName === 'fechado') {
@@ -2075,6 +2076,8 @@ class ProjectController extends Controller
         // Sempre incluir projetos filhos no cálculo (se existirem)
         if ($project->relationLoaded('childProjects') && $project->childProjects->isNotEmpty()) {
             foreach ($project->childProjects as $childProject) {
+                if ($childProject->isAusterFrozen()) continue;
+
                 // Verificar se o projeto filho é do tipo "Fechado"
                 $isClosedContract = $childProject->contractType &&
                                     strtolower(trim($childProject->contractType->name)) === 'fechado';

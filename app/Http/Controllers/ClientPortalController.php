@@ -213,8 +213,9 @@ class ClientPortalController extends Controller
             $sold = $p->sold_hours ?? 0;
             $consumed = ($loggedMinutes[$p->id] ?? 0) / 60;
 
-            // Incluir filhos também
+            // Incluir filhos também (exceto subprojetos Auster históricos)
             foreach ($p->childProjects ?? [] as $child) {
+                if ($child->isAusterFrozen()) continue;
                 $sold     += $child->sold_hours ?? 0;
                 $consumed += ($loggedMinutes[$child->id] ?? 0) / 60;
                 $totalValue += ($child->sold_hours ?? 0) * ($child->hourly_rate ?? 0);
@@ -250,6 +251,7 @@ class ClientPortalController extends Controller
         foreach ($projects as $p) {
             $allProjects->push($p);
             foreach ($p->childProjects ?? [] as $child) {
+                if ($child->isAusterFrozen()) continue;
                 $allProjects->push($child);
             }
         }

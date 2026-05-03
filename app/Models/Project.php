@@ -686,6 +686,8 @@ class Project extends Model
             $this->loadMissing('childProjects.contractType');
 
             foreach ($this->childProjects as $childProject) {
+                if ($childProject->isAusterFrozen()) continue;
+
                 // Verificar se o projeto filho é do tipo "Fechado"
                 $isClosedContract = $childProject->contractType &&
                                     strtolower(trim($childProject->contractType->name)) === 'fechado';
@@ -781,6 +783,8 @@ class Project extends Model
             $this->loadMissing('childProjects.contractType');
 
             foreach ($this->childProjects as $childProject) {
+                if ($childProject->isAusterFrozen()) continue;
+
                 // Verificar se o projeto filho é do tipo "Fechado"
                 $isClosedContract = $childProject->contractType &&
                                     strtolower(trim($childProject->contractType->name)) === 'fechado';
@@ -870,6 +874,18 @@ class Project extends Model
         $coordinatorAvailableHours = round($consultantLoggedHours * $percent / 100, 2);
 
         return round($coordinatorAvailableHours - $coordinatorLoggedHours, 2);
+    }
+
+    /**
+     * Subprojetos da Auster com início anterior a 01/05/2025 são somente-leitura histórica:
+     * não devem contribuir para saldos, totais ou custos do projeto pai.
+     */
+    public function isAusterFrozen(): bool
+    {
+        return $this->customer_id === 220
+            && $this->parent_project_id !== null
+            && $this->start_date !== null
+            && \Carbon\Carbon::parse($this->start_date)->lt(\Carbon\Carbon::parse('2025-05-01'));
     }
 
     /**

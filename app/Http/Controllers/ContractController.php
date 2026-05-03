@@ -439,6 +439,11 @@ class ContractController extends Controller
             if (!empty($demandProjectIds)) {
                 $q->orWhereIn('id', $demandProjectIds);
             }
+            // Projetos importados diretamente (sem contract_id) mas com coordenador vinculado
+            $q->orWhere(function ($inner) {
+                $inner->whereNull('contract_id')
+                      ->whereHas('coordinators');
+            });
         })->orderBy('updated_at', 'desc');
 
         if ($isConsultor) {

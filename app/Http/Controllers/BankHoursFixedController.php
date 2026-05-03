@@ -795,9 +795,12 @@ class BankHoursFixedController extends Controller
         }
 
         $projectsData = $projects->map(function($project) {
-            $totalAvailable = $project->getTotalAvailableHours();
-            $balance        = round($project->getGeneralHoursBalance(), 2);
-            $consumed       = round(max(0, $totalAvailable - $balance), 2);
+            $totalAvailable  = $project->getTotalAvailableHours();
+            $balance         = round($project->getGeneralHoursBalance(), 2);
+            $initialConsumed = (float) ($project->initial_hours_consumed ?? 0);
+            // initial_hours_consumed: horas já consumidas antes do rastreamento no sistema
+            $consumed        = round(max(0, $totalAvailable - $balance) + $initialConsumed, 2);
+            $adjustedBalance = round($balance - $initialConsumed, 2);
             return [
                 'id' => $project->id,
                 'name' => $project->name,
@@ -808,7 +811,7 @@ class BankHoursFixedController extends Controller
                 'sold_hours' => $project->sold_hours,
                 'hour_contribution' => $project->hour_contribution,  // @deprecated - mantido para compatibilidade
                 'consumed_hours' => $consumed,
-                'hours_balance' => $balance,
+                'hours_balance' => $adjustedBalance,
                 'start_date' => $project->start_date ? $project->start_date->format('Y-m-d') : null,
                 'parent_project_id' => $project->parent_project_id,
                 // ✨ Novos campos calculados usando hour_contributions table

@@ -512,10 +512,14 @@ class ProjectController extends Controller
                     $closedChildrenHours = 0.0;
                     if ($project->relationLoaded('childProjects')) {
                         foreach ($project->childProjects as $child) {
-                            if ($child->relationLoaded('contractType') &&
-                                $child->contractType &&
-                                strtolower(trim($child->contractType->name)) === 'fechado') {
+                            if (!$child->relationLoaded('contractType') || !$child->contractType) continue;
+                            $childContractName = strtolower(trim($child->contractType->name));
+                            if ($childContractName === 'fechado') {
+                                // Fechado: compromete o total vendido
                                 $closedChildrenHours += (float) ($child->sold_hours ?? 0);
+                            } elseif ($childContractName === 'on demand') {
+                                // On Demand filho: consome conforme apontamentos
+                                $closedChildrenHours += ($child->total_logged_minutes ?? 0) / 60;
                             }
                         }
                     }

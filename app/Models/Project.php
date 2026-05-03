@@ -694,8 +694,6 @@ class Project extends Model
                     // Contratos fechados: subtrai horas vendidas + aportes (valor fixo)
                     $childTotalHours = $childProject->getTotalAvailableHours();
                     $balance -= $childTotalHours;
-                } elseif ($childProject->isOnDemand()) {
-                    // On Demand: não consome saldo do projeto pai
                 } elseif ($childProject->isBankHoursMonthly()) {
                     // Banco de Horas Mensal: usa accumulated_sold_hours
                     $childSoldHours = $childProject->accumulated_sold_hours ?? $childProject->sold_hours ?? 0;

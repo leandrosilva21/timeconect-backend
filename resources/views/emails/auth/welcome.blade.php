@@ -226,9 +226,9 @@
             </td>
           </tr>
 
-          {{-- ── BOTÃO ── --}}
+          {{-- ── BOTÃO ACESSAR ── --}}
           <tr>
-            <td class="btn-td" align="center" style="padding:32px 40px 36px;">
+            <td class="btn-td" align="center" style="padding:32px 40px 0;">
               <table role="presentation" border="0" cellpadding="0" cellspacing="0">
                 <tr>
                   <td align="center"
@@ -245,6 +245,57 @@
               </table>
             </td>
           </tr>
+
+          {{-- ── MANUAL DO USUÁRIO ── --}}
+          @php
+            $frontendUrl = config('app.frontend_url', 'https://app.minutor.com.br');
+            $manualUrl  = null;
+            $manualName = null;
+            if (isset($user) && $user->type === 'consultor') {
+                if ($user->consultant_type === 'horista') {
+                    $manualUrl  = $frontendUrl . '/manuais/manual-consultor-horista.pdf';
+                    $manualName = 'Manual do Consultor Horista';
+                } elseif ($user->consultant_type === 'banco_de_horas') {
+                    $manualUrl  = $frontendUrl . '/manuais/manual-consultor-banco-horas.pdf';
+                    $manualName = 'Manual do Consultor — Banco de Horas';
+                }
+            }
+          @endphp
+          @if($manualUrl)
+          <tr>
+            <td style="padding:20px 40px 0;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
+                style="background-color:#16161A;border-radius:10px;border:1px solid rgba(0,245,255,0.10);">
+                <tr>
+                  <td style="padding:16px 20px;">
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                      <tr>
+                        <td style="vertical-align:middle;">
+                          <div style="font-size:12px;font-weight:600;color:#00F5FF;font-family:'Segoe UI',Arial,sans-serif;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;">
+                            Manual do usuário
+                          </div>
+                          <div style="font-size:13px;color:#A1A1AA;font-family:'Segoe UI',Arial,sans-serif;">
+                            {{ $manualName }}
+                          </div>
+                        </td>
+                        <td style="vertical-align:middle;text-align:right;white-space:nowrap;padding-left:16px;">
+                          <a href="{{ $manualUrl }}" target="_blank"
+                            style="display:inline-block;padding:8px 18px;font-size:12px;font-weight:600;
+                              color:#FFFFFF;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;
+                              border-radius:7px;background:rgba(0,245,255,0.12);border:1px solid rgba(0,245,255,0.25);">
+                            Baixar PDF
+                          </a>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          @endif
+
+          <tr><td style="padding-bottom:36px;"></td></tr>
 
           {{-- ── DIVISOR ── --}}
           <tr>

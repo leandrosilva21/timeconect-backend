@@ -48,18 +48,18 @@
             <td class="pd-header" align="left"
               style="padding:36px 40px 28px;background-color:#111113;border-bottom:1px solid rgba(255,255,255,0.06);">
 
-              {{-- 1. ERPServ — marca mãe --}}
-              <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+              {{-- 1. ERPServ — empresa --}}
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
                 <tr>
-                  <td style="vertical-align:middle;padding-right:12px;">
-                    <img src="https://app.minutor.com.br/logo.png" alt="ERPServ" width="88"
-                      style="display:block;width:88px;height:auto;filter:brightness(0) invert(1);-webkit-filter:brightness(0) invert(1);opacity:0.92;" />
+                  <td style="vertical-align:middle;padding-right:10px;">
+                    <img src="https://app.minutor.com.br/logo.png" alt="ERPServ" width="80"
+                      style="display:block;width:80px;height:auto;filter:brightness(0) invert(1);-webkit-filter:brightness(0) invert(1);opacity:0.70;" />
                   </td>
-                  <td style="vertical-align:middle;padding:0 12px;">
-                    <div style="width:1px;height:22px;background:rgba(255,255,255,0.12);font-size:0;line-height:22px;">&nbsp;</div>
+                  <td style="vertical-align:middle;padding:0 10px;">
+                    <div style="width:1px;height:18px;background:rgba(255,255,255,0.10);font-size:0;line-height:18px;">&nbsp;</div>
                   </td>
                   <td style="vertical-align:middle;">
-                    <span style="font-size:12px;font-weight:500;color:rgba(255,255,255,0.38);letter-spacing:0.04em;font-family:'Segoe UI',Arial,sans-serif;">
+                    <span style="font-size:11px;font-weight:400;color:rgba(255,255,255,0.30);letter-spacing:0.03em;font-family:'Segoe UI',Arial,sans-serif;">
                       ERPServ Consultoria
                     </span>
                   </td>
@@ -67,45 +67,45 @@
               </table>
 
               {{-- 2. Minutor — produto --}}
-              <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin-bottom:14px;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin-bottom:18px;">
                 <tr>
                   <td style="vertical-align:middle;padding-right:14px;">
                     <table role="presentation" border="0" cellpadding="0" cellspacing="0">
                       <tr>
-                        <td align="center" style="width:40px;height:40px;border-radius:10px;background:rgba(0,212,232,0.08);border:1px solid rgba(0,212,232,0.14);vertical-align:middle;">
-                          <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjIiIGhlaWdodD0iMjIiIHZpZXdCb3g9IjAgMCAyOCAyOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB4PSIyIiB5PSIxNS40IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjkiIHJ4PSIxLjYiIGZpbGw9IiMwMEY1RkYiLz48cmVjdCB4PSI5LjEiIHk9IjkuNCIgd2lkdGg9IjQuMiIgaGVpZ2h0PSIxNSIgcng9IjEuNiIgZmlsbD0iIzAwRjVGRiIvPjxyZWN0IHg9IjE2LjIiIHk9IjQiIHdpZHRoPSI0LjIiIGhlaWdodD0iMjAiIHJ4PSIxLjYiIGZpbGw9IiMwMEY1RkYiLz48cmVjdCB4PSIyMy4yIiB5PSIxMS42IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjEyIiByeD0iMS42IiBmaWxsPSIjMDBGNUZGIi8+PC9zdmc+" alt="" width="22" height="22" style="display:inline-block;width:22px;height:22px;" />
+                        <td align="center" style="width:36px;height:36px;border-radius:9px;background:rgba(0,212,232,0.07);border:1px solid rgba(0,212,232,0.12);vertical-align:middle;">
+                          <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkiIGhlaWdodD0iMTkiIHZpZXdCb3g9IjAgMCAyOCAyOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB4PSIyIiB5PSIxNS40IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjkiIHJ4PSIxLjYiIGZpbGw9IiMwMEY1RkYiLz48cmVjdCB4PSI5LjEiIHk9IjkuNCIgd2lkdGg9IjQuMiIgaGVpZ2h0PSIxNSIgcng9IjEuNiIgZmlsbD0iIzAwRjVGRiIvPjxyZWN0IHg9IjE2LjIiIHk9IjQiIHdpZHRoPSI0LjIiIGhlaWdodD0iMjAiIHJ4PSIxLjYiIGZpbGw9IiMwMEY1RkYiLz48cmVjdCB4PSIyMy4yIiB5PSIxMS42IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjEyIiByeD0iMS42IiBmaWxsPSIjMDBGNUZGIi8+PC9zdmc+" alt="" width="19" height="19" style="display:inline-block;width:19px;height:19px;" />
                         </td>
                       </tr>
                     </table>
                   </td>
                   <td style="vertical-align:middle;">
-                    <div style="font-size:24px;font-weight:700;letter-spacing:-0.01em;color:#FFFFFF;line-height:1.1;font-family:'Segoe UI',Arial,sans-serif;">
+                    <div style="font-size:26px;font-weight:700;letter-spacing:-0.02em;color:#FFFFFF;line-height:1.05;font-family:'Segoe UI',Arial,sans-serif;">
                       Minutor
                     </div>
-                    <div style="margin-top:3px;font-size:13px;color:rgba(255,255,255,0.42);font-weight:400;font-family:'Segoe UI',Arial,sans-serif;">
-                      Plataforma de apontamento e gestão de horas
+                    <div style="margin-top:4px;font-size:13px;color:rgba(255,255,255,0.38);font-weight:400;font-family:'Segoe UI',Arial,sans-serif;">
+                      Plataforma de gestão de horas
                     </div>
                   </td>
                 </tr>
               </table>
 
-              {{-- 3. Descrição --}}
-              <p style="margin:14px 0 0;font-size:13px;color:rgba(255,255,255,0.3);line-height:1.6;font-weight:400;font-family:'Segoe UI',Arial,sans-serif;">
-                Sistema desenvolvido pela ERPServ para controle de horas, gestão de contratos e acompanhamento operacional de projetos.
+              {{-- 3. Linha de valor --}}
+              <p style="margin:0 0 14px;font-size:13px;color:rgba(255,255,255,0.28);line-height:1.5;font-weight:400;font-family:'Segoe UI',Arial,sans-serif;">
+                Controle de horas, contratos e operações em um único lugar.
               </p>
 
               {{-- 4. Badge --}}
-              <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin-top:14px;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0">
                 <tr>
-                  <td style="padding:5px 10px;border-radius:6px;background:rgba(0,212,232,0.06);border:1px solid rgba(0,212,232,0.14);">
+                  <td style="padding:3px 8px;border-radius:4px;background:rgba(0,212,232,0.04);border:1px solid rgba(0,212,232,0.10);">
                     <table role="presentation" border="0" cellpadding="0" cellspacing="0">
                       <tr>
-                        <td style="vertical-align:middle;padding-right:6px;">
-                          <div style="width:5px;height:5px;border-radius:50%;background:#00D4E8;opacity:0.8;font-size:0;line-height:5px;">&nbsp;</div>
+                        <td style="vertical-align:middle;padding-right:5px;">
+                          <div style="width:4px;height:4px;border-radius:50%;background:#00D4E8;opacity:0.6;font-size:0;line-height:4px;">&nbsp;</div>
                         </td>
                         <td style="vertical-align:middle;">
-                          <span style="font-size:11px;font-weight:600;color:rgba(0,212,232,0.75);letter-spacing:0.06em;text-transform:uppercase;font-family:'Segoe UI',Arial,sans-serif;">
-                            Plataforma oficial ERPServ
+                          <span style="font-size:10px;font-weight:500;color:rgba(0,212,232,0.55);letter-spacing:0.04em;font-family:'Segoe UI',Arial,sans-serif;">
+                            Gestão operacional ERPServ
                           </span>
                         </td>
                       </tr>

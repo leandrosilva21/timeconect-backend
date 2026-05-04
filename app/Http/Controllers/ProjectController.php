@@ -1763,6 +1763,31 @@ class ProjectController extends Controller
         ]);
     }
 
+    public function nextCode(Request $request): JsonResponse
+    {
+        $request->validate(['customer_id' => 'required|exists:customers,id']);
+
+        $customer = Customer::findOrFail($request->customer_id);
+
+        if (!$customer->code_prefix) {
+            return response()->json(['code' => null, 'error' => 'Cliente sem prefixo de código'], 422);
+        }
+
+        $seq = \App\Models\ProjectSequence::where('customer_id', $customer->id)->first();
+        $nextSeq = ($seq?->last_sequence ?? 0) + 1;
+        $prefix  = strtoupper($customer->code_prefix);
+        $year    = now()->format('y');
+
+        // Avança até encontrar código disponível
+        do {
+            $padded = str_pad($nextSeq, 3, '0', STR_PAD_LEFT);
+            $code   = $prefix . $padded . '-' . $year;
+            $nextSeq++;
+        } while (Project::withTrashed()->where('code', $code)->exists());
+
+        return response()->json(['code' => $code, 'prefix' => $prefix, 'year' => $year]);
+    }
+
     /**
      * @OA\Get(
      *     path="/api/v1/projects/{id}/available-hours",

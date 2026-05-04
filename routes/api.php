@@ -358,6 +358,7 @@ Route::prefix('v1')->group(function () {
 
         // Enum values - endpoint público dentro da autenticação
         Route::get('/projects/enum-values', [ProjectController::class, 'enumValues'])->name('projects.enum-values');
+        Route::get('/projects/next-code', [ProjectController::class, 'nextCode'])->name('projects.next-code');
 
         // Projetos do próprio usuário (sem permissão especial — filtra automaticamente pelo consultor logado)
         Route::get('/my-projects', [ProjectController::class, 'myProjects'])->name('projects.my');

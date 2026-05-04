@@ -267,6 +267,7 @@ class MovideskService
     private function extractUserId(array $action): ?int
     {
         $email = $action['createdBy']['email'] ?? null;
+        if ($email) $email = strtolower(trim($email));
 
         if ($email) {
             $user = User::where('email', $email)->where('enabled', true)->first();
@@ -965,7 +966,7 @@ class MovideskService
     {
         $email = $ticket['owner']['email'] ?? null;
         if (!$email) return null;
-        return User::where('email', $email)->value('id');
+        return User::where('email', strtolower(trim($email)))->value('id');
     }
 
     private function resolveCustomerIdForPortal(array $ticket): ?int

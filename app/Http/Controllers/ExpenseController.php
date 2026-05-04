@@ -403,7 +403,7 @@ class ExpenseController extends Controller
             'user_id' => 'nullable|exists:users,id', // Opcional - apenas para administradores
             'project_id' => 'required|exists:projects,id',
             'expense_category_id' => 'required|exists:expense_categories,id',
-            'expense_date' => 'required|date|before_or_equal:today',
+            'expense_date' => 'required|date',
             'description' => 'required|string|max:1000',
             'amount' => 'required|numeric|min:0.01|max:999999.99',
             'expense_type' => ['nullable', 'string'],
@@ -586,7 +586,7 @@ class ExpenseController extends Controller
             'user_id' => 'sometimes|exists:users,id', // Apenas para administradores
             'project_id' => 'sometimes|exists:projects,id',
             'expense_category_id' => 'sometimes|exists:expense_categories,id',
-            'expense_date' => 'sometimes|date|before_or_equal:today',
+            'expense_date' => 'sometimes|date',
             'description' => 'sometimes|string|max:1000',
             'amount' => 'sometimes|numeric|min:0.01|max:999999.99',
             'expense_type' => ['nullable', 'string'],

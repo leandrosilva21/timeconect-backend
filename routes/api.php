@@ -553,7 +553,8 @@ Route::prefix('v1')->group(function () {
         Route::patch('/users/{user}', [UserController::class, 'update'])->name('users.patch');
 
         Route::middleware('permission.or.admin:users.delete')->group(function () {
-            Route::delete('/users/{user}', [UserController::class, 'destroy'])->name('users.destroy');
+            Route::delete('/users/{user}',    [UserController::class, 'destroy'])->name('users.destroy');
+            Route::delete('/users',           [UserController::class, 'bulkDestroy'])->name('users.bulk-destroy');
         });
 
         Route::middleware('permission.or.admin:users.reset_password')->group(function () {

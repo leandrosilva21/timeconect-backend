@@ -790,6 +790,32 @@ class UserController extends Controller
         ]);
     }
 
+    public function bulkDestroy(Request $request): JsonResponse
+    {
+        $currentUser = Auth::user();
+
+        if (!$currentUser->isAdmin() && !$currentUser->hasAccess('users.delete')) {
+            return $this->accessDeniedResponse('Você não tem permissão para excluir usuários');
+        }
+
+        $validator = Validator::make($request->all(), [
+            'ids'   => 'required|array|min:1|max:100',
+            'ids.*' => 'integer|exists:users,id',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->validationErrorResponse($validator->errors()->all());
+        }
+
+        $ids = collect($validator->validated()['ids'])
+            ->filter(fn($id) => $id !== $currentUser->id)
+            ->values();
+
+        $count = User::whereIn('id', $ids)->delete();
+
+        return response()->json(['message' => "{$count} usuário(s) excluído(s)"]);
+    }
+
     /**
      * Gera uma senha temporária para o próprio usuário autenticado
      * (sem precisar de permissão de admin).

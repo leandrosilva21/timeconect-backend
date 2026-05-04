@@ -40,12 +40,46 @@ class WelcomeNotification extends Notification implements ShouldQueue
      */
     public function toMail($notifiable)
     {
-        return (new MailMessage)
+        $mail = (new MailMessage)
             ->subject('Bem-vindo(a) ao ' . config('app.name'))
             ->view('emails.auth.welcome', [
                 'user' => $notifiable,
-                'temporaryPassword' => $this->temporaryPassword
+                'temporaryPassword' => $this->temporaryPassword,
             ]);
+
+        $manual = $this->resolveManual($notifiable);
+        if ($manual) {
+            $mail->attach($manual['path'], [
+                'as'   => $manual['name'],
+                'mime' => 'application/pdf',
+            ]);
+        }
+
+        return $mail;
+    }
+
+    private function resolveManual($user): ?array
+    {
+        if ($user->type !== 'consultor') {
+            return null;
+        }
+
+        $map = [
+            'horista'        => ['file' => 'manual-consultor-horista.pdf',      'name' => 'Manual Minutor - Consultor Horista.pdf'],
+            'banco_de_horas' => ['file' => 'manual-consultor-banco-horas.pdf',  'name' => 'Manual Minutor - Consultor Banco de Horas.pdf'],
+        ];
+
+        $entry = $map[$user->consultant_type] ?? null;
+        if (!$entry) {
+            return null;
+        }
+
+        $path = resource_path('manuals/' . $entry['file']);
+        if (!file_exists($path)) {
+            return null;
+        }
+
+        return ['path' => $path, 'name' => $entry['name']];
     }
 
     /**

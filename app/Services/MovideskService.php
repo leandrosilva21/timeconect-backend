@@ -37,7 +37,7 @@ class MovideskService
             $response = Http::get("{$this->baseUrl()}/tickets", [
                 'token'   => $this->token(),
                 'id'      => $ticketId,
-                '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments)',
+                '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments;$select=id,type,isPublic,htmlDescription,createdBy,timeAppointments)',
             ]);
 
             if ($response->successful()) {
@@ -229,10 +229,9 @@ class MovideskService
             $startTime = $this->extractTime($appointment, 'periodStart') ?? '00:00';
             $endTime   = $this->extractTime($appointment, 'periodEnd')   ?? '00:00';
 
-            // isPublic === false → Ação interna; ausente → fallback para type === 2
-            $isInternal = array_key_exists('isPublic', $action)
-                ? ($action['isPublic'] === false)
-                : (($action['type'] ?? 0) === 2);
+            // isPublic === false → Ação interna; ausente ou true → pública
+            // type === 2 significa "ação manual" (comentário), não "interna"
+            $isInternal = isset($action['isPublic']) && $action['isPublic'] === false;
 
             $this->createTimesheet([
                 'user_id'                 => $userId,

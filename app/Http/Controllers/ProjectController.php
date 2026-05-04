@@ -176,8 +176,8 @@ class ProjectController extends Controller
         $withRelations = ['customer', 'contractType', 'serviceType'];
         if (!$gestaoMode) {
             $withRelations[] = 'parentProject';
-            $withRelations[] = 'hourContributions';
         }
+        $withRelations[] = 'hourContributions';
         // Em gestao simples (sem parentProjectsOnly), carrega equipe para indicadores
         // with_team=false pula apenas consultants (pesados); coordinators sempre são carregados
         $withTeam = $request->get('with_team', 'true') !== 'false';
@@ -502,15 +502,16 @@ class ProjectController extends Controller
                         $accumulatedHours = $months * (int)($project->sold_hours ?? 0);
                     }
                     $project->accumulated_sold_hours = $accumulatedHours;
-                    // total_available_hours = mensal + aportes (consistente com modo não-gestao)
-                    $totalAvailable = ($project->sold_hours ?? 0) + ($project->hour_contribution ?? 0);
+                    // total_available_hours usa a relação eager-loaded para incluir aportes novos
+                    $totalAvailable = $project->getTotalAvailableHours();
                     // saldo usa o acumulado real; HS consumidas iniciais somadas às novas
                     $initialConsumed = (float)($project->initial_hours_consumed ?? 0);
                     $project->consumed_hours = round($consumed + $initialConsumed, 2);
-                    $project->general_hours_balance = round($accumulatedHours + ($project->hour_contribution ?? 0) - $consumed - $initialConsumed, 2);
+                    $newContributions = $totalAvailable - ($project->sold_hours ?? 0);
+                    $project->general_hours_balance = round($accumulatedHours + $newContributions - $consumed - $initialConsumed, 2);
                 } else {
                     $initialConsumed = (float)($project->initial_hours_consumed ?? 0);
-                    $totalAvailable = ($project->sold_hours ?? 0) + ($project->hour_contribution ?? 0);
+                    $totalAvailable = $project->getTotalAvailableHours();
 
                     // Somar horas vendidas dos filhos Fechado (comprometidas no cadastro)
                     $closedChildrenHours = 0.0;
@@ -534,7 +535,7 @@ class ProjectController extends Controller
                 }
                 $project->balance_percentage = $totalAvailable > 0 ? round(($project->consumed_hours / $totalAvailable) * 100, 2) : 0;
                 $project->total_available_hours = round($totalAvailable, 2);
-                $project->total_contributions_hours = 0;
+                $project->total_contributions_hours = $project->hourContributions->sum('contributed_hours');
                 $project->total_project_value = null;
                 $project->weighted_hourly_rate = null;
             } else {

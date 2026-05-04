@@ -119,7 +119,7 @@ class UserController extends Controller
         $pageSize = min((int) $request->get('pageSize', 20), 500);
         $page = (int) $request->get('page', 1);
 
-        $query = User::with(['customer']);
+        $query = User::with(['customer', 'partner:id,name']);
 
         // Se não é admin nem tem permissão para ver/resetar todos, só pode ver próprio perfil
         // Coordenadores podem ver todos os usuários (necessário para filtros de aprovações/apontamentos)

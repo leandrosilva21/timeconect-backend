@@ -247,9 +247,25 @@ class MovideskService
         return $this->processAppointment($ticketDetails, $action, $timeAppointments[0]) ? 1 : 0;
     }
 
+    private const BLOCKED_OWNER_TEAMS = [
+        'Promax Bardahl',
+        'Manutenção Promax',
+    ];
+
     private function processAppointment(array $ticket, array $action, array $appointment): bool
     {
         $appointmentId = $appointment['id'] ?? null;
+
+        // Bloquear importação de tickets de equipes não gerenciadas pelo Minutor
+        $ownerTeam = $ticket['ownerTeam'] ?? null;
+        if ($ownerTeam && in_array(trim($ownerTeam), self::BLOCKED_OWNER_TEAMS, true)) {
+            Log::info('⛔ [MOVIDESK] Apontamento bloqueado (equipe não permitida)', [
+                'owner_team'              => $ownerTeam,
+                'ticket_id'               => $ticket['id'] ?? null,
+                'movidesk_appointment_id' => $appointmentId,
+            ]);
+            return false;
+        }
 
         // Deduplicação por movidesk_appointment_id
         if ($appointmentId && Timesheet::where('movidesk_appointment_id', $appointmentId)->exists()) {

@@ -369,6 +369,11 @@ class ProjectController extends Controller
             $query->whereNull('parent_project_id');
         }
 
+        // Filtro para apenas projetos raiz que POSSUEM subprojetos (modo multi-contratual)
+        if ($request->get('with_children_only') === 'true') {
+            $query->whereNull('parent_project_id')->whereHas('childProjects');
+        }
+
         // Filtro para apenas projetos de nível raiz (sem pai), independente de ter filhos
         if ($request->get('top_level_only') === 'true') {
             $query->whereNull('parent_project_id');

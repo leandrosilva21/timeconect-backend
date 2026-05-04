@@ -18,6 +18,7 @@ class ExecutiveController extends Controller
 
         $query = User::where('is_executive', true)
             ->whereNull('customer_id')
+            ->where('type', '!=', 'parceiro_admin')
             ->orderBy('name');
 
         if ($filter) {
@@ -43,6 +44,7 @@ class ExecutiveController extends Controller
         $query = User::whereNull('customer_id')
             ->where('is_executive', false)
             ->where('enabled', true)
+            ->where('type', '!=', 'parceiro_admin')
             ->orderBy('name');
 
         if ($filter) {

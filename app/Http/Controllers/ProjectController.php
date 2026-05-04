@@ -935,8 +935,8 @@ class ProjectController extends Controller
      */
     public function update(Request $request, Project $project): JsonResponse
     {
-        // Verificar se projeto pode ser editado
-        if (!$project->canBeEdited()) {
+        // Verificar se projeto pode ser editado (admin sempre pode)
+        if (!$project->canBeEdited() && !Auth::user()->isAdmin()) {
             return response()->json([
                 'code' => 'PROJECT_FINISHED',
                 'type' => 'error',

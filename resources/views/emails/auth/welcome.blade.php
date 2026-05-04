@@ -48,12 +48,13 @@
             <td class="pd-header" align="left"
               style="padding:36px 40px 28px;background-color:#111113;border-bottom:1px solid rgba(255,255,255,0.06);">
 
-              {{-- ERPServ — logo centralizado --}}
+              {{-- ERPServ — logo centralizado (texto, compatível com todos clientes de e-mail) --}}
               <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:28px;">
                 <tr>
                   <td align="center">
-                    <img src="https://app.minutor.com.br/logo.png" alt="ERPServ" width="96"
-                      style="display:inline-block;width:96px;height:auto;filter:brightness(0) invert(1);-webkit-filter:brightness(0) invert(1);opacity:0.75;" />
+                    <span style="font-size:13px;font-weight:600;letter-spacing:0.18em;text-transform:uppercase;color:rgba(255,255,255,0.45);font-family:'Segoe UI',Arial,sans-serif;">
+                      ERPServ
+                    </span>
                   </td>
                 </tr>
               </table>

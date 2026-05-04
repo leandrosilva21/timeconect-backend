@@ -164,6 +164,10 @@ class UserController extends Controller
             $query->where('is_executive', true);
         }
 
+        if ($request->filled('partner_id')) {
+            $query->where('partner_id', $request->partner_id);
+        }
+
         // Filtro por status (ativo/inativo) usando campo enabled
         $status = $request->get('status');
         if ($status === 'active') {
@@ -186,6 +190,10 @@ class UserController extends Controller
                 $allowedFields = ['name', 'email', 'created_at', 'updated_at'];
                 if (in_array($field, $allowedFields)) {
                     $query->orderBy($field, $direction);
+                } elseif ($field === 'partner_name') {
+                    $query->leftJoin('partners', 'partners.id', '=', 'users.partner_id')
+                          ->orderBy('partners.name', $direction)
+                          ->select('users.*');
                 }
             }
         }

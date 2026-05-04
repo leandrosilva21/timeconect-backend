@@ -48,26 +48,18 @@
             <td class="pd-header" align="left"
               style="padding:36px 40px 28px;background-color:#111113;border-bottom:1px solid rgba(255,255,255,0.06);">
 
-              {{-- 1. ERPServ — empresa --}}
-              <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+              {{-- ERPServ — logo centralizado --}}
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:28px;">
                 <tr>
-                  <td style="vertical-align:middle;padding-right:10px;">
-                    <img src="https://app.minutor.com.br/logo.png" alt="ERPServ" width="80"
-                      style="display:block;width:80px;height:auto;filter:brightness(0) invert(1);-webkit-filter:brightness(0) invert(1);opacity:0.70;" />
-                  </td>
-                  <td style="vertical-align:middle;padding:0 10px;">
-                    <div style="width:1px;height:18px;background:rgba(255,255,255,0.10);font-size:0;line-height:18px;">&nbsp;</div>
-                  </td>
-                  <td style="vertical-align:middle;">
-                    <span style="font-size:11px;font-weight:400;color:rgba(255,255,255,0.30);letter-spacing:0.03em;font-family:'Segoe UI',Arial,sans-serif;">
-                      ERPServ Consultoria
-                    </span>
+                  <td align="center">
+                    <img src="https://app.minutor.com.br/logo.png" alt="ERPServ" width="96"
+                      style="display:inline-block;width:96px;height:auto;filter:brightness(0) invert(1);-webkit-filter:brightness(0) invert(1);opacity:0.75;" />
                   </td>
                 </tr>
               </table>
 
-              {{-- 2. Minutor — produto --}}
-              <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin-bottom:18px;">
+              {{-- Minutor — produto --}}
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0">
                 <tr>
                   <td style="vertical-align:middle;padding-right:14px;">
                     <table role="presentation" border="0" cellpadding="0" cellspacing="0">
@@ -83,33 +75,8 @@
                       Minutor
                     </div>
                     <div style="margin-top:4px;font-size:13px;color:rgba(255,255,255,0.38);font-weight:400;font-family:'Segoe UI',Arial,sans-serif;">
-                      Plataforma de gestão de horas
+                      Controle de horas e contratos em um só lugar
                     </div>
-                  </td>
-                </tr>
-              </table>
-
-              {{-- 3. Linha de valor --}}
-              <p style="margin:0 0 14px;font-size:13px;color:rgba(255,255,255,0.28);line-height:1.5;font-weight:400;font-family:'Segoe UI',Arial,sans-serif;">
-                Controle de horas, contratos e operações em um único lugar.
-              </p>
-
-              {{-- 4. Badge --}}
-              <table role="presentation" border="0" cellpadding="0" cellspacing="0">
-                <tr>
-                  <td style="padding:3px 8px;border-radius:4px;background:rgba(0,212,232,0.04);border:1px solid rgba(0,212,232,0.10);">
-                    <table role="presentation" border="0" cellpadding="0" cellspacing="0">
-                      <tr>
-                        <td style="vertical-align:middle;padding-right:5px;">
-                          <div style="width:4px;height:4px;border-radius:50%;background:#00D4E8;opacity:0.6;font-size:0;line-height:4px;">&nbsp;</div>
-                        </td>
-                        <td style="vertical-align:middle;">
-                          <span style="font-size:10px;font-weight:500;color:rgba(0,212,232,0.55);letter-spacing:0.04em;font-family:'Segoe UI',Arial,sans-serif;">
-                            Gestão operacional ERPServ
-                          </span>
-                        </td>
-                      </tr>
-                    </table>
                   </td>
                 </tr>
               </table>

@@ -384,7 +384,8 @@ class ContractController extends Controller
         $demandCards = collect();
         if (!$isConsultor) {
             $demandQuery = Contract::with([
-                'customer:id,name',
+                'customer:id,name,executive_id',
+                'customer.executive:id,name',
                 'contractType:id,name',
                 'serviceType:id,name',
                 'kanbanCoordinator:id,name',
@@ -408,7 +409,8 @@ class ContractController extends Controller
         $transitionCards = collect();
         if (!$isConsultor && !$isCliente) {
             $transitionCards = Contract::with([
-                'customer:id,name',
+                'customer:id,name,executive_id',
+                'customer.executive:id,name',
                 'contractType:id,name',
                 'serviceType:id,name',
                 'project:id,code,name,status',
@@ -424,7 +426,8 @@ class ContractController extends Controller
         $demandProjectIds = $demandCards->pluck('project_id')->filter()->unique()->values()->toArray();
 
         $projectQuery = \App\Models\Project::with([
-            'customer:id,name',
+            'customer:id,name,executive_id',
+            'customer.executive:id,name',
             'contract:id,project_name',
             'coordinators:id,name',
             'consultants:id,name',
@@ -498,10 +501,14 @@ class ContractController extends Controller
         if (!$isConsultor && !$isCliente) {
             // Todos contratos alocados numa fila de sustentação aparecem na coluna correta
             $sustCards = Contract::with([
-                'customer:id,name',
+                'customer:id,name,executive_id',
+                'customer.executive:id,name',
                 'contractType:id,name',
                 'serviceType:id,name',
-                'project.customer:id,name',
+                'executivoConta:id,name',
+                'project.customer:id,name,executive_id',
+                'project.customer.executive:id,name',
+                'project.executivoConta:id,name',
                 'project.coordinators',
                 'project.consultants',
                 'project.contractType:id,name',
@@ -1084,7 +1091,7 @@ class ContractController extends Controller
             'kanban_status'    => $contract->kanban_status ?? Contract::KANBAN_BACKLOG,
             'kanban_coordinator_id' => $contract->kanban_coordinator_id,
             'kanban_coordinator'    => $contract->kanbanCoordinator?->name,
-            'executivo_conta_name'  => $contract->executivoConta?->name,
+            'executivo_conta_name'  => $contract->executivoConta?->name ?? $contract->customer?->executive?->name,
             'kanban_order'     => $contract->kanban_order,
             'status'           => $contract->status,
             'project_id'       => $contract->project_id,
@@ -1119,7 +1126,7 @@ class ContractController extends Controller
             'coordinator_ids'       => $project->coordinators->pluck('id'),
             'coordinators'          => $project->coordinators->pluck('name'),
             'consultants'           => $project->consultants->pluck('name'),
-            'executivo_conta_name'  => $project->executivoConta?->name,
+            'executivo_conta_name'  => $project->executivoConta?->name ?? $project->customer?->executive?->name,
             'contract_type'         => $project->contractType?->name,
             'service_type'          => $project->serviceType?->name,
             'is_complete'           => true,

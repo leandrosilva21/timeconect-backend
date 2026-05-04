@@ -414,6 +414,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/timesheets', [TimesheetController::class, 'index'])->name('timesheets.index');
         Route::get('/timesheets/export', [TimesheetController::class, 'export'])->name('timesheets.export');
         Route::put('/timesheets/bulk-extra-pct', [TimesheetController::class, 'bulkExtraPct'])->name('timesheets.bulk-extra-pct');
+        Route::post('/timesheets/reprocess-movidesk', [TimesheetController::class, 'reprocessMovidesk'])->name('timesheets.reprocess-movidesk');
         Route::get('/timesheets/{timesheet}', [TimesheetController::class, 'show'])->name('timesheets.show');
 
         // Qualquer usuário autenticado (exceto Cliente — verificado no controller) pode criar apontamentos

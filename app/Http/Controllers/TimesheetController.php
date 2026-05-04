@@ -2336,4 +2336,72 @@ class TimesheetController extends Controller
             return response()->json(['message' => 'Erro ao acessar o anexo.'], 503);
         }
     }
+
+    /**
+     * Reprocessa apontamentos do Movidesk: re-busca no Movidesk e tenta corrigir
+     * user_id, customer_id e project_id que ficaram como valor padrão.
+     *
+     * Body: { ids: [1,2,3] }  — se omitido, processa todos com usuário padrão.
+     */
+    public function reprocessMovidesk(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        $ids           = $request->input('ids', []);
+        $defaultUserId = \App\Models\SystemSetting::get('movidesk_default_user_id');
+
+        if (!empty($ids)) {
+            $timesheets = Timesheet::whereIn('id', array_map('intval', $ids))
+                ->where('origin', 'movidesk')
+                ->whereNotNull('ticket')
+                ->whereNotNull('movidesk_appointment_id')
+                ->get();
+        } else {
+            $query = Timesheet::where('origin', 'movidesk')
+                ->whereNotNull('ticket')
+                ->whereNotNull('movidesk_appointment_id');
+
+            if ($defaultUserId) {
+                $query->where('user_id', (int) $defaultUserId);
+            }
+
+            $timesheets = $query->orderByDesc('id')->limit(200)->get();
+        }
+
+        if ($timesheets->isEmpty()) {
+            return response()->json(['message' => 'Nenhum apontamento para reprocessar.', 'updated' => 0, 'skipped' => 0, 'errors' => 0]);
+        }
+
+        $service = app(\App\Services\MovideskService::class);
+        $updated = 0;
+        $skipped = 0;
+        $errors  = 0;
+        $details = [];
+
+        foreach ($timesheets as $ts) {
+            try {
+                $result = $service->reprocessTimesheet($ts);
+                if ($result['updated'] ?? false) {
+                    $updated++;
+                    $details[] = ['id' => $ts->id, 'changes' => $result['changes']];
+                } else {
+                    $skipped++;
+                }
+            } catch (\Throwable $e) {
+                $errors++;
+                Log::error('[Reprocess Movidesk] Erro', ['id' => $ts->id, 'error' => $e->getMessage()]);
+            }
+        }
+
+        return response()->json([
+            'message' => "Reprocessamento concluído: {$updated} atualizado(s), {$skipped} sem alteração, {$errors} erro(s).",
+            'updated' => $updated,
+            'skipped' => $skipped,
+            'errors'  => $errors,
+            'details' => $details,
+        ]);
+    }
 }

@@ -129,6 +129,73 @@ class MovideskService
     // ─────────────────────────────────────────────────────────────
 
     /**
+     * Reprocessa um timesheet existente do Movidesk: re-busca o ticket e tenta
+     * corrigir user_id, customer_id e project_id se estiverem com valores padrão.
+     * Retorna array com 'updated' (bool), 'changes' (array), ou 'skipped' (string).
+     */
+    public function reprocessTimesheet(\App\Models\Timesheet $timesheet): array
+    {
+        if (!$timesheet->ticket || !$timesheet->movidesk_appointment_id) {
+            return ['updated' => false, 'skipped' => 'no_ticket'];
+        }
+
+        $ticket = $this->fetchTicket((int) $timesheet->ticket);
+        if (!$ticket) {
+            return ['updated' => false, 'skipped' => 'ticket_not_found'];
+        }
+
+        // Localiza a ação e o apontamento específico
+        $targetAction      = null;
+        $targetAppointment = null;
+        foreach ($ticket['actions'] ?? [] as $action) {
+            foreach ($action['timeAppointments'] ?? [] as $appt) {
+                if (($appt['id'] ?? null) == $timesheet->movidesk_appointment_id) {
+                    $targetAction      = $action;
+                    $targetAppointment = $appt;
+                    break 2;
+                }
+            }
+        }
+
+        if (!$targetAction) {
+            return ['updated' => false, 'skipped' => 'appointment_not_found'];
+        }
+
+        $defaultUserId = $this->getDefaultUserId();
+        $changes       = [];
+
+        // Corrige usuário se ainda está como padrão
+        if ($timesheet->user_id == $defaultUserId) {
+            $newUserId = $this->extractUserId($targetAction);
+            if ($newUserId && $newUserId !== $defaultUserId) {
+                $changes['user_id'] = ['from' => $timesheet->user_id, 'to' => $newUserId];
+                $timesheet->user_id = $newUserId;
+            }
+        }
+
+        // Corrige cliente
+        $newCustomerId = $this->extractCustomerId($ticket);
+        if ($newCustomerId && $newCustomerId !== $timesheet->customer_id) {
+            $changes['customer_id'] = ['from' => $timesheet->customer_id, 'to' => $newCustomerId];
+            $timesheet->customer_id = $newCustomerId;
+        }
+
+        // Corrige projeto usando o cliente atualizado
+        $newProjectId = $this->extractProjectId($timesheet->customer_id);
+        if ($newProjectId && $newProjectId !== $timesheet->project_id) {
+            $changes['project_id'] = ['from' => $timesheet->project_id, 'to' => $newProjectId];
+            $timesheet->project_id = $newProjectId;
+        }
+
+        if (!empty($changes)) {
+            $timesheet->saveQuietly(); // sem disparar observers desnecessários
+            return ['updated' => true, 'changes' => $changes];
+        }
+
+        return ['updated' => false, 'skipped' => 'nothing_changed'];
+    }
+
+    /**
      * Processa TODAS as ações do ticket (modo sync/cron).
      * Retorna número de timesheets criados.
      */

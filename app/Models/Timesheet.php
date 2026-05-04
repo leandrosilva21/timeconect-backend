@@ -320,15 +320,23 @@ class Timesheet extends Model
             return false;
         }
 
-        // Admin pode aprovar qualquer timesheet
         if ($user->isAdmin()) {
             return true;
         }
 
-        // Coordenadores do projeto podem aprovar
-        if (!$this->project) {
+        if (!$user->isCoordenador() || !$this->project) {
             return false;
         }
+
+        // Coordenador de sustentação aprova qualquer timesheet de projeto de sustentação
+        if ($user->coordinator_type === 'sustentacao') {
+            return $this->project->service_type_id &&
+                \App\Models\ServiceType::where('id', $this->project->service_type_id)
+                    ->where('code', 'sustentacao')
+                    ->exists();
+        }
+
+        // Coordenador de projetos aprova projetos onde está vinculado como coordenador
         return $this->project->coordinators()->where('users.id', $user->id)->exists();
     }
 

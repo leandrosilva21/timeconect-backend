@@ -214,15 +214,23 @@ class Expense extends Model
      */
     public function canBeApprovedBy(User $user): bool
     {
-        // Administradores podem aprovar qualquer despesa
         if ($user->isAdmin()) {
             return true;
         }
 
-        // Verifica se o usuário é coordenador do projeto
-        if (!$this->project) {
+        if (!$user->isCoordenador() || !$this->project) {
             return false;
         }
+
+        // Coordenador de sustentação aprova qualquer despesa de projeto de sustentação
+        if ($user->coordinator_type === 'sustentacao') {
+            return $this->project->service_type_id &&
+                \App\Models\ServiceType::where('id', $this->project->service_type_id)
+                    ->where('code', 'sustentacao')
+                    ->exists();
+        }
+
+        // Coordenador de projetos aprova projetos onde está vinculado como coordenador
         return $this->project->coordinators()->where('users.id', $user->id)->exists();
     }
 

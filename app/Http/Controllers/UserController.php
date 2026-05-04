@@ -260,6 +260,12 @@ class UserController extends Controller
             'coordinator_type' => 'nullable|in:projetos,sustentacao',
             'extra_permissions'   => 'nullable|array',
             'extra_permissions.*' => 'string',
+        ], [
+            'name.required'  => 'O nome é obrigatório.',
+            'email.required' => 'O e-mail é obrigatório.',
+            'email.email'    => 'O e-mail informado é inválido.',
+            'email.unique'   => 'Este e-mail já está cadastrado no sistema.',
+            'password.min'   => 'A senha deve ter pelo menos 6 caracteres.',
         ]);
 
         if ($validator->fails()) {
@@ -451,6 +457,10 @@ class UserController extends Controller
             'coordinator_type' => 'sometimes|nullable|in:projetos,sustentacao',
             'extra_permissions'   => 'sometimes|nullable|array',
             'extra_permissions.*' => 'string',
+        ], [
+            'email.email'  => 'O e-mail informado é inválido.',
+            'email.unique' => 'Este e-mail já está cadastrado no sistema.',
+            'password.min' => 'A senha deve ter pelo menos 8 caracteres.',
         ]);
 
         if ($validator->fails()) {

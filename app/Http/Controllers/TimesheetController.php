@@ -2360,12 +2360,16 @@ class TimesheetController extends Controller
                 ->whereNotNull('movidesk_appointment_id')
                 ->get();
         } else {
+            // Sem IDs: processa todos do Movidesk com usuário padrão (ou sem usuário identificado)
             $query = Timesheet::where('origin', 'movidesk')
                 ->whereNotNull('ticket')
                 ->whereNotNull('movidesk_appointment_id');
 
             if ($defaultUserId) {
-                $query->where('user_id', (int) $defaultUserId);
+                $query->where(function ($q) use ($defaultUserId) {
+                    $q->where('user_id', (int) $defaultUserId)
+                      ->orWhereNull('user_id');
+                });
             }
 
             $timesheets = $query->orderByDesc('id')->limit(200)->get();

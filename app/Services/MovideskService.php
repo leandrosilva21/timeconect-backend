@@ -164,12 +164,14 @@ class MovideskService
         $defaultUserId = $this->getDefaultUserId();
         $changes       = [];
 
-        // Corrige usuário se ainda está como padrão
-        if ($timesheet->user_id == $defaultUserId) {
-            $newUserId = $this->extractUserId($targetAction);
-            if ($newUserId && $newUserId !== $defaultUserId) {
-                $changes['user_id'] = ['from' => $timesheet->user_id, 'to' => $newUserId];
-                $timesheet->user_id = $newUserId;
+        // Sempre tenta resolver o usuário pelo e-mail do ticket (case-insensitive).
+        // Atualiza se encontrar um usuário diferente do atual E diferente do padrão.
+        $resolvedEmail = strtolower(trim($targetAction['createdBy']['email'] ?? ''));
+        if ($resolvedEmail) {
+            $resolvedUser = User::where('email', $resolvedEmail)->where('enabled', true)->first();
+            if ($resolvedUser && $resolvedUser->id !== $timesheet->user_id) {
+                $changes['user_id'] = ['from' => $timesheet->user_id, 'to' => $resolvedUser->id];
+                $timesheet->user_id = $resolvedUser->id;
             }
         }
 

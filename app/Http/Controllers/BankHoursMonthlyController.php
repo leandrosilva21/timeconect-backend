@@ -207,12 +207,13 @@ class BankHoursMonthlyController extends Controller
         $hoursBalanceExcludingCurrentMonth = 0;
 
         foreach ($parentProjects as $parentProject) {
-            // Usar o método getGeneralHoursBalance que já calcula corretamente incluindo filhos
-            $projectBalance = $parentProject->getGeneralHoursBalance();
+            // getGeneralHoursBalance já exclui filhos frozen; subtrair initial_hours_consumed (histórico pré-importação)
+            $projectBalance = $parentProject->getGeneralHoursBalance()
+                - (float) ($parentProject->initial_hours_consumed ?? 0);
             $hoursBalance += $projectBalance;
-            
-            // Calcular saldo excluindo o mês atual
-            $projectBalanceExcludingCurrentMonth = $parentProject->getGeneralHoursBalanceExcludingCurrentMonth();
+
+            $projectBalanceExcludingCurrentMonth = $parentProject->getGeneralHoursBalanceExcludingCurrentMonth()
+                - (float) ($parentProject->initial_hours_consumed ?? 0);
             $hoursBalanceExcludingCurrentMonth += $projectBalanceExcludingCurrentMonth;
         }
 
@@ -362,6 +363,7 @@ class BankHoursMonthlyController extends Controller
             // Processar projetos filhos
             if ($parentProject->hasChildProjects()) {
                 foreach ($parentProject->childProjects as $childProject) {
+                    if ($childProject->isAusterFrozen()) continue;
                     // Filtrar por tipo de serviço se especificado
                     if ($serviceTypeId && $childProject->service_type_id !== $serviceTypeId) {
                         continue;
@@ -448,6 +450,7 @@ class BankHoursMonthlyController extends Controller
             // Processar projetos filhos
             if ($parentProject->hasChildProjects()) {
                 foreach ($parentProject->childProjects as $childProject) {
+                    if ($childProject->isAusterFrozen()) continue;
                     // Filtrar por tipo de serviço se especificado
                     if ($serviceTypeId && $childProject->service_type_id !== $serviceTypeId) {
                         continue;
@@ -540,6 +543,7 @@ class BankHoursMonthlyController extends Controller
             // Processar filhos
             if ($parentProject->hasChildProjects()) {
                 foreach ($parentProject->childProjects as $childProject) {
+                    if ($childProject->isAusterFrozen()) continue;
                     $processProject($childProject, $serviceTypeProjetoId, $projectsConsumedHours, $projectsMonthConsumedHours);
                     $processProject($childProject, $serviceTypeManutId,   $maintenanceConsumedHours, $maintenanceMonthConsumedHours);
                 }

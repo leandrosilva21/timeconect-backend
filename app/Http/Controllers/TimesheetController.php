@@ -2353,15 +2353,17 @@ class TimesheetController extends Controller
         $ids           = $request->input('ids', []);
         $defaultUserId = \App\Models\SystemSetting::get('movidesk_default_user_id');
 
+        $movideskOrigins = ['movidesk', 'webhook'];
+
         if (!empty($ids)) {
             $timesheets = Timesheet::whereIn('id', array_map('intval', $ids))
-                ->where('origin', 'movidesk')
+                ->whereIn('origin', $movideskOrigins)
                 ->whereNotNull('ticket')
                 ->whereNotNull('movidesk_appointment_id')
                 ->get();
         } else {
-            // Sem IDs: processa todos do Movidesk com usuário padrão (ou sem usuário identificado)
-            $query = Timesheet::where('origin', 'movidesk')
+            // Sem IDs: processa todos do Movidesk/webhook com usuário padrão
+            $query = Timesheet::whereIn('origin', $movideskOrigins)
                 ->whereNotNull('ticket')
                 ->whereNotNull('movidesk_appointment_id');
 

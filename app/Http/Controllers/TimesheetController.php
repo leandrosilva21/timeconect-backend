@@ -2370,7 +2370,7 @@ class TimesheetController extends Controller
                 });
             }
 
-            $timesheets = $query->orderByDesc('id')->limit(200)->get();
+            $timesheets = $query->orderByDesc('id')->limit(10)->get();
         }
 
         if ($timesheets->isEmpty()) {

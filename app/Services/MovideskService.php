@@ -462,7 +462,28 @@ class MovideskService
     private function extractProjectId(?int $customerId): ?int
     {
         if ($customerId) {
-            // Mesma lógica do SustentacaoController: busca parcial no nome (ilike)
+            // 1. Prioridade: projeto configurado manualmente na org Movidesk
+            $org = MovideskOrganization::where('customer_id', $customerId)
+                ->whereNotNull('project_id')
+                ->first();
+
+            if ($org && $org->project_id) {
+                $orgProject = Project::find($org->project_id);
+                if ($orgProject && $orgProject->isOpen()) {
+                    Log::info('✅ [MOVIDESK] Projeto resolvido via vínculo de organização', [
+                        'customer_id' => $customerId,
+                        'project_id'  => $orgProject->id,
+                        'project_name'=> $orgProject->name,
+                    ]);
+                    return $orgProject->id;
+                }
+                Log::warning('⚠️ [MOVIDESK] Projeto vinculado à org está inativo/inexistente — buscando sustentação', [
+                    'customer_id' => $customerId,
+                    'project_id'  => $org->project_id,
+                ]);
+            }
+
+            // 2. Fallback: busca projeto de sustentação do cliente
             $project = Project::where('customer_id', $customerId)
                 ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
                 ->where(function ($q) {
@@ -477,8 +498,7 @@ class MovideskService
                     return $project->id;
                 }
 
-                // Projeto encontrado mas inativo → usa projeto padrão
-                Log::warning('⚠️ [MOVIDESK] Projeto do cliente está inativo — usando projeto padrão', [
+                Log::warning('⚠️ [MOVIDESK] Projeto de sustentação do cliente está inativo — usando projeto padrão', [
                     'project_id'   => $project->id,
                     'project_name' => $project->name,
                     'status'       => $project->status,

@@ -227,9 +227,13 @@ class MovideskAdminController extends Controller
         $orgs = MovideskOrganization::orderBy('name')->get()->map(function ($o) {
             $customer = $o->customer_id ? Customer::select('id', 'name', 'company_name')->find($o->customer_id) : null;
 
-            $project = null;
+            // Projeto vinculado manualmente à org (prioridade)
+            $linkedProject = $o->project_id ? Project::select('id', 'name', 'status')->find($o->project_id) : null;
+
+            // Projeto de sustentação do cliente (fallback automático)
+            $sustProject = null;
             if ($o->customer_id) {
-                $project = Project::where('customer_id', $o->customer_id)
+                $sustProject = Project::where('customer_id', $o->customer_id)
                     ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
                     ->where(function ($q) {
                         $q->where('service_types.code', 'sustentacao')
@@ -240,17 +244,25 @@ class MovideskAdminController extends Controller
                     ->first();
             }
 
+            $resolvedProject = $linkedProject ?? $sustProject;
+
             return [
-                'org_id'        => $o->id,
-                'org_name'      => $o->name,
-                'cnpj'          => $o->cnpj,
-                'customer_id'   => $o->customer_id,
-                'customer_name' => $customer?->name ?? '(sem vínculo)',
-                'project_id'    => $project?->id,
-                'project_name'  => $project?->name ?? '(sem projeto sustentação)',
-                'project_status'=> $project?->status,
-                'st_code'       => $project?->st_code,
-                'is_active_proj'=> $project ? !in_array($project->status, ['cancelled', 'finished', 'paused']) : null,
+                'org_id'              => $o->id,
+                'org_name'            => $o->name,
+                'cnpj'                => $o->cnpj,
+                'customer_id'         => $o->customer_id,
+                'customer_name'       => $customer?->name ?? '(sem vínculo)',
+                'linked_project_id'   => $o->project_id,
+                'linked_project_name' => $linkedProject?->name,
+                'sust_project_id'     => $sustProject?->id,
+                'sust_project_name'   => $sustProject?->name,
+                'project_id'          => $resolvedProject?->id,
+                'project_name'        => $resolvedProject?->name ?? '(sem projeto)',
+                'project_source'      => $linkedProject ? 'manual' : ($sustProject ? 'sustentacao' : null),
+                'project_status'      => $resolvedProject?->status,
+                'is_active_proj'      => $resolvedProject
+                    ? !in_array($resolvedProject->status, ['cancelled', 'finished', 'paused'])
+                    : null,
             ];
         });
 
@@ -262,7 +274,7 @@ class MovideskAdminController extends Controller
             'default_project_name' => $defaultProject?->name ?? '(não configurado)',
             'orgs'                 => $orgs,
             'unlinked_count'       => $orgs->whereNull('customer_id')->count(),
-            'no_project_count'     => $orgs->whereNull('project_id')->count(),
+            'no_project_count'     => $orgs->filter(fn($o) => is_null($o['project_id']))->count(),
         ]);
     }
 
@@ -296,6 +308,7 @@ class MovideskAdminController extends Controller
         }
 
         $org->customer_id = (int) $customerId;
+        $org->project_id  = null; // limpa projeto ao revincultar cliente
         $org->save();
 
         return response()->json([
@@ -303,6 +316,46 @@ class MovideskAdminController extends Controller
             'org_name'      => $org->name,
             'customer_name' => $customer->name,
             'message'       => 'Vínculo salvo. Execute sync-orgs para reprocessar os tickets.',
+        ]);
+    }
+
+    /**
+     * Vincula manualmente uma org Movidesk a um projeto específico.
+     * POST /api/v1/movidesk/link-org-project
+     * Body: { "org_id": 1, "project_id": 42 }
+     */
+    public function linkOrgProject(Request $request): JsonResponse
+    {
+        $orgId     = $request->input('org_id');
+        $projectId = $request->input('project_id'); // null = remover vínculo
+
+        if (!$orgId) {
+            return response()->json(['error' => 'org_id é obrigatório'], 422);
+        }
+
+        $org = MovideskOrganization::find($orgId);
+        if (!$org) {
+            return response()->json(['error' => "Org #{$orgId} não encontrada"], 404);
+        }
+
+        $project = null;
+        if ($projectId) {
+            $project = Project::find($projectId);
+            if (!$project) {
+                return response()->json(['error' => "Projeto #{$projectId} não encontrado"], 404);
+            }
+        }
+
+        $org->project_id = $projectId ? (int) $projectId : null;
+        $org->save();
+
+        return response()->json([
+            'success'      => true,
+            'org_name'     => $org->name,
+            'project_name' => $project?->name ?? null,
+            'message'      => $project
+                ? "Org vinculada ao projeto \"{$project->name}\"."
+                : 'Vínculo de projeto removido — voltará a usar projeto de sustentação ou padrão.',
         ]);
     }
 }

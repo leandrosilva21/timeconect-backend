@@ -121,9 +121,15 @@ class UserController extends Controller
 
         $query = User::with(['customer', 'partner:id,name']);
 
-        // Se não é admin nem tem permissão para ver/resetar todos, só pode ver próprio perfil
+        // Se não é admin nem tem permissão para ver/editar/resetar todos, só pode ver próprio perfil
         // Coordenadores podem ver todos os usuários (necessário para filtros de aprovações/apontamentos)
-        if (!$user->isAdmin() && !$user->hasAccess('users.view_all') && !$user->hasAccess('users.reset_password') && !$user->isCoordenador()) {
+        $canSeeAll = $user->isAdmin()
+            || $user->isCoordenador()
+            || $user->hasAccess('users.view_all')
+            || $user->hasAccess('users.update')
+            || $user->hasAccess('users.reset_password')
+            || $user->hasAccess('users.create');
+        if (!$canSeeAll) {
             $query->where('id', $user->id);
         }
 
@@ -378,9 +384,14 @@ class UserController extends Controller
         }
 
         // Verificar se pode visualizar este usuário
-        if (!$currentUser->isAdmin() &&
-            !$currentUser->hasAccess('users.view_all') &&
-            $user->id !== $currentUser->id) {
+        $canViewUser = $currentUser->isAdmin()
+            || $currentUser->isCoordenador()
+            || $currentUser->hasAccess('users.view_all')
+            || $currentUser->hasAccess('users.update')
+            || $currentUser->hasAccess('users.reset_password')
+            || $currentUser->hasAccess('users.create')
+            || $user->id === $currentUser->id;
+        if (!$canViewUser) {
             return $this->accessDeniedResponse('Você não tem permissão para visualizar este usuário');
         }
 
@@ -1026,9 +1037,14 @@ class UserController extends Controller
         }
 
         // Verificar se pode visualizar este usuário
-        if (!$currentUser->isAdmin() &&
-            !$currentUser->hasAccess('users.view_all') &&
-            $user->id !== $currentUser->id) {
+        $canViewUser2 = $currentUser->isAdmin()
+            || $currentUser->isCoordenador()
+            || $currentUser->hasAccess('users.view_all')
+            || $currentUser->hasAccess('users.update')
+            || $currentUser->hasAccess('users.reset_password')
+            || $currentUser->hasAccess('users.create')
+            || $user->id === $currentUser->id;
+        if (!$canViewUser2) {
             return $this->accessDeniedResponse('Você não tem permissão para visualizar este usuário');
         }
 

@@ -164,15 +164,23 @@ class MovideskService
         $defaultUserId = $this->getDefaultUserId();
         $changes       = [];
 
-        // Sempre tenta resolver o usuário pelo e-mail do ticket (case-insensitive).
-        // Atualiza se encontrar um usuário diferente do atual E diferente do padrão.
+        // Tenta resolver o usuário pelo e-mail do createdBy da ação.
+        // Se não encontrar no Minutor (equipe externa/cliente), usa o owner do ticket como fallback.
         $resolvedEmail = strtolower(trim($targetAction['createdBy']['email'] ?? ''));
-        if ($resolvedEmail) {
-            $resolvedUser = User::where('email', $resolvedEmail)->where('enabled', true)->first();
-            if ($resolvedUser && $resolvedUser->id !== $timesheet->user_id) {
-                $changes['user_id'] = ['from' => $timesheet->user_id, 'to' => $resolvedUser->id];
-                $timesheet->user_id = $resolvedUser->id;
-            }
+        $resolvedUser  = $resolvedEmail
+            ? User::where('email', $resolvedEmail)->where('enabled', true)->first()
+            : null;
+
+        if (!$resolvedUser) {
+            $ownerEmail   = strtolower(trim($ticket['owner']['email'] ?? ''));
+            $resolvedUser = $ownerEmail
+                ? User::where('email', $ownerEmail)->where('enabled', true)->first()
+                : null;
+        }
+
+        if ($resolvedUser && $resolvedUser->id !== $timesheet->user_id) {
+            $changes['user_id'] = ['from' => $timesheet->user_id, 'to' => $resolvedUser->id];
+            $timesheet->user_id = $resolvedUser->id;
         }
 
         // Corrige cliente

@@ -2166,6 +2166,100 @@ class ProjectController extends Controller
         ]);
     }
 
+    public function icAnalytics(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        $from = $request->get('start_date');
+        $to   = $request->get('end_date');
+
+        $base = DB::table('timesheets')
+            ->join('projects', 'projects.id', '=', 'timesheets.project_id')
+            ->join('customers', 'customers.id', '=', 'projects.customer_id')
+            ->join('users', 'users.id', '=', 'timesheets.user_id')
+            ->where('projects.is_investimento_comercial', true)
+            ->whereNull('timesheets.deleted_at')
+            ->whereNotIn('timesheets.status', ['rejected', 'adjustment_requested', 'conflicted']);
+
+        if ($from) $base->where('timesheets.date', '>=', $from);
+        if ($to)   $base->where('timesheets.date', '<=', $to);
+
+        // ── Por cliente ────────────────────────────────────────────────────────
+        $byCustomer = (clone $base)
+            ->selectRaw('customers.id as customer_id, customers.name as customer_name,
+                         SUM(timesheets.effort_minutes) as total_minutes,
+                         SUM(timesheets.effort_minutes / 60.0 * users.hourly_rate) as total_cost')
+            ->groupBy('customers.id', 'customers.name')
+            ->orderByDesc('total_minutes')
+            ->get()
+            ->map(fn($r) => [
+                'customer_id'   => $r->customer_id,
+                'customer_name' => $r->customer_name,
+                'total_hours'   => round($r->total_minutes / 60, 2),
+                'total_cost'    => round((float)$r->total_cost, 2),
+            ]);
+
+        // ── Por consultor ──────────────────────────────────────────────────────
+        $byConsultant = (clone $base)
+            ->selectRaw('users.id as user_id, users.name as user_name,
+                         SUM(timesheets.effort_minutes) as total_minutes,
+                         SUM(timesheets.effort_minutes / 60.0 * users.hourly_rate) as total_cost,
+                         COUNT(DISTINCT customers.id) as num_customers')
+            ->groupBy('users.id', 'users.name')
+            ->orderByDesc('total_minutes')
+            ->limit(20)
+            ->get()
+            ->map(fn($r) => [
+                'user_id'       => $r->user_id,
+                'user_name'     => $r->user_name,
+                'total_hours'   => round($r->total_minutes / 60, 2),
+                'total_cost'    => round((float)$r->total_cost, 2),
+                'num_customers' => (int)$r->num_customers,
+            ]);
+
+        // ── Evolução mensal ────────────────────────────────────────────────────
+        $monthly = (clone $base)
+            ->selectRaw("TO_CHAR(timesheets.date, 'YYYY-MM') as month,
+                         SUM(timesheets.effort_minutes) as total_minutes,
+                         SUM(timesheets.effort_minutes / 60.0 * users.hourly_rate) as total_cost")
+            ->groupByRaw("TO_CHAR(timesheets.date, 'YYYY-MM')")
+            ->orderByRaw("TO_CHAR(timesheets.date, 'YYYY-MM')")
+            ->get()
+            ->map(fn($r) => [
+                'month'       => $r->month,
+                'total_hours' => round($r->total_minutes / 60, 2),
+                'total_cost'  => round((float)$r->total_cost, 2),
+            ]);
+
+        // ── Detalhamento consultor × cliente ───────────────────────────────────
+        $detail = (clone $base)
+            ->selectRaw('users.id as user_id, users.name as user_name,
+                         customers.id as customer_id, customers.name as customer_name,
+                         SUM(timesheets.effort_minutes) as total_minutes,
+                         SUM(timesheets.effort_minutes / 60.0 * users.hourly_rate) as total_cost')
+            ->groupBy('users.id', 'users.name', 'customers.id', 'customers.name')
+            ->orderBy('users.name')
+            ->get()
+            ->map(fn($r) => [
+                'user_id'       => $r->user_id,
+                'user_name'     => $r->user_name,
+                'customer_id'   => $r->customer_id,
+                'customer_name' => $r->customer_name,
+                'total_hours'   => round($r->total_minutes / 60, 2),
+                'total_cost'    => round((float)$r->total_cost, 2),
+            ]);
+
+        return response()->json([
+            'by_customer'  => $byCustomer,
+            'by_consultant' => $byConsultant,
+            'monthly'      => $monthly,
+            'detail'       => $detail,
+        ]);
+    }
+
     public function icSummary(Request $request): JsonResponse
     {
         $from = $request->get('start_date');

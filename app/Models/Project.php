@@ -203,6 +203,7 @@ class Project extends Model
     public function consultants(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'project_consultants')
+                    ->withPivot('allow_manual_timesheet')
                     ->withTimestamps();
     }
 

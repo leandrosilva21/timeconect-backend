@@ -581,19 +581,27 @@ class TimesheetController extends Controller
         }
 
         // Bloquear consultores e parceiros sem permissão de apontar em projetos de sustentação
-        if (($user->isConsultor() || $user->isParceiroAdmin()) && !$user->can_timesheet_sustentacao) {
+        if ($user->isConsultor() || $user->isParceiroAdmin()) {
             $isSustentacao = $project->service_type_id &&
                 \App\Models\ServiceType::where('id', $project->service_type_id)
                     ->whereIn('code', ['sustentacao', 'cloud'])
                     ->exists();
 
             if ($isSustentacao) {
-                return response()->json([
-                    'code' => 'SUSTENTACAO_TIMESHEET_NOT_ALLOWED',
-                    'type' => 'error',
-                    'message' => 'Apontamento em sustentação não permitido',
-                    'detailMessage' => 'Você não tem permissão para criar apontamentos manuais em projetos de sustentação.',
-                ], 403);
+                // Liberado globalmente OU liberado especificamente neste projeto
+                $allowedInProject = $project->consultants()
+                    ->where('users.id', $user->id)
+                    ->wherePivot('allow_manual_timesheet', true)
+                    ->exists();
+
+                if (!$user->can_timesheet_sustentacao && !$allowedInProject) {
+                    return response()->json([
+                        'code' => 'SUSTENTACAO_TIMESHEET_NOT_ALLOWED',
+                        'type' => 'error',
+                        'message' => 'Apontamento em sustentação não permitido',
+                        'detailMessage' => 'Você não tem permissão para criar apontamentos manuais em projetos de sustentação.',
+                    ], 403);
+                }
             }
         }
 
@@ -1108,19 +1116,26 @@ class TimesheetController extends Controller
         }
 
         // Bloquear consultores e parceiros sem permissão de apontar em projetos de sustentação
-        if ($projectForValidation && ($user->isConsultor() || $user->isParceiroAdmin()) && !$user->can_timesheet_sustentacao) {
+        if ($projectForValidation && ($user->isConsultor() || $user->isParceiroAdmin())) {
             $isSustentacao = $projectForValidation->service_type_id &&
                 \App\Models\ServiceType::where('id', $projectForValidation->service_type_id)
                     ->whereIn('code', ['sustentacao', 'cloud'])
                     ->exists();
 
             if ($isSustentacao) {
-                return response()->json([
-                    'code' => 'SUSTENTACAO_TIMESHEET_NOT_ALLOWED',
-                    'type' => 'error',
-                    'message' => 'Apontamento em sustentação não permitido',
-                    'detailMessage' => 'Você não tem permissão para editar apontamentos em projetos de sustentação.',
-                ], 403);
+                $allowedInProject = $projectForValidation->consultants()
+                    ->where('users.id', $user->id)
+                    ->wherePivot('allow_manual_timesheet', true)
+                    ->exists();
+
+                if (!$user->can_timesheet_sustentacao && !$allowedInProject) {
+                    return response()->json([
+                        'code' => 'SUSTENTACAO_TIMESHEET_NOT_ALLOWED',
+                        'type' => 'error',
+                        'message' => 'Apontamento em sustentação não permitido',
+                        'detailMessage' => 'Você não tem permissão para editar apontamentos em projetos de sustentação.',
+                    ], 403);
+                }
             }
         }
 

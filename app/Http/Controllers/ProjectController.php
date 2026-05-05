@@ -2385,4 +2385,25 @@ class ProjectController extends Controller
         $attachment->delete();
         return response()->json(null, 204);
     }
+
+    public function toggleConsultantManualTimesheet(Request $request, Project $project, int $userId): JsonResponse
+    {
+        $currentUser = Auth::user();
+        if (!$currentUser->isAdmin() && !$currentUser->isCoordenador()) {
+            return response()->json(['message' => 'Acesso negado'], 403);
+        }
+
+        $linked = $project->consultants()->where('users.id', $userId)->exists();
+        if (!$linked) {
+            return response()->json(['message' => 'Consultor não vinculado ao projeto'], 422);
+        }
+
+        $data = $request->validate(['allow' => 'required|boolean']);
+
+        $project->consultants()->updateExistingPivot($userId, [
+            'allow_manual_timesheet' => $data['allow'],
+        ]);
+
+        return response()->json(['allow_manual_timesheet' => $data['allow']]);
+    }
 }

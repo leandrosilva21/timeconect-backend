@@ -745,6 +745,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/projects/{project}/attachments',                   [ProjectController::class, 'uploadAttachment'])->name('project-attachments.upload');
         Route::get('/projects/{project}/attachments/{attachment}',       [ProjectController::class, 'downloadAttachment'])->name('project-attachments.download');
         Route::delete('/projects/{project}/attachments/{attachment}',    [ProjectController::class, 'deleteAttachment'])->name('project-attachments.delete');
+        Route::put('/projects/{project}/consultants/{userId}/manual-timesheet', [ProjectController::class, 'toggleConsultantManualTimesheet'])->name('projects.consultant-manual-timesheet');
 
         // 📄 CONTRATOS
         Route::get('/contracts/kanban',                              [ContractController::class, 'kanban'])->name('contracts.kanban');

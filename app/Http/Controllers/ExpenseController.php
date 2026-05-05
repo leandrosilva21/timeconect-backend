@@ -432,12 +432,25 @@ class ExpenseController extends Controller
         }
 
         // Determinar o usuário alvo da despesa
-        $canActAsUser = $user->isAdmin() || $user->isCoordenador();
-        $targetUserId = (!empty($request->user_id) && $canActAsUser)
-            ? $request->user_id
-            : $user->id;
+        $canActAsUser  = $user->isAdmin() || $user->isCoordenador();
+        $isParceiroAdm = $user->isParceiroAdmin() && $user->partner_id;
 
-        if (!$canActAsUser && !$project->consultants()->where('user_id', $targetUserId)->exists()) {
+        if (!empty($request->user_id) && ($canActAsUser || $isParceiroAdm)) {
+            // parceiro_admin só pode agir por membros da própria equipe
+            if ($isParceiroAdm && !$canActAsUser) {
+                $inTeam = \App\Models\User::where('id', $request->user_id)
+                    ->where('partner_id', $user->partner_id)
+                    ->exists();
+                if (!$inTeam) {
+                    return $this->accessDeniedResponse('Usuário não pertence à sua equipe.');
+                }
+            }
+            $targetUserId = $request->user_id;
+        } else {
+            $targetUserId = $user->id;
+        }
+
+        if (!$canActAsUser && !$isParceiroAdm && !$project->consultants()->where('user_id', $targetUserId)->exists()) {
             return $this->accessDeniedResponse('O usuário não tem acesso a este projeto');
         }
 

@@ -480,8 +480,8 @@ class Timesheet extends Model
      */
     public function canBeRejectionReversedBy(User $user): bool
     {
-        // Apenas timesheets rejeitados podem ser estornados
-        if ($this->status !== self::STATUS_REJECTED) {
+        // Apenas timesheets rejeitados ou com ajuste solicitado podem ser estornados
+        if (!in_array($this->status, [self::STATUS_REJECTED, self::STATUS_ADJUSTMENT_REQUESTED])) {
             return false;
         }
 

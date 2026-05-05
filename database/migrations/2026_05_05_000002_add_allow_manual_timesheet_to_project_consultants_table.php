@@ -8,9 +8,11 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('project_consultants', function (Blueprint $table) {
-            $table->boolean('allow_manual_timesheet')->default(false)->after('user_id');
-        });
+        if (!Schema::hasColumn('project_consultants', 'allow_manual_timesheet')) {
+            Schema::table('project_consultants', function (Blueprint $table) {
+                $table->boolean('allow_manual_timesheet')->default(false)->after('user_id');
+            });
+        }
     }
 
     public function down(): void

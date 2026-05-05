@@ -1500,11 +1500,12 @@ class TimesheetController extends Controller
             ], 403);
         }
 
-        // Só pode excluir se estiver pendente
-        if (!$timesheet->canBeEdited()) {
+        // Admin e hours.delete_all podem excluir qualquer status; demais usuários só o que canBeEdited() permite
+        $canBypassStatusCheck = $user->isAdmin() || $user->hasAccess('hours.delete_all');
+        if (!$canBypassStatusCheck && !$timesheet->canBeEdited()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Não é possível excluir apontamentos já aprovados ou rejeitados'
+                'message' => 'Não é possível excluir apontamentos já aprovados ou liberados'
             ], 422);
         }
 

@@ -266,6 +266,7 @@ class UserController extends Controller
             'dashboard_types.*' => 'string|in:bank_hours_fixed',
             'type' => 'nullable|in:admin,administrativo,coordenador,consultor,cliente,parceiro_admin',
             'coordinator_type' => 'nullable|in:projetos,sustentacao',
+            'can_timesheet_sustentacao' => 'sometimes|boolean',
             'extra_permissions'   => 'nullable|array',
             'extra_permissions.*' => 'string',
         ], [
@@ -463,6 +464,7 @@ class UserController extends Controller
             'dashboard_types.*' => 'string|in:bank_hours_fixed',
             'type' => 'sometimes|nullable|in:admin,administrativo,coordenador,consultor,cliente,parceiro_admin',
             'coordinator_type' => 'sometimes|nullable|in:projetos,sustentacao',
+            'can_timesheet_sustentacao' => 'sometimes|boolean',
             'extra_permissions'   => 'sometimes|nullable|array',
             'extra_permissions.*' => 'string',
         ], [

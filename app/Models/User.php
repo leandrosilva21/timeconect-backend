@@ -44,6 +44,7 @@ class User extends Authenticatable
         'is_executive',
         'type',
         'coordinator_type',
+        'can_timesheet_sustentacao',
         'extra_permissions',
     ];
 
@@ -82,6 +83,7 @@ class User extends Authenticatable
             'has_temporary_password' => 'boolean',
             'temporary_password_expires_at' => 'datetime',
             'is_executive' => 'boolean',
+            'can_timesheet_sustentacao' => 'boolean',
             'bank_hours_start_date' => 'date:Y-m-d',
             'guaranteed_hours'      => 'decimal:2',
             'extra_permissions'     => 'array',

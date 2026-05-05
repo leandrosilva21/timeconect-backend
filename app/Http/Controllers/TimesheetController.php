@@ -580,15 +580,20 @@ class TimesheetController extends Controller
             ], 422);
         }
 
-        // Verificar se o projeto permite apontamentos manuais (exceto para administradores)
-        if (!$user->isAdmin() && !$user->hasAccess('admin.full_access')) {
-            if (!$project->allow_manual_timesheets) {
+        // Bloquear consultores e parceiros sem permissão de apontar em projetos de sustentação
+        if (($user->isConsultor() || $user->isParceiroAdmin()) && !$user->can_timesheet_sustentacao) {
+            $isSustentacao = $project->service_type_id &&
+                \App\Models\ServiceType::where('id', $project->service_type_id)
+                    ->whereIn('code', ['sustentacao', 'cloud'])
+                    ->exists();
+
+            if ($isSustentacao) {
                 return response()->json([
-                    'code' => 'MANUAL_TIMESHEETS_NOT_ALLOWED',
+                    'code' => 'SUSTENTACAO_TIMESHEET_NOT_ALLOWED',
                     'type' => 'error',
-                    'message' => 'Apontamentos manuais não permitidos',
-                    'detailMessage' => 'Este projeto não permite criação de apontamentos pelo Minutor. Apenas o webhook do Movidesk pode criar apontamentos para este projeto.'
-                ], 422);
+                    'message' => 'Apontamento em sustentação não permitido',
+                    'detailMessage' => 'Você não tem permissão para criar apontamentos manuais em projetos de sustentação.',
+                ], 403);
             }
         }
 
@@ -1096,29 +1101,20 @@ class TimesheetController extends Controller
             $projectForValidation = $timesheet->project;
         }
 
-        // Verificar se o projeto permite apontamentos manuais (exceto para administradores)
-        if ($projectForValidation && !$user->isAdmin() && !$user->hasAccess('admin.full_access')) {
-            // Se mudou de projeto, validar o novo projeto
-            if (isset($validatedData['project_id']) && $validatedData['project_id'] != $timesheet->project_id) {
-                if (!$projectForValidation->allow_manual_timesheets) {
-                    return response()->json([
-                        'code' => 'MANUAL_TIMESHEETS_NOT_ALLOWED',
-                        'type' => 'error',
-                        'message' => 'Apontamentos manuais não permitidos',
-                        'detailMessage' => 'Este projeto não permite criação de apontamentos pelo frontend. Apenas o webhook do Movidesk pode criar apontamentos para este projeto.'
-                    ], 422);
-                }
-            } elseif (!$timesheet->project->allow_manual_timesheets) {
-                // Se não mudou de projeto e o projeto não permite apontamentos manuais
-                // Permitir edição apenas se o apontamento foi criado pelo webhook (origin = 'webhook')
-                if ($timesheet->origin !== 'webhook') {
-                    return response()->json([
-                        'code' => 'MANUAL_TIMESHEETS_NOT_ALLOWED',
-                        'type' => 'error',
-                        'message' => 'Apontamentos manuais não permitidos',
-                        'detailMessage' => 'Este projeto não permite edição de apontamentos criados pelo frontend. Apenas apontamentos criados pelo webhook do Movidesk podem ser editados.'
-                    ], 422);
-                }
+        // Bloquear consultores e parceiros sem permissão de apontar em projetos de sustentação
+        if ($projectForValidation && ($user->isConsultor() || $user->isParceiroAdmin()) && !$user->can_timesheet_sustentacao) {
+            $isSustentacao = $projectForValidation->service_type_id &&
+                \App\Models\ServiceType::where('id', $projectForValidation->service_type_id)
+                    ->whereIn('code', ['sustentacao', 'cloud'])
+                    ->exists();
+
+            if ($isSustentacao) {
+                return response()->json([
+                    'code' => 'SUSTENTACAO_TIMESHEET_NOT_ALLOWED',
+                    'type' => 'error',
+                    'message' => 'Apontamento em sustentação não permitido',
+                    'detailMessage' => 'Você não tem permissão para editar apontamentos em projetos de sustentação.',
+                ], 403);
             }
         }
 

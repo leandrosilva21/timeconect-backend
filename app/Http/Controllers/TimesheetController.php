@@ -992,7 +992,13 @@ class TimesheetController extends Controller
         }
 
         // Verificar permissões
-        if (!$user->isAdmin() && !$user->hasAccess('hours.update_all') && $timesheet->user_id !== $user->id) {
+        $isOwnTimesheet  = $timesheet->user_id === $user->id;
+        $isTeamTimesheet = $user->isParceiroAdmin() && $user->partner_id &&
+            \App\Models\User::where('id', $timesheet->user_id)
+                ->where('partner_id', $user->partner_id)
+                ->exists();
+
+        if (!$user->isAdmin() && !$user->hasAccess('hours.update_all') && !$isOwnTimesheet && !$isTeamTimesheet) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado'

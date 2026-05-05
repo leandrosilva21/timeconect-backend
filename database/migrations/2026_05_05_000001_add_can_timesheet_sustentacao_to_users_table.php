@@ -8,6 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::hasColumn('users', 'can_timesheet_sustentacao')) {
+            return;
+        }
+
         Schema::table('users', function (Blueprint $table) {
             $table->boolean('can_timesheet_sustentacao')->default(false)->after('coordinator_type');
         });

@@ -218,20 +218,19 @@ class ProjectController extends Controller
 
             // Apenas aplicar filtro se o usuário alvo NÃO for Administrator
             if ($targetUser && !$targetUser->isAdmin()) {
+                // $query->whereHas('consultants', function ($q) use ($targetUserId) {
+                //     $q->where('user_id', $targetUserId);
+                // });
                 $query->where(function ($q) use ($targetUserId) {
-                    // Projetos de Investimento Comercial são sempre acessíveis para apontamento manual
-                    $q->where('is_investimento_comercial', true)
-                      ->orWhere(function ($inner) use ($targetUserId) {
-                          $inner->whereHas('consultants', function ($subQ) use ($targetUserId) {
-                              $subQ->where('user_id', $targetUserId);
-                          })->orWhereHas('approvers', function ($subQ) use ($targetUserId) {
-                              $subQ->where('user_id', $targetUserId);
-                          })->orWhereHas('consultantGroups.consultants', function ($subQ) use ($targetUserId) {
-                              $subQ->where('users.id', $targetUserId);
-                          })->orWhereHas('coordinators', function ($subQ) use ($targetUserId) {
-                              $subQ->where('user_id', $targetUserId);
-                          });
-                      });
+                    $q->whereHas('consultants', function ($subQ) use ($targetUserId) {
+                        $subQ->where('user_id', $targetUserId);
+                    })->orWhereHas('approvers', function ($subQ) use ($targetUserId) {
+                        $subQ->where('user_id', $targetUserId);
+                    })->orWhereHas('consultantGroups.consultants', function ($subQ) use ($targetUserId) {
+                        $subQ->where('users.id', $targetUserId);
+                    })->orWhereHas('coordinators', function ($subQ) use ($targetUserId) {
+                        $subQ->where('user_id', $targetUserId);
+                    });
                 });
             }
             // Se o usuário alvo for Administrator, não aplica filtro (vê todos os projetos)

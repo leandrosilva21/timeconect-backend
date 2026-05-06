@@ -450,7 +450,7 @@ class ExpenseController extends Controller
             $targetUserId = $user->id;
         }
 
-        if (!$canActAsUser && !$isParceiroAdm && !$project->consultants()->where('user_id', $targetUserId)->exists()) {
+        if (!$canActAsUser && !$isParceiroAdm && !$project->isUserConsultant($targetUserId)) {
             return $this->accessDeniedResponse('O usuário não tem acesso a este projeto');
         }
 

@@ -115,13 +115,13 @@ class HourContributionController extends Controller
     public function store(Request $request, Project $project): JsonResponse
     {
         $validated = $request->validate([
-            'contributed_hours' => 'required|integer|min:1|max:999999',
+            'contributed_hours' => 'required|numeric|min:0.01|max:999999',
             'hourly_rate' => 'required|numeric|min:0.01|max:9999.99',
             'description' => 'nullable|string|max:1000',
             'contributed_at' => 'nullable|date',
         ], [
             'contributed_hours.required' => 'A quantidade de horas é obrigatória',
-            'contributed_hours.min' => 'A quantidade de horas deve ser pelo menos 1',
+            'contributed_hours.min' => 'A quantidade de horas deve ser maior que zero',
             'contributed_hours.max' => 'A quantidade de horas não pode exceder 999.999',
             'hourly_rate.required' => 'O valor da hora é obrigatório',
             'hourly_rate.min' => 'O valor da hora deve ser maior que zero',
@@ -194,7 +194,7 @@ class HourContributionController extends Controller
         }
         
         $validated = $request->validate([
-            'contributed_hours' => 'sometimes|integer|min:1|max:999999',
+            'contributed_hours' => 'sometimes|numeric|min:0.01|max:999999',
             'hourly_rate' => 'sometimes|numeric|min:0.01|max:9999.99',
             'description' => 'nullable|string|max:1000',
             'contributed_at' => 'sometimes|date',

@@ -343,16 +343,6 @@ class FechamentoController extends Controller
             ->where('status', 'pending')
             ->count();
 
-        // Projetos com saldo negativo que tiveram atividade no mês
-        $projectIds = Timesheet::whereBetween('date', [$from, $to])
-            ->whereNull('deleted_at')
-            ->distinct()->pluck('project_id');
-
-        $projetosSaldoNegativo = Project::whereIn('id', $projectIds)
-            ->whereNotNull('general_hours_balance')
-            ->where('general_hours_balance', '<', 0)
-            ->count();
-
         $alertas = [];
         if ($apontamentosPendentes > 0) {
             $alertas[] = [
@@ -368,20 +358,12 @@ class FechamentoController extends Controller
                 'link_path' => "/expenses?status=pending",
             ];
         }
-        if ($projetosSaldoNegativo > 0) {
-            $alertas[] = [
-                'tipo'      => 'info',
-                'mensagem'  => "{$projetosSaldoNegativo} projeto(s) com saldo de horas negativo",
-                'link_path' => null,
-            ];
-        }
 
         return response()->json([
             'pode_fechar'            => $apontamentosPendentes === 0 && $despesasPendentes === 0,
             'ja_fechado'             => false,
             'apontamentos_pendentes' => $apontamentosPendentes,
             'despesas_pendentes'     => $despesasPendentes,
-            'projetos_saldo_negativo'=> $projetosSaldoNegativo,
             'alertas'                => $alertas,
         ]);
     }
@@ -429,7 +411,7 @@ class FechamentoController extends Controller
 
     public function reabrir(Request $request, string $yearMonth): JsonResponse
     {
-        if (!$request->user()->isAdmin()) {
+        if (!$request->user()->isAdmin() && !$request->user()->isAdministrativo()) {
             return response()->json(['message' => 'Sem permissão para reabrir fechamentos.'], 403);
         }
 

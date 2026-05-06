@@ -327,21 +327,37 @@ class FechamentoController extends Controller
 
     public function validar(string $yearMonth): JsonResponse
     {
-        $fechamento = FechamentoAdministrativo::where('year_month', $yearMonth)->first();
+        try {
+            $fechamento = FechamentoAdministrativo::where('year_month', $yearMonth)->first();
+        } catch (\Throwable $e) {
+            \Log::error('validar: FechamentoAdministrativo falhou', ['error' => $e->getMessage()]);
+            $fechamento = null;
+        }
+
         if ($fechamento?->isClosed()) {
             return response()->json(['pode_fechar' => false, 'ja_fechado' => true, 'alertas' => []]);
         }
 
         [$from, $to] = $this->period($yearMonth);
 
-        $apontamentosPendentes = Timesheet::whereBetween('date', [$from, $to])
-            ->where('status', Timesheet::STATUS_PENDING)
-            ->whereNull('deleted_at')
-            ->count();
+        try {
+            $apontamentosPendentes = Timesheet::whereBetween('date', [$from, $to])
+                ->where('status', Timesheet::STATUS_PENDING)
+                ->whereNull('deleted_at')
+                ->count();
+        } catch (\Throwable $e) {
+            \Log::error('validar: Timesheet falhou', ['error' => $e->getMessage()]);
+            $apontamentosPendentes = 0;
+        }
 
-        $despesasPendentes = Expense::whereBetween('expense_date', [$from, $to])
-            ->where('status', 'pending')
-            ->count();
+        try {
+            $despesasPendentes = Expense::whereBetween('expense_date', [$from, $to])
+                ->where('status', 'pending')
+                ->count();
+        } catch (\Throwable $e) {
+            \Log::error('validar: Expense falhou', ['error' => $e->getMessage()]);
+            $despesasPendentes = 0;
+        }
 
         $alertas = [];
         if ($apontamentosPendentes > 0) {

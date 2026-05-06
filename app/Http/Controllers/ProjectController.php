@@ -469,11 +469,26 @@ class ProjectController extends Controller
         });
 
         if ($allChildProjectIds->isNotEmpty()) {
-            // Atribuir total_logged_minutes aos projetos filhos nos projetos principais
+            // Atribuir total_logged_minutes e consumed_hours aos projetos filhos
+            // consumed_hours usa a mesma lógica do pai para que os valores somem visualmente
             $projects->getCollection()->each(function ($project) use ($timesheetsMap) {
                 if ($project->relationLoaded('childProjects') && $project->childProjects) {
                     $project->childProjects->each(function ($childProject) use ($timesheetsMap) {
                         $childProject->total_logged_minutes = $timesheetsMap[$childProject->id] ?? 0;
+                        $childLogged = $childProject->total_logged_minutes / 60;
+                        $initialConsumed = (float)($childProject->initial_hours_consumed ?? 0);
+
+                        if ($childProject->relationLoaded('contractType') && $childProject->contractType) {
+                            $ctName = strtolower(trim($childProject->contractType->name));
+                            if ($ctName === 'fechado') {
+                                // Fechado: todo o valor vendido é comprometido (mesma lógica do pai)
+                                $childProject->consumed_hours = (float)($childProject->sold_hours ?? 0);
+                            } else {
+                                $childProject->consumed_hours = round($childLogged + $initialConsumed, 2);
+                            }
+                        } else {
+                            $childProject->consumed_hours = round($childLogged + $initialConsumed, 2);
+                        }
                     });
                 }
             });

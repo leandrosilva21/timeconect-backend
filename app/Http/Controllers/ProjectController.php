@@ -188,9 +188,10 @@ class ProjectController extends Controller
                 $withRelations[] = 'consultants';
             }
         }
-        // childProjects: carrega no modo completo OU em gestao+multicontratual
+        // childProjects: sempre carregado em gestaoMode (para calcular closedChildrenHours)
+        // e no modo completo; em multicontratual também carrega coordinators
+        $withRelations[] = 'childProjects.contractType';
         if (!$gestaoMode || $parentProjectsOnly) {
-            $withRelations[] = 'childProjects.contractType';
             // Em modo pai/filho carrega coordenadores dos pais e dos filhos para marcar node_state
             if ($parentProjectsOnly) {
                 $withRelations[] = 'coordinators';
@@ -435,20 +436,15 @@ class ProjectController extends Controller
         // Evita JOIN na query principal (que agregaria TODA a tabela timesheets)
         $parentIds = $projects->getCollection()->pluck('id')->toArray();
 
-        // childProjects só é eager-loaded quando NÃO estamos em gestaoMode puro
-        // (em gestaoMode sem parentProjectsOnly, childProjects NÃO está no with())
-        // Acessar ->childProjects sem eager load causaria N+1 queries
-        $allChildProjectIds = collect();
-        if (!$gestaoMode || $parentProjectsOnly) {
-            $allChildProjectIds = $projects->getCollection()
-                ->flatMap(function ($project) {
-                    return $project->relationLoaded('childProjects') && $project->childProjects
-                        ? $project->childProjects->pluck('id')
-                        : collect();
-                })
-                ->unique()
-                ->values();
-        }
+        // childProjects é sempre eager-loaded em gestaoMode agora (para calcular closedChildrenHours)
+        $allChildProjectIds = $projects->getCollection()
+            ->flatMap(function ($project) {
+                return $project->relationLoaded('childProjects') && $project->childProjects
+                    ? $project->childProjects->pluck('id')
+                    : collect();
+            })
+            ->unique()
+            ->values();
 
         $allIdsToSum = array_unique(array_merge($parentIds, $allChildProjectIds->toArray()));
 

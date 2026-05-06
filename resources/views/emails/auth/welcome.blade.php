@@ -53,7 +53,7 @@
                 <tr>
                   <td align="center">
                     <a href="https://erpserv.com.br" target="_blank" style="text-decoration:none;">
-                      <img src="{{ config('app.url') }}/logo-erpserv.png"
+                      <img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path('logo-erpserv.png'))) }}"
                         alt="ERPServ Consultoria"
                         width="140" height="auto"
                         style="display:inline-block;width:140px;height:auto;border-radius:8px;background-color:#FFFFFF;padding:6px 12px;" />

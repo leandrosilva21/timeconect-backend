@@ -52,9 +52,12 @@
               <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:28px;">
                 <tr>
                   <td align="center">
-                    <span style="font-size:13px;font-weight:600;letter-spacing:0.18em;text-transform:uppercase;color:rgba(255,255,255,0.45);font-family:'Segoe UI',Arial,sans-serif;">
-                      ERPServ
-                    </span>
+                    <a href="https://erpserv.com.br" target="_blank" style="text-decoration:none;">
+                      <img src="{{ config('app.url') }}/logo-erpserv.png"
+                        alt="ERPServ Consultoria"
+                        width="140" height="auto"
+                        style="display:inline-block;width:140px;height:auto;border-radius:8px;background-color:#FFFFFF;padding:6px 12px;" />
+                    </a>
                   </td>
                 </tr>
               </table>

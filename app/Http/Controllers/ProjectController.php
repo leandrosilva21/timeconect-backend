@@ -673,7 +673,7 @@ class ProjectController extends Controller
                         'contract_type_id' => 'required|exists:contract_types,id',
             'project_value' => 'nullable|numeric|min:0|max:999999999.99',
             'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
-            'sold_hours' => 'nullable|integer|min:0|max:999999',
+            'sold_hours' => 'nullable|numeric|min:0|max:999999',
             'hour_contribution' => 'nullable|integer|min:0|max:999999',
             'exceeded_hour_contribution' => 'nullable|integer|min:0|max:999999',
             'initial_hours_balance' => 'nullable|numeric|min:-999999|max:999999',
@@ -967,7 +967,7 @@ class ProjectController extends Controller
             'status' => ['sometimes', Rule::in(array_keys(Project::getStatuses()))],
             'project_value' => 'nullable|numeric|min:0|max:999999999.99',
             'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
-            'sold_hours' => 'nullable|integer|min:0|max:999999',
+            'sold_hours' => 'nullable|numeric|min:0|max:999999',
             'hour_contribution' => 'nullable|integer|min:0|max:999999',
             'exceeded_hour_contribution' => 'nullable|integer|min:0|max:999999',
             'initial_hours_balance' => 'nullable|numeric|min:-999999|max:999999',
@@ -1156,8 +1156,8 @@ class ProjectController extends Controller
         unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['consultant_group_ids'], $validated['sold_hours_effective_from'], $validated['hourly_rate_effective_from']);
 
         // Detectar mudança de sold_hours para registrar histórico (Banco de Horas Mensal)
-        $previousSoldHours = (int) ($project->sold_hours ?? 0);
-        $newSoldHours      = isset($validated['sold_hours']) ? (int) $validated['sold_hours'] : $previousSoldHours;
+        $previousSoldHours = (float) ($project->sold_hours ?? 0);
+        $newSoldHours      = isset($validated['sold_hours']) ? (float) $validated['sold_hours'] : $previousSoldHours;
 
         // Log de alteração do percentual de coordenação (auditoria)
         $previousPercentage = (float) ($project->coordinator_hours ?? 0);
@@ -1420,7 +1420,7 @@ class ProjectController extends Controller
         }
 
         $validated = $request->validate([
-            'sold_hours'     => 'required|integer|min:0|max:999999',
+            'sold_hours'     => 'required|numeric|min:0|max:999999',
             'effective_from' => 'required|date',
         ]);
 

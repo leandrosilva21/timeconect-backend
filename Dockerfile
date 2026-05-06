@@ -35,14 +35,12 @@ opcache.fast_shutdown=1\n' > /usr/local/etc/php/conf.d/opcache.ini
 # Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Copia composer.json primeiro para cachear dependências
-COPY composer.json composer.lock ./
-RUN --mount=type=cache,id=minutor-composer,target=/root/.composer \
-    composer install --no-dev --optimize-autoloader --no-interaction --no-scripts
-
-# Copia o restante do projeto
+# Copia o projeto
 COPY . .
-RUN composer dump-autoload --optimize --no-dev
+
+# Instala dependências PHP (cache de pacotes entre builds)
+RUN --mount=type=cache,id=minutor-composer,target=/root/.composer \
+    composer install --no-dev --optimize-autoloader --no-interaction
 
 # Permissões
 RUN mkdir -p storage/logs storage/framework/cache \

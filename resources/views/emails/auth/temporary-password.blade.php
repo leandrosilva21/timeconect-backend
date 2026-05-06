@@ -1,153 +1,245 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" xmlns="http://www.w3.org/1999/xhtml">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nova Senha Temporária - Minutor</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            margin: 0;
-            padding: 0;
-            background-color: #f4f4f4;
-        }
-        .container {
-            max-width: 600px;
-            margin: 20px auto;
-            background: white;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
-        }
-        .header h1 {
-            margin: 0;
-            font-size: 24px;
-        }
-        .content {
-            padding: 30px;
-        }
-        .password-box {
-            background: #f8f9fa;
-            border: 2px solid #dee2e6;
-            border-radius: 8px;
-            padding: 20px;
-            margin: 20px 0;
-            text-align: center;
-        }
-        .password-text {
-            font-size: 24px;
-            font-weight: bold;
-            color: #495057;
-            letter-spacing: 2px;
-            font-family: 'Courier New', monospace;
-        }
-        .warning {
-            background: #fff3cd;
-            border: 1px solid #ffeaa7;
-            border-radius: 6px;
-            padding: 15px;
-            margin: 20px 0;
-        }
-        .warning-icon {
-            color: #856404;
-            font-weight: bold;
-        }
-        .button {
-            display: inline-block;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 12px 30px;
-            text-decoration: none;
-            border-radius: 6px;
-            font-weight: bold;
-            margin: 20px 0;
-        }
-        .instructions {
-            background: #e8f4f8;
-            border: 1px solid #bee5eb;
-            border-radius: 6px;
-            padding: 20px;
-            margin: 20px 0;
-        }
-        .instructions h3 {
-            margin-top: 0;
-            color: #0c5460;
-        }
-        .instructions ol {
-            margin: 10px 0;
-            padding-left: 20px;
-        }
-        .instructions li {
-            margin: 8px 0;
-        }
-        .footer {
-            background: #f8f9fa;
-            padding: 20px;
-            text-align: center;
-            color: #6c757d;
-            font-size: 14px;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="color-scheme" content="dark">
+  <meta name="supported-color-schemes" content="dark">
+  <title>Nova Senha Temporária — Minutor</title>
+  <!--[if mso]>
+  <noscript>
+    <xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>
+  </noscript>
+  <![endif]-->
+  <style>
+    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
+    body { margin: 0 !important; padding: 0 !important; background-color: #0A0A0B; }
+    a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !important; }
+    @media only screen and (max-width: 620px) {
+      .wrapper { width: 100% !important; }
+      .card { border-radius: 12px !important; margin: 0 12px !important; }
+      .pd-main { padding: 28px 20px !important; }
+      .pd-header { padding: 32px 20px 24px !important; }
+      .btn-td { padding: 28px 20px !important; }
+    }
+  </style>
 </head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🔐 Nova Senha Temporária</h1>
-            <p>Sistema Minutor</p>
-        </div>
-        
-        <div class="content">
-            <p>Olá, <strong>{{ $notifiable->name }}</strong>!</p>
-            
-            <p>Você solicitou a recuperação de sua senha. Sua nova senha temporária foi gerada com sucesso.</p>
-            
-            <div class="password-box">
-                <p style="margin: 0 0 10px 0; font-size: 14px; color: #666;">Sua senha temporária é:</p>
-                <div class="password-text">{{ $temporaryPassword }}</div>
-            </div>
-            
-            <div class="warning">
-                <div class="warning-icon">⚠️ IMPORTANTE:</div>
-                <ul style="margin: 10px 0;">
-                    <li>Esta senha é <strong>temporária</strong> e expira em <strong>{{ $expiresInHours }} horas</strong></li>
-                    <li>Por motivos de segurança, você será obrigado a alterar sua senha no primeiro login</li>
-                    <li>Não compartilhe esta senha com ninguém</li>
-                    <li>Se você não solicitou esta alteração, entre em contato conosco imediatamente</li>
-                </ul>
-            </div>
-            
-            <div style="text-align: center;">
-                <a href="{{ url('/login') }}" class="button">Fazer Login Agora</a>
-            </div>
-            
-            <div class="instructions">
-                <h3>📋 Instruções para uso:</h3>
-                <ol>
-                    <li>Acesse o sistema usando seu email e a senha temporária acima</li>
-                    <li>Você será redirecionado automaticamente para criar uma nova senha</li>
-                    <li>Escolha uma senha segura com pelo menos 8 caracteres</li>
-                    <li>Após trocar a senha, você poderá usar o sistema normalmente</li>
-                </ol>
-            </div>
-            
-            <p>Se você tiver alguma dúvida ou precisar de ajuda, não hesite em entrar em contato com nosso suporte.</p>
-            
-            <p>Atenciosamente,<br>
-            <strong>Equipe Minutor</strong></p>
-        </div>
-        
-        <div class="footer">
-            <p>Este é um email automático. Não responda a esta mensagem.</p>
-            <p>© {{ date('Y') }} Minutor. Todos os direitos reservados.</p>
-        </div>
-    </div>
+<body style="margin:0;padding:0;background-color:#0A0A0B;font-family:'Segoe UI',Arial,sans-serif;">
+
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
+    style="background-color:#0A0A0B;min-height:100vh;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600"
+          class="wrapper card"
+          style="background-color:#161618;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,0.06);">
+
+          {{-- ── HEADER ── --}}
+          <tr>
+            <td class="pd-header" align="left"
+              style="padding:36px 40px 28px;background-color:#111113;border-bottom:1px solid rgba(255,255,255,0.06);">
+
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:28px;">
+                <tr>
+                  <td align="center">
+                    <span style="font-size:13px;font-weight:600;letter-spacing:0.18em;text-transform:uppercase;color:rgba(255,255,255,0.45);font-family:'Segoe UI',Arial,sans-serif;">
+                      ERPServ
+                    </span>
+                  </td>
+                </tr>
+              </table>
+
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="vertical-align:middle;padding-right:14px;">
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td align="center" style="width:36px;height:36px;border-radius:9px;background:rgba(0,212,232,0.07);border:1px solid rgba(0,212,232,0.12);vertical-align:middle;">
+                          <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkiIGhlaWdodD0iMTkiIHZpZXdCb3g9IjAgMCAyOCAyOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB4PSIyIiB5PSIxNS40IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjkiIHJ4PSIxLjYiIGZpbGw9IiMwMEY1RkYiLz48cmVjdCB4PSI5LjEiIHk9IjkuNCIgd2lkdGg9IjQuMiIgaGVpZ2h0PSIxNSIgcng9IjEuNiIgZmlsbD0iIzAwRjVGRiIvPjxyZWN0IHg9IjE2LjIiIHk9IjQiIHdpZHRoPSI0LjIiIGhlaWdodD0iMjAiIHJ4PSIxLjYiIGZpbGw9IiMwMEY1RkYiLz48cmVjdCB4PSIyMy4yIiB5PSIxMS42IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjEyIiByeD0iMS42IiBmaWxsPSIjMDBGNUZGIi8+PC9zdmc+" alt="" width="19" height="19" style="display:inline-block;width:19px;height:19px;" />
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                  <td style="vertical-align:middle;">
+                    <div style="font-size:26px;font-weight:700;letter-spacing:-0.02em;color:#FFFFFF;line-height:1.05;font-family:'Segoe UI',Arial,sans-serif;">
+                      Minutor
+                    </div>
+                    <div style="margin-top:4px;font-size:13px;color:rgba(255,255,255,0.38);font-weight:400;font-family:'Segoe UI',Arial,sans-serif;">
+                      Controle de horas e contratos em um só lugar
+                    </div>
+                  </td>
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+
+          {{-- ── SAUDAÇÃO ── --}}
+          <tr>
+            <td class="pd-main" align="left" style="padding:36px 40px 0;">
+              <h1 style="margin:0 0 8px;font-size:24px;font-weight:700;color:#FFFFFF;
+                font-family:'Segoe UI',Arial,sans-serif;line-height:1.3;">
+                Nova Senha Temporária
+              </h1>
+              <p style="margin:0;font-size:15px;color:#A1A1AA;line-height:1.6;
+                font-family:'Segoe UI',Arial,sans-serif;">
+                Olá, <strong style="color:#FFFFFF;">{{ $notifiable->name }}</strong>! Você solicitou a recuperação de sua senha.
+                Sua nova senha temporária foi gerada com sucesso.
+              </p>
+            </td>
+          </tr>
+
+          {{-- ── SENHA TEMPORÁRIA ── --}}
+          <tr>
+            <td style="padding:24px 40px 0;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
+                style="background-color:#1C1C1F;border-radius:12px;border:1px solid rgba(0,245,255,0.12);">
+                <tr>
+                  <td style="padding:6px 20px 0;">
+                    <span style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;
+                      color:#00F5FF;font-family:'Segoe UI',Arial,sans-serif;">
+                      Dados de acesso
+                    </span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 20px 0;">
+                    <span style="font-size:11px;color:#71717A;font-family:'Segoe UI',Arial,sans-serif;
+                      text-transform:uppercase;letter-spacing:0.5px;">E-mail</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:4px 20px 16px;">
+                    <span style="font-size:14px;color:#FFFFFF;font-weight:500;
+                      font-family:'Courier New',Courier,monospace;">
+                      {{ $notifiable->email }}
+                    </span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 20px;">
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                      <tr><td style="border-top:1px solid rgba(255,255,255,0.06);font-size:0;line-height:0;">&nbsp;</td></tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:16px 20px 0;">
+                    <span style="font-size:11px;color:#71717A;font-family:'Segoe UI',Arial,sans-serif;
+                      text-transform:uppercase;letter-spacing:0.5px;">Senha temporária</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:4px 20px 20px;">
+                    <span style="font-size:20px;color:#00F5FF;font-weight:700;letter-spacing:2px;
+                      font-family:'Courier New',Courier,monospace;">
+                      {{ $temporaryPassword }}
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          {{-- ── ALERTA ── --}}
+          <tr>
+            <td style="padding:16px 40px 0;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
+                style="background-color:#1F1A0E;border-radius:8px;border:1px solid rgba(251,191,36,0.2);">
+                <tr>
+                  <td style="padding:14px 16px;">
+                    <span style="font-size:13px;color:#FCD34D;font-family:'Segoe UI',Arial,sans-serif;
+                      font-weight:600;display:block;margin-bottom:8px;">⚠️ IMPORTANTE:</span>
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                      @foreach([
+                        "Esta senha é <strong>temporária</strong> e expira em <strong>{$expiresInHours} horas</strong>",
+                        'Você será solicitado a criar uma nova senha no primeiro acesso',
+                        'Não compartilhe esta senha com ninguém',
+                        'Se não solicitou esta alteração, entre em contato imediatamente',
+                      ] as $aviso)
+                      <tr>
+                        <td style="padding:3px 0;">
+                          <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                            <tr>
+                              <td style="vertical-align:top;padding-right:8px;width:14px;">
+                                <span style="font-size:13px;color:#FCD34D;">•</span>
+                              </td>
+                              <td>
+                                <span style="font-size:13px;color:#D4A017;font-family:'Segoe UI',Arial,sans-serif;line-height:1.5;">
+                                  {!! $aviso !!}
+                                </span>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                      @endforeach
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          {{-- ── BOTÃO LOGIN ── --}}
+          <tr>
+            <td class="btn-td" align="center" style="padding:32px 40px 0;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center"
+                    style="border-radius:10px;background:linear-gradient(135deg,#3B82F6 0%,#8B5CF6 100%);">
+                    <a href="{{ config('app.frontend_url', 'https://app.minutor.com.br') }}/login"
+                      target="_blank"
+                      style="display:inline-block;padding:14px 36px;font-size:15px;font-weight:600;
+                        color:#FFFFFF;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;
+                        letter-spacing:0.2px;">
+                      Acessar o Minutor &rarr;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr><td style="padding-bottom:36px;"></td></tr>
+
+          {{-- ── DIVISOR ── --}}
+          <tr>
+            <td style="padding:0 40px;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                <tr><td style="border-top:1px solid rgba(255,255,255,0.06);font-size:0;line-height:0;">&nbsp;</td></tr>
+              </table>
+            </td>
+          </tr>
+
+          {{-- ── RODAPÉ ── --}}
+          <tr>
+            <td align="center" style="padding:24px 40px 32px;">
+              <span style="font-size:11px;color:rgba(255,255,255,0.18);font-family:'Segoe UI',Arial,sans-serif;letter-spacing:0.02em;">
+                &copy; {{ date('Y') }} ERPServ Consultoria &middot; Todos os direitos reservados
+              </span>
+            </td>
+          </tr>
+
+        </table>
+
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600" class="wrapper">
+          <tr>
+            <td align="center" style="padding-top:20px;">
+              <span style="font-size:11px;color:rgba(255,255,255,0.15);font-family:'Segoe UI',Arial,sans-serif;">
+                Você está recebendo este e-mail porque uma recuperação de senha foi solicitada para sua conta.
+              </span>
+            </td>
+          </tr>
+        </table>
+
+      </td>
+    </tr>
+  </table>
+
 </body>
 </html>

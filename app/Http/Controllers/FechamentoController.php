@@ -363,20 +363,20 @@ class FechamentoController extends Controller
         if ($apontamentosPendentes > 0) {
             $alertas[] = [
                 'tipo'      => 'warning',
-                'mensagem'  => "{$apontamentosPendentes} apontamento(s) pendente(s) de aprovação",
+                'mensagem'  => "{$apontamentosPendentes} apontamento(s) pendente(s) — aprovações continuam liberadas após o fechamento",
                 'link_path' => "/timesheets?status=pending",
             ];
         }
         if ($despesasPendentes > 0) {
             $alertas[] = [
                 'tipo'      => 'warning',
-                'mensagem'  => "{$despesasPendentes} despesa(s) pendente(s) de aprovação",
+                'mensagem'  => "{$despesasPendentes} despesa(s) pendente(s) — aprovações continuam liberadas após o fechamento",
                 'link_path' => "/expenses?status=pending",
             ];
         }
 
         return response()->json([
-            'pode_fechar'            => $apontamentosPendentes === 0 && $despesasPendentes === 0,
+            'pode_fechar'            => true,
             'ja_fechado'             => false,
             'apontamentos_pendentes' => $apontamentosPendentes,
             'despesas_pendentes'     => $despesasPendentes,

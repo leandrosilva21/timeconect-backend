@@ -85,6 +85,15 @@ Schedule::command('fechamento:auto-fechar')
   ->description('Fecha a competência do mês anterior no 2º dia útil do mês atual')
   ->withoutOverlapping();
 
+// Reset das alocações de Investimento Interno — roda diariamente às 00:05
+// e só age no 2º dia útil. Alocações feitas após esse horário no mesmo dia
+// são preservadas.
+Schedule::command('investimento-interno:reset-allocations')
+  ->dailyAt('00:05')
+  ->name('investimento-interno-reset-allocations')
+  ->description('Desaloca consultores dos projetos de Investimento Interno no 2º dia útil')
+  ->withoutOverlapping();
+
 // Limpeza de eventos antigos — mantém histórico dos últimos 180 dias
 Schedule::job(new CleanupContractEventsJob)
   ->weekly()

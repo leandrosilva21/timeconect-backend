@@ -392,6 +392,21 @@ class ProjectController extends Controller
             $query->where('is_investimento_comercial', true);
         } elseif (!$request->boolean('include_investimento_comercial')) {
             $query->where('is_investimento_comercial', false);
+        } else {
+            // include_investimento_comercial=true: para consultor (não admin/coord),
+            // restringe IC apenas aos projetos onde ele está alocado. Projetos
+            // não-IC continuam visíveis normalmente.
+            $currentUser = $request->user();
+            if ($currentUser && !$currentUser->isAdmin() && !$currentUser->isCoordenador() && !$currentUser->isAdministrativo()) {
+                $userId = $currentUser->id;
+                $query->where(function ($q) use ($userId) {
+                    $q->where('is_investimento_comercial', false)
+                      ->orWhere(function ($qq) use ($userId) {
+                          $qq->where('is_investimento_comercial', true)
+                             ->whereHas('consultants', fn($sq) => $sq->where('user_id', $userId));
+                      });
+                });
+            }
         }
 
         // Mapeamento de campos virtuais/computados para colunas reais ou joins

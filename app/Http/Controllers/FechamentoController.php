@@ -393,6 +393,12 @@ class FechamentoController extends Controller
             return response()->json(['message' => 'Competência já está fechada.'], 422);
         }
 
+        $mesAtual = \Carbon\Carbon::now()->startOfMonth();
+        $mesSolicitado = \Carbon\Carbon::createFromFormat('Y-m', $yearMonth)->startOfMonth();
+        if ($mesSolicitado->greaterThanOrEqualTo($mesAtual)) {
+            return response()->json(['message' => 'Só é permitido fechar competências de meses anteriores ao mês atual.'], 422);
+        }
+
         $producao = $this->producaoData($yearMonth);
         $custo    = $this->custoData($yearMonth);
         $receita  = $this->receitaData($yearMonth);

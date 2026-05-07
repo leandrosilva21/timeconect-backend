@@ -402,8 +402,8 @@ class Project extends Model
             return $this->timesheet_retroactive_limit_days;
         }
 
-        // Senão, usar configuração global do sistema
-        return \App\Models\SystemSetting::get('timesheet_retroactive_limit_days', 7);
+        // Senão, usar configuração global do sistema (null/ausente = sem limite)
+        return (int) \App\Models\SystemSetting::get('timesheet_retroactive_limit_days', 0);
     }
 
     /**

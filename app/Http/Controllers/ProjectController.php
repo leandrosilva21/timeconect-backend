@@ -2343,8 +2343,9 @@ class ProjectController extends Controller
             return response()->json(['message' => 'Tipos de serviço/contrato padrão não configurados.'], 500);
         }
 
-        // Próximo sufixo sequencial: IC-{customer_id}-N
-        $prefix = "IC-{$customer->id}-";
+        // Próximo sufixo sequencial: IC-{prefix}-N (fallback IC-{customer_id}-N)
+        $codeKey = $customer->code_prefix ?: (string) $customer->id;
+        $prefix = "IC-{$codeKey}-";
         $maxSeq = Project::withTrashed()
             ->where('code', 'like', $prefix . '%')
             ->get()

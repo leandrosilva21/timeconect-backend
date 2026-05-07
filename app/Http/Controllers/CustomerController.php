@@ -240,7 +240,7 @@ class CustomerController extends Controller
         // Só agora cria no banco, pois sabemos que é válido
         $customer = Customer::create($validated);
 
-        $this->createInvestimentoComercialProject($customer);
+        $this->createInvestimentoProjects($customer);
 
         // Resposta PO-UI
         return response()->json($customer->load('executive'), 201);
@@ -527,12 +527,41 @@ class CustomerController extends Controller
      */
     public function destroy(Customer $customer): JsonResponse
     {
+        // Bloquear exclusão se algum projeto auto (Investimento Interno) tiver movimento.
+        $autoProjects = Project::where('customer_id', $customer->id)
+            ->where('is_investimento_comercial', true)
+            ->get();
+
+        $autoProjectIds = $autoProjects->pluck('id');
+
+        if ($autoProjectIds->isNotEmpty()) {
+            $hasTimesheet = \App\Models\Timesheet::whereIn('project_id', $autoProjectIds)->exists();
+            $hasExpense   = \App\Models\Expense::whereIn('project_id', $autoProjectIds)->exists();
+
+            if ($hasTimesheet || $hasExpense) {
+                return response()->json([
+                    'message' => 'Não é possível excluir o cliente: existem apontamentos ou despesas vinculados aos projetos de Investimento Interno.',
+                ], 422);
+            }
+
+            // Soft-delete dos projetos auto antes de deletar o cliente
+            foreach ($autoProjects as $p) {
+                $p->delete();
+            }
+        }
+
         $customer->delete();
 
         return response()->json([], 204);
     }
 
-    private function createInvestimentoComercialProject(Customer $customer): void
+    /**
+     * Cria os 2 projetos automáticos de Investimento Interno para o cliente:
+     * - Investimento Comercial (code IC-{prefix})
+     * - Investimento Suporte   (code IS-{prefix})
+     * Se o cliente não tem code_prefix, cai pra customer_id como fallback.
+     */
+    private function createInvestimentoProjects(Customer $customer): void
     {
         $serviceTypeId  = ServiceType::where('code', 'projeto')->value('id');
         $contractTypeId = ContractType::where('code', 'on_demand')->value('id');
@@ -541,15 +570,28 @@ class CustomerController extends Controller
             return;
         }
 
-        Project::create([
-            'name'                      => 'Investimento Interno',
-            'code'                      => 'IC-' . $customer->id,
-            'customer_id'               => $customer->id,
-            'service_type_id'           => $serviceTypeId,
-            'contract_type_id'          => $contractTypeId,
-            'status'                    => 'started',
-            'is_investimento_comercial' => true,
-            'is_manual_code'            => true,
-        ]);
+        $codeKey = $customer->code_prefix ?: (string) $customer->id;
+
+        $defaults = [
+            ['name' => 'Investimento Comercial', 'code' => "IC-{$codeKey}"],
+            ['name' => 'Investimento Suporte',   'code' => "IS-{$codeKey}"],
+        ];
+
+        foreach ($defaults as $cfg) {
+            $exists = Project::withTrashed()->where('code', $cfg['code'])->exists();
+            if ($exists) {
+                continue;
+            }
+            Project::create([
+                'name'                      => $cfg['name'],
+                'code'                      => $cfg['code'],
+                'customer_id'               => $customer->id,
+                'service_type_id'           => $serviceTypeId,
+                'contract_type_id'          => $contractTypeId,
+                'status'                    => 'started',
+                'is_investimento_comercial' => true,
+                'is_manual_code'            => true,
+            ]);
+        }
     }
 }

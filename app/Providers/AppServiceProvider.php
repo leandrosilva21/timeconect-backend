@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use Carbon\Carbon;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
@@ -33,6 +34,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Carbon::setLocale('pt_BR');
+
         // Registrar listeners de email para debug
         Event::listen(MessageSending::class, EmailSentListener::class);
         Event::listen(MessageSent::class, EmailSentListener::class);

@@ -151,11 +151,21 @@ class Contract extends Model
 
     public function isKanbanComplete(): bool
     {
+        $ctName = strtolower(optional($this->contractType)->name ?? '');
+        $ctCode = optional($this->contractType)->code ?? '';
+
         $isOnDemand = $this->tipo_faturamento === 'on_demand'
-            || strtolower(optional($this->contractType)->name ?? '') === 'on demand';
+            || $ctCode === 'on_demand'
+            || $ctName === 'on demand';
+
+        // Cloud e SaaS são mensalidades — não exigem horas contratadas (usam valor_projeto).
+        $isMensalidade = in_array($ctCode, ['cloud', 'saas'], true)
+            || in_array($ctName, ['cloud', 'saas'], true);
+
+        $skipHoursCheck = $isOnDemand || $isMensalidade;
 
         return !empty($this->customer_id)
             && !empty($this->contract_type_id)
-            && ($isOnDemand || $this->horas_contratadas > 0);
+            && ($skipHoursCheck || $this->horas_contratadas > 0);
     }
 }

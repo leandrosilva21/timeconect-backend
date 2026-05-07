@@ -605,8 +605,20 @@ class TimesheetController extends Controller
             }
         }
 
-        // Verificar prazo limite para lançamento retroativo de horas
+        // Bloquear apontamento em competência administrativamente fechada
         $serviceDate = \Carbon\Carbon::parse($request->date);
+        $yearMonth = $serviceDate->format('Y-m');
+        $fechamentoAdm = \App\Models\FechamentoAdministrativo::where('year_month', $yearMonth)->first();
+        if ($fechamentoAdm?->isClosed()) {
+            return response()->json([
+                'code'          => 'PERIOD_CLOSED',
+                'type'          => 'error',
+                'message'       => 'Competência fechada',
+                'detailMessage' => "A competência {$serviceDate->translatedFormat('F Y')} está fechada e não aceita novos apontamentos.",
+            ], 422);
+        }
+
+        // Verificar prazo limite para lançamento retroativo de horas
         if (!$project->isWithinTimesheetDeadline($serviceDate)) {
             $limitDays = $project->getTimesheetRetroactiveLimitDays();
             $deadlineDate = $project->getTimesheetDeadline($serviceDate);
@@ -1142,6 +1154,18 @@ class TimesheetController extends Controller
         // Verificar prazo limite se a data foi alterada
         if (isset($validatedData['date']) && $projectForValidation) {
             $serviceDate = \Carbon\Carbon::parse($validatedData['date']);
+
+            // Bloquear edição de apontamento em competência administrativamente fechada
+            $yearMonth = $serviceDate->format('Y-m');
+            $fechamentoAdm = \App\Models\FechamentoAdministrativo::where('year_month', $yearMonth)->first();
+            if ($fechamentoAdm?->isClosed()) {
+                return response()->json([
+                    'code'          => 'PERIOD_CLOSED',
+                    'type'          => 'error',
+                    'message'       => 'Competência fechada',
+                    'detailMessage' => "A competência {$serviceDate->translatedFormat('F Y')} está fechada e não aceita alterações.",
+                ], 422);
+            }
 
             if (!$projectForValidation->isWithinTimesheetDeadline($serviceDate)) {
                 $limitDays = $projectForValidation->getTimesheetRetroactiveLimitDays();

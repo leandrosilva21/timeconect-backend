@@ -682,8 +682,10 @@ class TimesheetController extends Controller
             ], 422);
         }
 
-        // Verificar sobreposição de horários no mesmo dia para o mesmo usuário (qualquer projeto)
+        // Verificar sobreposição de horários no mesmo dia para o mesmo usuário e mesmo cliente
+        // (clientes distintos podem ter apontamentos sobrepostos no mesmo horário)
         $overlappingIds = Timesheet::where('user_id', $timesheetUserId)
+            ->where('customer_id', $project->customer_id)
             ->where('date', $request->date)
             ->whereNotIn('status', [Timesheet::STATUS_REJECTED])
             ->whereNotNull('start_time')
@@ -706,7 +708,7 @@ class TimesheetController extends Controller
                 'code'          => 'TIMESHEET_CONFLICT',
                 'type'          => 'error',
                 'message'       => 'Conflito de horário',
-                'detailMessage' => 'O horário informado conflita com outro apontamento já registrado para este dia.',
+                'detailMessage' => 'O horário informado conflita com outro apontamento do mesmo cliente já registrado para este dia.',
                 'conflicting_timesheet' => [
                     'date'          => $conflictingTs->date instanceof \Carbon\Carbon
                                         ? $conflictingTs->date->format('Y-m-d')
@@ -1395,10 +1397,11 @@ class TimesheetController extends Controller
                 $timesheet->attachment_original_name = $file->getClientOriginalName();
             }
 
-            // Bloquear edição que criaria sobreposição de horários
+            // Bloquear edição que criaria sobreposição de horários (mesmo cliente)
             if ($timesheet->start_time && $timesheet->end_time) {
                 $overlappingTs = Timesheet::with(['customer', 'project.customer'])
                     ->where('user_id', $timesheet->user_id)
+                    ->where('customer_id', $timesheet->customer_id)
                     ->where('date', $timesheet->date)
                     ->where('id', '!=', $timesheet->id)
                     ->whereNotIn('status', [Timesheet::STATUS_REJECTED])
@@ -1414,7 +1417,7 @@ class TimesheetController extends Controller
                         'code'          => 'TIMESHEET_CONFLICT',
                         'type'          => 'error',
                         'message'       => 'Conflito de horário',
-                        'detailMessage' => 'O horário informado conflita com outro apontamento já registrado para este dia.',
+                        'detailMessage' => 'O horário informado conflita com outro apontamento do mesmo cliente já registrado para este dia.',
                         'conflicting_timesheet' => [
                             'date'          => $overlappingTs->date instanceof \Carbon\Carbon
                                                 ? $overlappingTs->date->format('Y-m-d')
@@ -1435,9 +1438,10 @@ class TimesheetController extends Controller
 
             $timesheet->save();
 
-            // Re-detectar conflitos após a edição (somente quando há horários definidos)
+            // Re-detectar conflitos após a edição (mesmo cliente, com horários definidos)
             if ($timesheet->start_time && $timesheet->end_time) {
                 $overlappingIds = Timesheet::where('user_id', $timesheet->user_id)
+                    ->where('customer_id', $timesheet->customer_id)
                     ->where('date', $timesheet->date)
                     ->where('id', '!=', $timesheet->id)
                     ->whereNotIn('status', [Timesheet::STATUS_REJECTED])

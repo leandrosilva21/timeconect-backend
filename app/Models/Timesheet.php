@@ -529,7 +529,8 @@ class Timesheet extends Model
 
     /**
      * Reavalia todos os timesheets conflitados do usuário na data informada.
-     * Se um conflitado não tem mais sobreposição com nenhum outro, volta para pending.
+     * Conflito só vale entre apontamentos do mesmo cliente — se não houver
+     * mais sobreposição com outro do mesmo cliente, volta para pending.
      */
     public static function resolveStaleConflicts(int $userId, string $date): void
     {
@@ -541,6 +542,7 @@ class Timesheet extends Model
             ->get()
             ->each(function ($ts) {
                 $stillConflicts = static::where('user_id', $ts->user_id)
+                    ->where('customer_id', $ts->customer_id)
                     ->where('date', $ts->date)
                     ->where('id', '!=', $ts->id)
                     ->whereNotIn('status', [self::STATUS_REJECTED])

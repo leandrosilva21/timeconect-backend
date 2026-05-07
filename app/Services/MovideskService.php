@@ -11,6 +11,7 @@ use App\Models\SystemSetting;
 use App\Models\Timesheet;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -404,9 +405,33 @@ class MovideskService
 
         $target = $target ?? $clients[0];
 
-        $orgName = $target['organization']['businessName']
-            ?? $target['businessName']
-            ?? null;
+        $org         = $target['organization'] ?? null;
+        $orgName     = is_array($org) ? ($org['businessName'] ?? null) : null;
+        $orgName     = $orgName ?? ($target['businessName'] ?? null);
+        $orgPersonType = is_array($org) ? ($org['personType'] ?? null) : null;
+        $orgId       = is_array($org) ? ($org['id'] ?? null) : null;
+
+        // Movidesk personType: 1=pessoa, 2=empresa, 4=departamento.
+        // Quando solicitante pertence a um departamento (ex: PROMAX » Fiscal),
+        // a API entrega só o nome do departamento. Resolvemos a empresa-mãe
+        // via /persons/{id}.relationships, que aponta pra organização raiz.
+        if ($orgPersonType === 4 && $orgId) {
+            $parentMovideskId = $this->resolveDepartmentParentMovideskId((string) $orgId);
+            if ($parentMovideskId) {
+                $parentOrg = MovideskOrganization::where('movidesk_id', (string) $parentMovideskId)
+                    ->whereNotNull('customer_id')
+                    ->first();
+                if ($parentOrg) {
+                    Log::info('✅ [MOVIDESK] Cliente resolvido via parent do departamento', [
+                        'department'        => $orgName,
+                        'department_id'     => $orgId,
+                        'parent_movidesk_id'=> $parentMovideskId,
+                        'customer_id'       => $parentOrg->customer_id,
+                    ]);
+                    return $parentOrg->customer_id;
+                }
+            }
+        }
 
         if (!$orgName) {
             Log::warning('⚠️ [MOVIDESK] businessName não encontrado', ['client' => $target]);
@@ -414,16 +439,16 @@ class MovideskService
         }
 
         // 1. Busca via movidesk_organizations (vinculada por CNPJ pelo sync-orgs)
-        $org = MovideskOrganization::where('name', $orgName)
+        $orgRecord = MovideskOrganization::where('name', $orgName)
             ->whereNotNull('customer_id')
             ->first();
 
-        if ($org) {
+        if ($orgRecord) {
             Log::info('✅ [MOVIDESK] Cliente resolvido via movidesk_organizations (CNPJ)', [
                 'organization' => $orgName,
-                'customer_id'  => $org->customer_id,
+                'customer_id'  => $orgRecord->customer_id,
             ]);
-            return $org->customer_id;
+            return $orgRecord->customer_id;
         }
 
         // 2. Fallback: busca direta por nome no customers (case-insensitive)
@@ -435,7 +460,11 @@ class MovideskService
             })->first();
 
         if (!$customer) {
-            Log::warning('⚠️ [MOVIDESK] Cliente não encontrado no sistema', ['organization' => $orgName]);
+            Log::warning('⚠️ [MOVIDESK] Cliente não encontrado no sistema', [
+                'organization'    => $orgName,
+                'org_person_type' => $orgPersonType,
+                'org_id'          => $orgId,
+            ]);
             return $this->getDefaultCustomerId();
         }
 
@@ -445,6 +474,48 @@ class MovideskService
         ]);
 
         return $customer->id;
+    }
+
+    /**
+     * Para um departamento Movidesk (personType=4), busca o ID da organização raiz
+     * a partir de /persons/{id}.relationships[0].id. Cacheado por 1h.
+     */
+    private function resolveDepartmentParentMovideskId(string $departmentId): ?string
+    {
+        return Cache::remember(
+            "movidesk:dept:parent:{$departmentId}",
+            now()->addHour(),
+            function () use ($departmentId) {
+                try {
+                    $url = "{$this->baseUrl()}/persons"
+                        . '?token=' . urlencode($this->token() ?? '')
+                        . '&id='    . urlencode($departmentId);
+
+                    $response = Http::timeout(10)->get($url);
+                    if (!$response->successful()) {
+                        Log::warning('⚠️ [MOVIDESK] Falha ao buscar departamento', [
+                            'department_id' => $departmentId,
+                            'status'        => $response->status(),
+                        ]);
+                        return null;
+                    }
+
+                    $data = $response->json();
+                    $rels = $data['relationships'] ?? [];
+                    if (empty($rels)) {
+                        return null;
+                    }
+
+                    return (string) ($rels[0]['id'] ?? '') ?: null;
+                } catch (\Throwable $e) {
+                    Log::warning('⚠️ [MOVIDESK] Erro ao resolver parent do departamento', [
+                        'department_id' => $departmentId,
+                        'error'         => $e->getMessage(),
+                    ]);
+                    return null;
+                }
+            }
+        );
     }
 
     private function getDefaultCustomerId(): ?int

@@ -574,7 +574,7 @@ class CustomerController extends Controller
         $codeKey = $customer->code_prefix ?: (string) $customer->id;
 
         $defaults = [
-            ['name' => 'Investimento Comercial', 'code' => "IC-{$codeKey}", 'categoria' => null],
+            ['name' => 'Investimento Comercial', 'code' => "IC-{$codeKey}", 'categoria' => 'Comercial'],
             ['name' => 'Investimento Suporte',   'code' => "IS-{$codeKey}", 'categoria' => 'Suporte'],
             ['name' => 'Investimento Projetos',  'code' => "IP-{$codeKey}", 'categoria' => 'Projeto'],
         ];

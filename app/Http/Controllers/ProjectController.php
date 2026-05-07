@@ -2329,7 +2329,7 @@ class ProjectController extends Controller
 
         $data = $request->validate([
             'name'      => 'required|string|max:255|min:2',
-            'categoria' => 'required|string|in:Sustentação,Projeto,Suporte',
+            'categoria' => 'required|string|in:Sustentação,Projeto,Suporte,Comercial',
         ]);
 
         $erpservName = 'ERPSERV';

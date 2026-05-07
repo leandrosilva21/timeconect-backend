@@ -556,9 +556,10 @@ class CustomerController extends Controller
     }
 
     /**
-     * Cria os 2 projetos automáticos de Investimento Interno para o cliente:
+     * Cria os 3 projetos automáticos de Investimento Interno para o cliente:
      * - Investimento Comercial (code IC-{prefix})
      * - Investimento Suporte   (code IS-{prefix})
+     * - Investimento Projetos  (code IP-{prefix})
      * Se o cliente não tem code_prefix, cai pra customer_id como fallback.
      */
     private function createInvestimentoProjects(Customer $customer): void
@@ -573,8 +574,9 @@ class CustomerController extends Controller
         $codeKey = $customer->code_prefix ?: (string) $customer->id;
 
         $defaults = [
-            ['name' => 'Investimento Comercial', 'code' => "IC-{$codeKey}"],
-            ['name' => 'Investimento Suporte',   'code' => "IS-{$codeKey}"],
+            ['name' => 'Investimento Comercial', 'code' => "IC-{$codeKey}", 'categoria' => null],
+            ['name' => 'Investimento Suporte',   'code' => "IS-{$codeKey}", 'categoria' => 'Suporte'],
+            ['name' => 'Investimento Projetos',  'code' => "IP-{$codeKey}", 'categoria' => 'Projeto'],
         ];
 
         foreach ($defaults as $cfg) {
@@ -591,6 +593,7 @@ class CustomerController extends Controller
                 'status'                    => 'started',
                 'is_investimento_comercial' => true,
                 'is_manual_code'            => true,
+                'categoria_interna'         => $cfg['categoria'],
             ]);
         }
     }

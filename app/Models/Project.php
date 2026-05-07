@@ -84,6 +84,7 @@ class Project extends Model
         'is_manual_code',
         'contract_request_id',
         'is_investimento_comercial',
+        'categoria_interna',
     ];
 
     /**

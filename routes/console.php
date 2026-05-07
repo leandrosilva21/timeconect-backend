@@ -78,6 +78,13 @@ Schedule::job(new NormalizeContractStateJob)
   ->description('Fallback: detecta e corrige inconsistências nos snapshots de contratos')
   ->withoutOverlapping();
 
+// Fechamento automático — roda diariamente às 06:00 e só age no 2º dia útil
+Schedule::command('fechamento:auto-fechar')
+  ->dailyAt('06:00')
+  ->name('fechamento-auto-fechar')
+  ->description('Fecha a competência do mês anterior no 2º dia útil do mês atual')
+  ->withoutOverlapping();
+
 // Limpeza de eventos antigos — mantém histórico dos últimos 180 dias
 Schedule::job(new CleanupContractEventsJob)
   ->weekly()

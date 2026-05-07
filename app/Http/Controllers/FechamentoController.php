@@ -15,7 +15,7 @@ class FechamentoController extends Controller
 {
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
-    private function period(string $yearMonth): array
+    protected function period(string $yearMonth): array
     {
         $from = "{$yearMonth}-01";
         $to   = Carbon::parse($from)->endOfMonth()->toDateString();
@@ -429,6 +429,37 @@ class FechamentoController extends Controller
         ], 200);
     }
 
+    public function fecharMes(string $yearMonth, ?int $userId = null, ?string $notes = null): FechamentoAdministrativo
+    {
+        $fechamento = FechamentoAdministrativo::firstOrNew(['year_month' => $yearMonth]);
+
+        $producao = $this->producaoData($yearMonth);
+        $custo    = $this->custoData($yearMonth);
+        $receita  = $this->receitaData($yearMonth);
+
+        $totalCusto   = $custo['total_custo_interno'] + $custo['total_custo_parceiros'];
+        $totalReceita = $receita['total_receita'];
+        $margem       = round($totalReceita - $totalCusto, 2);
+        $margemPct    = $totalReceita > 0 ? round(($margem / $totalReceita) * 100, 4) : 0;
+
+        $fechamento->fill([
+            'status'                => 'closed',
+            'total_custo_interno'   => $custo['total_custo_interno'],
+            'total_custo_parceiros' => $custo['total_custo_parceiros'],
+            'total_receita'         => $totalReceita,
+            'margem'                => $margem,
+            'margem_percentual'     => $margemPct,
+            'snapshot_producao'     => $producao,
+            'snapshot_custo'        => $custo,
+            'snapshot_receita'      => $receita,
+            'closed_at'             => now(),
+            'closed_by'             => $userId,
+            'notes'                 => $notes,
+        ])->save();
+
+        return $fechamento;
+    }
+
     // ─── Reabrir ─────────────────────────────────────────────────────────────
 
     public function reabrir(Request $request, string $yearMonth): JsonResponse
@@ -452,7 +483,7 @@ class FechamentoController extends Controller
 
     // ─── Helpers privados (reutilizados em fechar()) ─────────────────────────
 
-    private function producaoData(string $yearMonth): array
+    protected function producaoData(string $yearMonth): array
     {
         [$from, $to] = $this->period($yearMonth);
 
@@ -504,7 +535,7 @@ class FechamentoController extends Controller
         return $rows;
     }
 
-    private function custoData(string $yearMonth): array
+    protected function custoData(string $yearMonth): array
     {
         [$from, $to] = $this->period($yearMonth);
 
@@ -557,7 +588,7 @@ class FechamentoController extends Controller
         ];
     }
 
-    private function receitaData(string $yearMonth): array
+    protected function receitaData(string $yearMonth): array
     {
         [$from, $to] = $this->period($yearMonth);
 

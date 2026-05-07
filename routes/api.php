@@ -747,6 +747,9 @@ Route::prefix('v1')->group(function () {
         Route::get('/projects/{project}/attachments/{attachment}',       [ProjectController::class, 'downloadAttachment'])->name('project-attachments.download');
         Route::delete('/projects/{project}/attachments/{attachment}',    [ProjectController::class, 'deleteAttachment'])->name('project-attachments.delete');
         Route::put('/projects/{project}/consultants/{userId}/manual-timesheet', [ProjectController::class, 'toggleConsultantManualTimesheet'])->name('projects.consultant-manual-timesheet');
+        Route::get('/projects/{project}/open-periods',  [ProjectController::class, 'listOpenPeriods'])->name('projects.open-periods.index');
+        Route::post('/projects/{project}/open-period',  [ProjectController::class, 'openPeriod'])->name('projects.open-periods.open');
+        Route::post('/projects/{project}/close-periods',[ProjectController::class, 'closePeriods'])->name('projects.open-periods.close');
 
         // 📄 CONTRATOS
         Route::get('/contracts/kanban',                              [ContractController::class, 'kanban'])->name('contracts.kanban');

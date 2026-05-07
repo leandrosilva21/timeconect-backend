@@ -491,7 +491,15 @@ class ProjectController extends Controller
         }
 
         // Adicionar atributos computed aos itens
-        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform) {
+        $projectIds = $projects->getCollection()->pluck('id')->toArray();
+        $openPeriodIds = \App\Models\ProjectOpenPeriod::whereIn('project_id', $projectIds)
+            ->whereNull('closed_at')
+            ->pluck('project_id')
+            ->flip()
+            ->toArray();
+
+        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $openPeriodIds) {
+            $project->has_open_period = isset($openPeriodIds[$project->id]);
             $project->status_display = $project->status_display;
             $project->contract_type_display = $project->contract_type_display;
 
@@ -2416,5 +2424,57 @@ class ProjectController extends Controller
         ]);
 
         return response()->json(['allow_manual_timesheet' => $data['allow']]);
+    }
+
+    // ─── Períodos abertos por projeto ────────────────────────────────────────
+
+    public function openPeriod(Request $request, Project $project): JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user->isAdmin() && !$user->isAdministrativo() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Acesso negado'], 403);
+        }
+
+        $data = $request->validate(['year_month' => 'required|string|regex:/^\d{4}-\d{2}$/']);
+
+        $mesAtual = \Carbon\Carbon::now()->startOfMonth();
+        $mesSolicitado = \Carbon\Carbon::createFromFormat('Y-m', $data['year_month'])->startOfMonth();
+        if ($mesSolicitado->greaterThanOrEqualTo($mesAtual)) {
+            return response()->json(['message' => 'Só é possível abrir meses anteriores ao mês atual.'], 422);
+        }
+
+        $period = \App\Models\ProjectOpenPeriod::updateOrCreate(
+            ['project_id' => $project->id, 'year_month' => $data['year_month']],
+            ['opened_by' => $user->id, 'closed_by' => null, 'closed_at' => null]
+        );
+
+        return response()->json(['data' => $period], 201);
+    }
+
+    public function closePeriods(Request $request, Project $project): JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user->isAdmin() && !$user->isAdministrativo() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Acesso negado'], 403);
+        }
+
+        $mesAtual = \Carbon\Carbon::now()->startOfMonth()->format('Y-m');
+
+        $count = \App\Models\ProjectOpenPeriod::where('project_id', $project->id)
+            ->whereNull('closed_at')
+            ->where('year_month', '<', $mesAtual)
+            ->update(['closed_at' => now(), 'closed_by' => $user->id]);
+
+        return response()->json(['message' => "{$count} período(s) fechado(s).", 'count' => $count]);
+    }
+
+    public function listOpenPeriods(Project $project): JsonResponse
+    {
+        $periods = \App\Models\ProjectOpenPeriod::where('project_id', $project->id)
+            ->whereNull('closed_at')
+            ->orderBy('year_month')
+            ->get(['id', 'year_month', 'opened_by', 'created_at']);
+
+        return response()->json(['data' => $periods]);
     }
 }

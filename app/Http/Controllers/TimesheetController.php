@@ -610,12 +610,19 @@ class TimesheetController extends Controller
         $yearMonth = $serviceDate->format('Y-m');
         $fechamentoAdm = \App\Models\FechamentoAdministrativo::where('year_month', $yearMonth)->first();
         if ($fechamentoAdm?->isClosed()) {
-            return response()->json([
-                'code'          => 'PERIOD_CLOSED',
-                'type'          => 'error',
-                'message'       => 'Competência fechada',
-                'detailMessage' => "A competência {$serviceDate->translatedFormat('F Y')} está fechada e não aceita novos apontamentos.",
-            ], 422);
+            $projectHasOpenPeriod = \App\Models\ProjectOpenPeriod::where('project_id', $project->id)
+                ->where('year_month', $yearMonth)
+                ->whereNull('closed_at')
+                ->exists();
+
+            if (!$projectHasOpenPeriod) {
+                return response()->json([
+                    'code'          => 'PERIOD_CLOSED',
+                    'type'          => 'error',
+                    'message'       => 'Competência fechada',
+                    'detailMessage' => "A competência {$serviceDate->translatedFormat('F Y')} está fechada e não aceita novos apontamentos.",
+                ], 422);
+            }
         }
 
         // Verificar prazo limite para lançamento retroativo de horas
@@ -1159,12 +1166,20 @@ class TimesheetController extends Controller
             $yearMonth = $serviceDate->format('Y-m');
             $fechamentoAdm = \App\Models\FechamentoAdministrativo::where('year_month', $yearMonth)->first();
             if ($fechamentoAdm?->isClosed()) {
-                return response()->json([
-                    'code'          => 'PERIOD_CLOSED',
-                    'type'          => 'error',
-                    'message'       => 'Competência fechada',
-                    'detailMessage' => "A competência {$serviceDate->translatedFormat('F Y')} está fechada e não aceita alterações.",
-                ], 422);
+                $editProject = $projectForValidation;
+                $projectHasOpenPeriod = \App\Models\ProjectOpenPeriod::where('project_id', $editProject->id)
+                    ->where('year_month', $yearMonth)
+                    ->whereNull('closed_at')
+                    ->exists();
+
+                if (!$projectHasOpenPeriod) {
+                    return response()->json([
+                        'code'          => 'PERIOD_CLOSED',
+                        'type'          => 'error',
+                        'message'       => 'Competência fechada',
+                        'detailMessage' => "A competência {$serviceDate->translatedFormat('F Y')} está fechada e não aceita alterações.",
+                    ], 422);
+                }
             }
 
             if (!$projectForValidation->isWithinTimesheetDeadline($serviceDate)) {

@@ -542,7 +542,7 @@ class CustomerController extends Controller
         }
 
         Project::create([
-            'name'                      => 'Investimento Comercial',
+            'name'                      => 'Investimento Interno',
             'code'                      => 'IC-' . $customer->id,
             'customer_id'               => $customer->id,
             'service_type_id'           => $serviceTypeId,

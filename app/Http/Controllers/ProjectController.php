@@ -127,7 +127,13 @@ class ProjectController extends Controller
      */
     public function myProjects(Request $request): JsonResponse
     {
-        $request->merge(['consultant_only' => 'true']);
+        // Inclui IC: projetos de Investimento Interno onde o consultor está
+        // alocado também aparecem em "Meus Projetos". A restrição "alocado"
+        // já é aplicada via consultant_only + filtro de IC do index().
+        $request->merge([
+            'consultant_only'                => 'true',
+            'include_investimento_comercial' => 'true',
+        ]);
         return $this->index($request);
     }
 

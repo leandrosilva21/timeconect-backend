@@ -490,12 +490,13 @@ class ContractController extends Controller
             ->orderBy('name')
             ->get();
 
-        // ── Sustentação / Cloud — 4 colunas agrupadas
+        // ── Sustentação / Cloud / Bizify — colunas agrupadas
         $sustentacaoGroups = [
             'sust_bh_fixo'   => [],
             'sust_bh_mensal' => [],
             'sust_on_demand' => [],
             'sust_cloud'     => [],
+            'sust_bizify'    => [],
         ];
         $sustentacaoAutoCards = collect(); // backward compat
         if (!$isConsultor && !$isCliente) {
@@ -524,7 +525,9 @@ class ContractController extends Controller
                     $svcCode      = $c->serviceType?->code ?? '';
                     $svcName      = strtolower($c->serviceType?->name ?? '');
                     $contractName = strtolower($c->contractType?->name ?? '');
-                    if (str_contains($svcName, 'cloud')) {
+                    if ($svcCode === 'bizify' || str_contains($svcName, 'bizify')) {
+                        $col = 'sust_bizify';
+                    } elseif (str_contains($svcName, 'cloud')) {
                         $col = 'sust_cloud';
                     } elseif ($c->tipo_faturamento === 'banco_horas_mensal') {
                         $col = 'sust_bh_mensal';
@@ -792,7 +795,7 @@ class ContractController extends Controller
     public function sustentacaoMove(Request $request, Contract $contract): JsonResponse
     {
         $request->validate([
-            'to_column' => 'required|in:sust_bh_fixo,sust_bh_mensal,sust_on_demand,sust_cloud',
+            'to_column' => 'required|in:sust_bh_fixo,sust_bh_mensal,sust_on_demand,sust_cloud,sust_bizify',
         ]);
 
         $user = auth()->user();
@@ -1035,6 +1038,20 @@ class ContractController extends Controller
 
     private function validateSustentacaoContractType(Contract $contract, string $toColumn): ?\Illuminate\Http\JsonResponse
     {
+        // Coluna Bizify aceita qualquer contract_type, mas exige service_type = Bizify
+        if ($toColumn === 'sust_bizify') {
+            $contract->loadMissing('serviceType');
+            $svcCode = $contract->serviceType?->code;
+            $svcName = strtolower($contract->serviceType?->name ?? '');
+            if ($svcCode !== 'bizify' && !str_contains($svcName, 'bizify')) {
+                $actual = $contract->serviceType?->name ?? 'não definido';
+                return response()->json([
+                    'message' => "A coluna \"Bizify\" aceita apenas contratos com Tipo de Serviço \"Bizify\". Este contrato tem serviço \"{$actual}\".",
+                ], 422);
+            }
+            return null;
+        }
+
         $expectedCode = self::SUST_COLUMN_CONTRACT_TYPE[$toColumn] ?? null;
         if (!$expectedCode) return null;
 

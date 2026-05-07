@@ -2316,6 +2316,59 @@ class ProjectController extends Controller
         return response()->json($rows);
     }
 
+    /**
+     * Cria um projeto interno manual para a ERPSERV (Investimento Interno).
+     * Vários projetos por cliente (ex.: IC-248-1, IC-248-2 ...). Sem horas e sem valor.
+     */
+    public function storeInternalProject(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user->isAdmin() && !$user->isAdministrativo()) {
+            return response()->json(['message' => 'Sem permissão para criar projeto interno.'], 403);
+        }
+
+        $data = $request->validate([
+            'name' => 'required|string|max:255|min:2',
+        ]);
+
+        $erpservName = 'ERPSERV';
+        $customer = \App\Models\Customer::whereRaw('UPPER(name) = ?', [$erpservName])->first();
+        if (!$customer) {
+            return response()->json(['message' => "Cliente \"{$erpservName}\" não encontrado."], 422);
+        }
+
+        $serviceTypeId  = \App\Models\ServiceType::where('code', 'projeto')->value('id');
+        $contractTypeId = \App\Models\ContractType::where('code', 'on_demand')->value('id');
+        if (!$serviceTypeId || !$contractTypeId) {
+            return response()->json(['message' => 'Tipos de serviço/contrato padrão não configurados.'], 500);
+        }
+
+        // Próximo sufixo sequencial: IC-{customer_id}-N
+        $prefix = "IC-{$customer->id}-";
+        $maxSeq = Project::withTrashed()
+            ->where('code', 'like', $prefix . '%')
+            ->get()
+            ->map(fn ($p) => (int) preg_replace('/^.*-/', '', $p->code))
+            ->max() ?? 0;
+        $code = $prefix . ($maxSeq + 1);
+
+        $project = Project::create([
+            'name'                      => $data['name'],
+            'code'                      => $code,
+            'customer_id'               => $customer->id,
+            'service_type_id'           => $serviceTypeId,
+            'contract_type_id'          => $contractTypeId,
+            'status'                    => Project::STATUS_STARTED,
+            'is_investimento_comercial' => true,
+            'is_manual_code'            => true,
+        ]);
+
+        return response()->json([
+            'message' => 'Projeto interno criado com sucesso.',
+            'project' => $project,
+        ], 201);
+    }
+
     public function hoursPerConsultant(Request $request): JsonResponse
     {
         $user = $request->user();

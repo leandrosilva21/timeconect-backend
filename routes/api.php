@@ -384,6 +384,7 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:projects.create')->group(function () {
             Route::post('/projects', [ProjectController::class, 'store'])->name('projects.store');
+            Route::post('/investimento-interno/projects', [ProjectController::class, 'storeInternalProject'])->name('projects.store-internal');
         });
 
         Route::middleware('permission.or.admin:projects.update')->group(function () {

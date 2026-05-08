@@ -191,7 +191,9 @@ class TimesheetController extends Controller
 
         // Filtros PO-UI
         if ($request->filled('project_id')) {
-            $query->forProject($request->project_id);
+            $projectInput = $request->input('project_id');
+            $projectIds   = is_array($projectInput) ? $projectInput : [$projectInput];
+            $query->whereIn('timesheets.project_id', $projectIds);
         }
 
         $customerIds = array_values(array_filter((array) $request->input('customer_id', [])));

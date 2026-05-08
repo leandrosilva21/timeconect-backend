@@ -1388,6 +1388,15 @@ class TimesheetController extends Controller
 
             $timesheet->fill($validatedData);
 
+            // Trava manual de projeto/cliente: se o usuário alterou esses campos
+            // via UI, marcar como "edição manual" para que reprocess do Movidesk
+            // não sobrescreva mais.
+            $customerChanged = isset($validatedData['customer_id'])
+                && (int) $validatedData['customer_id'] !== (int) $timesheet->getOriginal('customer_id');
+            if ($projectChanged || $customerChanged) {
+                $timesheet->manual_project_edit = true;
+            }
+
             // Atualiza is_billable_only apenas quando admin edita apontamento de outro usuário
             $targetUserId = $validatedData['user_id'] ?? $timesheet->user_id;
             if ($user->isAdmin() && $request->has('is_billable_only')) {

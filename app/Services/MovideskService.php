@@ -197,18 +197,51 @@ class MovideskService
             $timesheet->user_id = $resolvedUser->id;
         }
 
-        // Corrige cliente
-        $newCustomerId = $this->extractCustomerId($ticket);
-        if ($newCustomerId && $newCustomerId !== $timesheet->customer_id) {
-            $changes['customer_id'] = ['from' => $timesheet->customer_id, 'to' => $newCustomerId];
-            $timesheet->customer_id = $newCustomerId;
+        // Trava manual: se o usuário editou projeto/cliente via UI,
+        // o reprocess NÃO sobrescreve mais esses campos.
+        if (!$timesheet->manual_project_edit) {
+            // Corrige cliente
+            $newCustomerId = $this->extractCustomerId($ticket);
+            if ($newCustomerId && $newCustomerId !== $timesheet->customer_id) {
+                $changes['customer_id'] = ['from' => $timesheet->customer_id, 'to' => $newCustomerId];
+                $timesheet->customer_id = $newCustomerId;
+            }
+
+            // Corrige projeto usando o cliente atualizado
+            $newProjectId = $this->extractProjectId($timesheet->customer_id);
+            if ($newProjectId && $newProjectId !== $timesheet->project_id) {
+                $changes['project_id'] = ['from' => $timesheet->project_id, 'to' => $newProjectId];
+                $timesheet->project_id = $newProjectId;
+            }
         }
 
-        // Corrige projeto usando o cliente atualizado
-        $newProjectId = $this->extractProjectId($timesheet->customer_id);
-        if ($newProjectId && $newProjectId !== $timesheet->project_id) {
-            $changes['project_id'] = ['from' => $timesheet->project_id, 'to' => $newProjectId];
-            $timesheet->project_id = $newProjectId;
+        // Atualizar horários do Movidesk se divergirem (sempre — não bloqueado pela trava manual).
+        $newStartTime = $this->extractTime($targetAppointment, 'periodStart');
+        $newEndTime   = $this->extractTime($targetAppointment, 'periodEnd');
+        $newEffortHours   = $this->extractEffortHours($targetAppointment);
+        $newEffortMinutes = $newEffortHours ? $this->calculateEffortMinutes($newEffortHours) : null;
+
+        if ($newStartTime) {
+            $currentStart = $timesheet->start_time
+                ? (is_string($timesheet->start_time) ? substr($timesheet->start_time, 0, 5) : $timesheet->start_time->format('H:i'))
+                : null;
+            if ($currentStart !== $newStartTime) {
+                $changes['start_time'] = ['from' => $currentStart, 'to' => $newStartTime];
+                $timesheet->start_time = $newStartTime;
+            }
+        }
+        if ($newEndTime) {
+            $currentEnd = $timesheet->end_time
+                ? (is_string($timesheet->end_time) ? substr($timesheet->end_time, 0, 5) : $timesheet->end_time->format('H:i'))
+                : null;
+            if ($currentEnd !== $newEndTime) {
+                $changes['end_time'] = ['from' => $currentEnd, 'to' => $newEndTime];
+                $timesheet->end_time = $newEndTime;
+            }
+        }
+        if ($newEffortMinutes !== null && (int) $newEffortMinutes !== (int) $timesheet->effort_minutes) {
+            $changes['effort_minutes'] = ['from' => $timesheet->effort_minutes, 'to' => (int) $newEffortMinutes];
+            $timesheet->effort_minutes = (int) $newEffortMinutes;
         }
 
         if (!empty($changes)) {

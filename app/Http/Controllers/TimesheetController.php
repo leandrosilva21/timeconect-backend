@@ -2125,6 +2125,10 @@ class TimesheetController extends Controller
         $statuses    = $statusInput === null
             ? []
             : (is_array($statusInput) ? $statusInput : [$statusInput]);
+        $projectInput = $request->input('project_id');
+        $projectIds   = $projectInput === null
+            ? []
+            : (is_array($projectInput) ? $projectInput : [$projectInput]);
 
         $base = Timesheet::query()
             ->where('timesheets.customer_id', $customerId)
@@ -2136,6 +2140,13 @@ class TimesheetController extends Controller
 
         if (!empty($statuses)) {
             $base->whereIn('timesheets.status', $statuses);
+        }
+
+        // Filtro de projeto: respeita o filtro do relatório. Se um ticket
+        // tem apontamentos em vários projetos, só conta o(s) projeto(s)
+        // selecionado(s).
+        if (!empty($projectIds)) {
+            $base->whereIn('timesheets.project_id', $projectIds);
         }
 
         // Visibilidade por perfil — replica regras do index()
@@ -2168,12 +2179,13 @@ class TimesheetController extends Controller
             return response()->json(['tickets' => []]);
         }
 
-        // 2) Agregação: histórico (todos do ticket no cliente) + total no período
+        // 2) Agregação: histórico (todos do ticket no cliente/projeto) + total no período
         $rows = (clone $base)
             ->whereIn('timesheets.ticket', $ticketsInPeriod)
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
             ->selectRaw('timesheets.ticket as ticket')
             ->selectRaw('MAX(movidesk_tickets.titulo) as title')
+            ->selectRaw("MAX(movidesk_tickets.solicitante::jsonb->>'name') as requester")
             ->selectRaw('SUM(timesheets.effort_minutes) as lifetime_minutes')
             ->selectRaw('COUNT(*) as lifetime_count')
             ->selectRaw('SUM(CASE WHEN timesheets.date BETWEEN ? AND ? THEN timesheets.effort_minutes ELSE 0 END) as period_minutes', [$startDate, $endDate])
@@ -2186,6 +2198,7 @@ class TimesheetController extends Controller
             'tickets' => $rows->map(fn ($r) => [
                 'ticket'           => $r->ticket,
                 'title'            => $r->title,
+                'requester'        => $r->requester,
                 'period_minutes'   => (int) $r->period_minutes,
                 'period_count'     => (int) $r->period_count,
                 'lifetime_minutes' => (int) $r->lifetime_minutes,

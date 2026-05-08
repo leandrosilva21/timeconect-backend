@@ -2118,7 +2118,10 @@ class TimesheetController extends Controller
         $base = Timesheet::query()
             ->where('timesheets.customer_id', $customerId)
             ->whereNotNull('timesheets.ticket')
-            ->where('timesheets.ticket', '!=', '');
+            ->where('timesheets.ticket', '!=', '')
+            // Só tickets totalmente numéricos com 4+ dígitos — descarta lançamentos
+            // sem ticket real (ex: "1", "test", "ABC123) que não devem aglutinar.
+            ->whereRaw("timesheets.ticket ~ '^[0-9]{4,}$'");
 
         if (!empty($statuses)) {
             $base->whereIn('timesheets.status', $statuses);

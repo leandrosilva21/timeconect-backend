@@ -2119,9 +2119,9 @@ class TimesheetController extends Controller
             ->where('timesheets.customer_id', $customerId)
             ->whereNotNull('timesheets.ticket')
             ->where('timesheets.ticket', '!=', '')
-            // Só tickets totalmente numéricos com 4+ dígitos — descarta lançamentos
-            // sem ticket real (ex: "1", "test", "ABC123) que não devem aglutinar.
-            ->whereRaw("timesheets.ticket ~ '^[0-9]{4,}$'");
+            // Só tickets com exatamente 5 dígitos numéricos (padrão Movidesk).
+            // Descarta lançamentos sem ticket real (ex: "1", "test", "ABC").
+            ->whereRaw("timesheets.ticket ~ '^[0-9]{5}$'");
 
         if (!empty($statuses)) {
             $base->whereIn('timesheets.status', $statuses);

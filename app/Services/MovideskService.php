@@ -159,7 +159,20 @@ class MovideskService
         }
 
         if (!$targetAction) {
-            return ['updated' => false, 'skipped' => 'appointment_not_found'];
+            // Apontamento foi removido no Movidesk (deletado/recriado com novo id).
+            // Soft-delete no Minutor para não ficar fantasma duplicado em
+            // fechamentos, dashboards e relatórios. Mantém o registro físico
+            // para auditoria.
+            $timesheet->delete();
+            Log::info('🗑️ [MOVIDESK] Apontamento órfão soft-deletado (não existe mais no Movidesk)', [
+                'timesheet_id'            => $timesheet->id,
+                'ticket'                  => $timesheet->ticket,
+                'movidesk_appointment_id' => $timesheet->movidesk_appointment_id,
+            ]);
+            return [
+                'updated' => true,
+                'changes' => ['soft_deleted' => 'appointment_removed_in_movidesk'],
+            ];
         }
 
         $defaultUserId = $this->getDefaultUserId();

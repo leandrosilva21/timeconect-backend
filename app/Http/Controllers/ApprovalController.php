@@ -668,6 +668,19 @@ class ApprovalController extends Controller
             });
         }
 
+        // Filtro por categoria de serviço (chips coloridos no frontend)
+        $categoriaServico = $request->get('categoria_servico');
+        if (in_array($categoriaServico, ['sustentacao', 'projeto', 'bizify', 'investimento'], true)) {
+            $query->whereHas('project', function ($q) use ($categoriaServico) {
+                if ($categoriaServico === 'investimento') {
+                    $q->where('is_investimento_comercial', true);
+                } else {
+                    $q->where('is_investimento_comercial', false)
+                      ->whereHas('serviceType', fn($sq) => $sq->where('code', $categoriaServico));
+                }
+            });
+        }
+
         // Filtro por data (período)
         if ($request->filled('date_from')) {
             $query->where('date', '>=', $request->get('date_from'));
@@ -711,6 +724,19 @@ class ApprovalController extends Controller
         if ($request->filled('coordinator_id')) {
             $query->whereHas('project.coordinators', function ($q) use ($request) {
                 $q->where('users.id', $request->get('coordinator_id'));
+            });
+        }
+
+        // Filtro por categoria de serviço (chips coloridos no frontend)
+        $categoriaServico = $request->get('categoria_servico');
+        if (in_array($categoriaServico, ['sustentacao', 'projeto', 'bizify', 'investimento'], true)) {
+            $query->whereHas('project', function ($q) use ($categoriaServico) {
+                if ($categoriaServico === 'investimento') {
+                    $q->where('is_investimento_comercial', true);
+                } else {
+                    $q->where('is_investimento_comercial', false)
+                      ->whereHas('serviceType', fn($sq) => $sq->where('code', $categoriaServico));
+                }
             });
         }
 

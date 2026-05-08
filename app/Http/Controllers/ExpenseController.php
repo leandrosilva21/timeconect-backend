@@ -273,6 +273,23 @@ class ExpenseController extends Controller
             $query->where('project_id', $request->project_id);
         }
 
+        // Filtro por categoria de serviço (chips coloridos no frontend):
+        //   sustentacao  → service_type.code='sustentacao' E NÃO IC
+        //   projeto      → service_type.code='projeto'    E NÃO IC
+        //   bizify       → service_type.code='bizify'     E NÃO IC
+        //   investimento → is_investimento_comercial=true (engloba os 3 auto)
+        $categoriaServico = $request->get('categoria_servico');
+        if (in_array($categoriaServico, ['sustentacao', 'projeto', 'bizify', 'investimento'], true)) {
+            $query->whereHas('project', function ($q) use ($categoriaServico) {
+                if ($categoriaServico === 'investimento') {
+                    $q->where('is_investimento_comercial', true);
+                } else {
+                    $q->where('is_investimento_comercial', false)
+                      ->whereHas('serviceType', fn($sq) => $sq->where('code', $categoriaServico));
+                }
+            });
+        }
+
         $customerIds = array_values(array_filter((array) $request->input('customer_id', [])));
         if (!empty($customerIds)) {
             $query->whereHas('project', function ($q) use ($customerIds) {

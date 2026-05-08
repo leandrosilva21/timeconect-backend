@@ -61,6 +61,7 @@ class Timesheet extends Model
         'date' => 'date:Y-m-d',
         'is_billable_only'    => 'boolean',
         'is_internal_action'  => 'boolean',
+        'manual_project_edit' => 'boolean',
         'client_extra_pct'    => 'decimal:2',
         'consultant_extra_pct'=> 'decimal:2',
         'start_time' => 'datetime:H:i',

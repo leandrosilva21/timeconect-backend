@@ -2088,6 +2088,98 @@ class TimesheetController extends Controller
      *     )
      * )
      */
+    /**
+     * Apuração por ticket — para o Relatório de Apontamentos.
+     * Retorna, para cada ticket que teve ao menos 1 apontamento dentro do período,
+     * o total no período + total histórico (todos os apontamentos do mesmo ticket
+     * no mesmo cliente).
+     *
+     * Filtros: customer_id (obrigatório), start_date/end_date (obrigatórios), status[].
+     * Ignora apontamentos sem ticket.
+     */
+    public function summaryByTicket(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+
+        $request->validate([
+            'customer_id' => 'required|integer',
+            'start_date'  => 'required|date',
+            'end_date'    => 'required|date',
+        ]);
+
+        $customerId  = (int) $request->customer_id;
+        $startDate   = $request->start_date;
+        $endDate     = $request->end_date;
+        $statusInput = $request->input('status');
+        $statuses    = $statusInput === null
+            ? []
+            : (is_array($statusInput) ? $statusInput : [$statusInput]);
+
+        $base = Timesheet::query()
+            ->where('timesheets.customer_id', $customerId)
+            ->whereNotNull('timesheets.ticket')
+            ->where('timesheets.ticket', '!=', '');
+
+        if (!empty($statuses)) {
+            $base->whereIn('timesheets.status', $statuses);
+        }
+
+        // Visibilidade por perfil — replica regras do index()
+        if ($user->isCliente()) {
+            $base->where('timesheets.customer_id', $user->customer_id)
+                 ->whereIn('timesheets.status', ['pending', 'approved']);
+        } elseif ($user->type === 'parceiro_admin' && $request->boolean('team_view') && $user->partner_id) {
+            $partnerUserIds = \App\Models\User::where('partner_id', $user->partner_id)->pluck('id');
+            $base->whereIn('timesheets.user_id', $partnerUserIds);
+        } elseif (!$user->isAdmin() && !$user->hasAccess('hours.view_all')) {
+            $base->forUser($user->id);
+        } elseif ($user->isCoordenador()) {
+            $coordinatorProjectIds = $user->coordinatorProjects()->pluck('projects.id');
+            if ($user->coordinator_type === 'sustentacao') {
+                $base->whereHas('project.serviceType', fn($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
+            } else {
+                $base->whereIn('timesheets.project_id', $coordinatorProjectIds);
+            }
+        }
+
+        // 1) Tickets que tiveram apontamento no período
+        $ticketsInPeriod = (clone $base)
+            ->whereBetween('timesheets.date', [$startDate, $endDate])
+            ->select('timesheets.ticket')
+            ->distinct()
+            ->pluck('ticket')
+            ->toArray();
+
+        if (empty($ticketsInPeriod)) {
+            return response()->json(['tickets' => []]);
+        }
+
+        // 2) Agregação: histórico (todos do ticket no cliente) + total no período
+        $rows = (clone $base)
+            ->whereIn('timesheets.ticket', $ticketsInPeriod)
+            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+            ->selectRaw('timesheets.ticket as ticket')
+            ->selectRaw('MAX(movidesk_tickets.titulo) as title')
+            ->selectRaw('SUM(timesheets.effort_minutes) as lifetime_minutes')
+            ->selectRaw('COUNT(*) as lifetime_count')
+            ->selectRaw('SUM(CASE WHEN timesheets.date BETWEEN ? AND ? THEN timesheets.effort_minutes ELSE 0 END) as period_minutes', [$startDate, $endDate])
+            ->selectRaw('SUM(CASE WHEN timesheets.date BETWEEN ? AND ? THEN 1 ELSE 0 END) as period_count', [$startDate, $endDate])
+            ->groupBy('timesheets.ticket')
+            ->orderBy('timesheets.ticket')
+            ->get();
+
+        return response()->json([
+            'tickets' => $rows->map(fn ($r) => [
+                'ticket'           => $r->ticket,
+                'title'            => $r->title,
+                'period_minutes'   => (int) $r->period_minutes,
+                'period_count'     => (int) $r->period_count,
+                'lifetime_minutes' => (int) $r->lifetime_minutes,
+                'lifetime_count'   => (int) $r->lifetime_count,
+            ])->values(),
+        ]);
+    }
+
     public function export(Request $request)
     {
         $user = Auth::user();

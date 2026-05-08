@@ -764,6 +764,8 @@ class TimesheetController extends Controller
             // Verificar se o projeto é do tipo de contrato On Demand
             $project->loadMissing('contractType');
             $isOnDemandContract = $project->contractType && $project->contractType->code === 'on_demand';
+            // Projetos de Investimento Interno não têm horas contratadas — pulam validação de saldo
+            $isInvestimentoInterno = (bool) $project->is_investimento_comercial;
 
             Log::info('Criando apontamento - Antes de validar saldo', [
                 'project_id' => $project->id,
@@ -777,8 +779,8 @@ class TimesheetController extends Controller
                 'is_on_demand_contract' => $isOnDemandContract,
             ]);
 
-            // Para projetos On Demand, não bloquear criação por saldo de horas
-            if (!$isOnDemandContract) {
+            // Para projetos On Demand ou Investimento Interno, não bloquear por saldo
+            if (!$isOnDemandContract && !$isInvestimentoInterno) {
                 // Validar saldo de horas antes de salvar
                 $balanceValidation = $this->validateHoursBalance($project, $timesheetUserId, $hoursToAdd, null);
                 if ($balanceValidation) {
@@ -1294,9 +1296,10 @@ class TimesheetController extends Controller
                     'user_changed' => $userChanged,
                 ]);
 
-                if ($targetProject) {
+                if ($targetProject && !$targetProject->is_investimento_comercial) {
                     // Validar saldo no projeto alvo com as novas horas
                     // Não excluir o apontamento atual pois ele será movido/atribuído a outro projeto/usuário
+                    // Projetos de Investimento Interno não têm horas contratadas — pulam validação
                     $balanceValidation = $this->validateHoursBalance(
                         $targetProject,
                         $userIdForValidation,
@@ -1317,7 +1320,7 @@ class TimesheetController extends Controller
                 }
             } else {
                 // Se não mudou de projeto nem usuário, validar apenas a diferença de horas (excluindo o apontamento atual)
-                if ($projectForValidation && $hoursDifference > 0) {
+                if ($projectForValidation && $hoursDifference > 0 && !$projectForValidation->is_investimento_comercial) {
                     Log::info('Editando apontamento - Mesmo projeto/usuário, validando diferença de horas', [
                         'timesheet_id' => $timesheet->id,
                         'project_id' => $projectForValidation->id,

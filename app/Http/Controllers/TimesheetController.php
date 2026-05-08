@@ -2411,8 +2411,8 @@ class TimesheetController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        $ids           = $request->input('ids', []);
-        $defaultUserId = \App\Models\SystemSetting::get('movidesk_default_user_id');
+        $ids              = $request->input('ids', []);
+        $defaultProjectId = \App\Models\SystemSetting::get('movidesk_default_project_id');
 
         $movideskOrigins = ['movidesk', 'webhook'];
 
@@ -2423,19 +2423,34 @@ class TimesheetController extends Controller
                 ->whereNotNull('movidesk_appointment_id')
                 ->get();
         } else {
-            // Sem IDs: processa todos do Movidesk/webhook com usuário padrão
+            // Sem IDs: prioriza apontamentos que caíram no PROJETO PADRÃO
+            // (esses são os candidatos a re-resolver depois de ajustes feitos
+            // no Movidesk, como amarrar pessoa→organização ou dept→empresa).
+            // Invalida o cache de departamento Movidesk antes do reprocess
+            // para respeitar mudanças recentes feitas no Movidesk.
+            try {
+                $store = \Illuminate\Support\Facades\Cache::getStore();
+                if (method_exists($store, 'getRedis')) {
+                    $redis = $store->getRedis();
+                    $prefix = config('cache.prefix', '');
+                    foreach ($redis->keys("{$prefix}*movidesk:dept:parent:*") as $key) {
+                        $redis->del($key);
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Cache driver sem suporte a keys() — sem invalidação manual.
+                // Cada entrada expira em 1h naturalmente.
+            }
+
             $query = Timesheet::whereIn('origin', $movideskOrigins)
                 ->whereNotNull('ticket')
                 ->whereNotNull('movidesk_appointment_id');
 
-            if ($defaultUserId) {
-                $query->where(function ($q) use ($defaultUserId) {
-                    $q->where('user_id', (int) $defaultUserId)
-                      ->orWhereNull('user_id');
-                });
+            if ($defaultProjectId) {
+                $query->where('project_id', (int) $defaultProjectId);
             }
 
-            $timesheets = $query->orderByDesc('id')->limit(10)->get();
+            $timesheets = $query->orderByDesc('id')->limit(50)->get();
         }
 
         if ($timesheets->isEmpty()) {

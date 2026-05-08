@@ -214,7 +214,9 @@ class TimesheetController extends Controller
         }
 
         if ($request->filled('status')) {
-            $query->withStatus($request->status);
+            $statusInput = $request->input('status');
+            $statuses    = is_array($statusInput) ? $statusInput : [$statusInput];
+            $query->whereIn('timesheets.status', $statuses);
         }
 
         if ($request->filled('ticket')) {

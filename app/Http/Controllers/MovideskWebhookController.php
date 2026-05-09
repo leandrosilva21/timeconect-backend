@@ -11,7 +11,18 @@ class MovideskWebhookController extends Controller
 {
     public function handleTicket(Request $request, MovideskService $service): JsonResponse
     {
-        Log::warning('🎫 [MOVIDESK WEBHOOK] ===== RECEBIDO =====', ['ip' => $request->ip()]);
+        // Validação opcional de assinatura HMAC. Ative com MOVIDESK_WEBHOOK_VALIDATE=true
+        // após configurar o secret no painel do Movidesk e em MOVIDESK_WEBHOOK_SECRET.
+        if (config('services.movidesk.webhook_validate')) {
+            $secret = (string) config('services.movidesk.webhook_secret');
+            $signature = (string) $request->header('X-Movidesk-Signature', '');
+            $expected = hash_hmac('sha256', $request->getContent(), $secret);
+
+            if ($secret === '' || !hash_equals($expected, $signature)) {
+                Log::warning('[MOVIDESK WEBHOOK] Assinatura inválida', ['ip' => $request->ip()]);
+                return response()->json(['status' => 'error', 'message' => 'Assinatura inválida'], 401);
+            }
+        }
 
         try {
             $payload = $request->all();
@@ -22,10 +33,9 @@ class MovideskWebhookController extends Controller
 
             $ticketId = $payload['Id'] ?? null;
 
-            Log::warning('🎫 [MOVIDESK WEBHOOK] Ticket recebido', [
+            Log::info('[MOVIDESK WEBHOOK] Ticket recebido', [
                 'ticket_id' => $ticketId,
-                'subject'   => $payload['Subject'] ?? 'N/A',
-                'status'    => $payload['Status'] ?? 'N/A',
+                'status'    => $payload['Status'] ?? null,
             ]);
 
             if ($ticketId && config('services.movidesk.token')) {

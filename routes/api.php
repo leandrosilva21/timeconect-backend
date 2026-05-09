@@ -74,12 +74,6 @@ Route::prefix('v1')->group(function () {
     Route::post('/webhooks/movidesk/ticket', [MovideskWebhookController::class, 'handleTicket'])
         ->name('webhooks.movidesk.ticket');
 
-    // 🔍 DEBUG temporário - diagnóstico da API Movidesk (sem auth)
-    Route::get('/movidesk/debug',          [\App\Http\Controllers\MovideskAdminController::class, 'debug'])->name('movidesk.debug.public');
-    Route::get('/movidesk/debug-orgs',     [\App\Http\Controllers\MovideskAdminController::class, 'debugOrgs'])->name('movidesk.debug.orgs');
-    Route::post('/movidesk/link-org',      [\App\Http\Controllers\MovideskAdminController::class, 'linkOrg'])->name('movidesk.link.org');
-    Route::post('/movidesk/link-org-project', [\App\Http\Controllers\MovideskAdminController::class, 'linkOrgProject'])->name('movidesk.link.org.project');
-
     /**
      * @OA\Get(
      *     path="/api/v1/health",
@@ -847,6 +841,12 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission.or.admin:system_settings.update')->group(function () {
             Route::post("/movidesk/sync", [\App\Http\Controllers\MovideskAdminController::class, "sync"])->name("movidesk.sync");
             Route::post("/movidesk/history-import", [\App\Http\Controllers\MovideskAdminController::class, "historyImport"])->name("movidesk.history_import");
+
+            // Diagnóstico e vinculação manual de orgs Movidesk — antes públicas, agora protegidas
+            Route::get('/movidesk/debug',             [\App\Http\Controllers\MovideskAdminController::class, 'debug'])->name('movidesk.debug');
+            Route::get('/movidesk/debug-orgs',        [\App\Http\Controllers\MovideskAdminController::class, 'debugOrgs'])->name('movidesk.debug.orgs');
+            Route::post('/movidesk/link-org',         [\App\Http\Controllers\MovideskAdminController::class, 'linkOrg'])->name('movidesk.link.org');
+            Route::post('/movidesk/link-org-project', [\App\Http\Controllers\MovideskAdminController::class, 'linkOrgProject'])->name('movidesk.link.org.project');
         });
     });
 });

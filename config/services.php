@@ -36,7 +36,9 @@ return [
     ],
 
     'movidesk' => [
-    'token' => env('MOVIDESK_API_TOKEN'),
-],
+        'token'            => env('MOVIDESK_API_TOKEN'),
+        'webhook_secret'   => env('MOVIDESK_WEBHOOK_SECRET'),
+        'webhook_validate' => filter_var(env('MOVIDESK_WEBHOOK_VALIDATE', false), FILTER_VALIDATE_BOOLEAN),
+    ],
 
 ];

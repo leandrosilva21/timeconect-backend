@@ -42,12 +42,12 @@ RUN echo "catch_workers_output = yes" >> /usr/local/etc/php-fpm.d/www.conf \
     && sed -i 's|;error_log = log/php-fpm.log|error_log = /proc/self/fd/2|' /usr/local/etc/php-fpm.conf
 
 # PHP upload limits
-RUN echo "upload_max_filesize = 50M\npost_max_size = 55M\nmemory_limit = 256M" > /usr/local/etc/php/conf.d/uploads.ini
+RUN echo "upload_max_filesize = 20M\npost_max_size = 25M\nmemory_limit = 256M" > /usr/local/etc/php/conf.d/uploads.ini
 
 # Configuração do Nginx
 RUN echo 'server { \n\
     listen 8080; \n\
-    client_max_body_size 55M; \n\
+    client_max_body_size 25M; \n\
     root /var/www/public; \n\
     index index.php; \n\
     location / { try_files $uri $uri/ /index.php?$query_string; } \n\

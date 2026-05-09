@@ -95,10 +95,8 @@ Route::prefix('v1')->group(function () {
     // Rota para verificar se API está funcionando
     Route::get('/health', function () {
         return response()->json([
-            'status' => 'ok',
-            'message' => 'API funcionando corretamente',
+            'status'    => 'ok',
             'timestamp' => now(),
-            'version' => '1.0.0'
         ]);
     })->name('api.health');
 

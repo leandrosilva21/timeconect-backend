@@ -36,11 +36,18 @@ return Application::configure(basePath: dirname(__DIR__))
                 if ($e instanceof \Illuminate\Auth\Access\AuthorizationException) {
                     return response()->json(['message' => 'This action is unauthorized.'], 403);
                 }
-                return response()->json([
-                    'message' => $e->getMessage() ?: get_class($e),
-                    'file'    => basename($e->getFile()),
-                    'line'    => $e->getLine(),
-                ], 422);
+
+                $payload = config('app.debug')
+                    ? [
+                        'message' => $e->getMessage() ?: get_class($e),
+                        'file'    => basename($e->getFile()),
+                        'line'    => $e->getLine(),
+                    ]
+                    : [
+                        'message' => 'Erro ao processar a requisição',
+                    ];
+
+                return response()->json($payload, 422);
             }
         });
     })->create();

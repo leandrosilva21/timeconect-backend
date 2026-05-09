@@ -66,9 +66,6 @@ class PasswordResetController extends Controller
      */
     public function forgotPassword(Request $request): JsonResponse
     {
-        \Log::info('🔐 [FORGOT PASSWORD] Iniciando processo de recuperação de senha');
-        \Log::info('📧 [FORGOT PASSWORD] Dados recebidos:', $request->all());
-
         $email = strtolower(trim($request->input('email', '')));
 
         $validator = Validator::make(['email' => $email], [
@@ -79,60 +76,38 @@ class PasswordResetController extends Controller
         ]);
 
         if ($validator->fails()) {
-            \Log::warning('⚠️ [FORGOT PASSWORD] Validação falhou:', $validator->errors()->toArray());
             return response()->json([
                 'message' => 'Dados inválidos',
                 'errors' => $validator->errors()
             ], 422);
         }
-        \Log::info("📤 [FORGOT PASSWORD] Tentando enviar email para: {$email}");
-
-        // Verificar configurações de email
-        \Log::info('⚙️ [FORGOT PASSWORD] Configurações de email:', [
-            'MAIL_MAILER' => config('mail.default'),
-            'MAIL_HOST' => config('mail.mailers.smtp.host'),
-            'MAIL_PORT' => config('mail.mailers.smtp.port'),
-            'MAIL_USERNAME' => config('mail.mailers.smtp.username'),
-            'MAIL_FROM_ADDRESS' => config('mail.from.address'),
-            'MAIL_FROM_NAME' => config('mail.from.name'),
-        ]);
 
         try {
-            // Buscar o usuário (LOWER para ignorar case no banco)
             $user = User::whereRaw('LOWER(email) = ?', [$email])->first();
 
+            // Resposta genérica para evitar enumeração de emails
             if (!$user) {
-                \Log::warning("⚠️ [FORGOT PASSWORD] Usuário não encontrado: {$email}");
                 return response()->json([
-                    'message' => 'Dados inválidos',
-                    'errors' => ['email' => ['Email não encontrado em nossa base de dados']]
-                ], 422);
+                    'message' => 'Se o email existir em nossa base, uma senha temporária será enviada'
+                ], 200);
             }
 
-            // Gerar senha temporária
             $temporaryPassword = $this->generateTemporaryPassword();
-            \Log::info("🔑 [FORGOT PASSWORD] Senha temporária gerada para: {$email}");
-
-            // Definir senha temporária (expira em 24 horas)
             $user->setTemporaryPassword($temporaryPassword, 24);
-
-            // Enviar email com a senha temporária
             $user->notify(new TemporaryPasswordNotification($temporaryPassword, 24));
 
-            \Log::info("✅ [FORGOT PASSWORD] Senha temporária enviada com sucesso para: {$email}");
-            
             return response()->json([
-                'message' => 'Senha temporária enviada para seu email'
+                'message' => 'Se o email existir em nossa base, uma senha temporária será enviada'
             ], 200);
 
         } catch (\Exception $e) {
-            \Log::error('🚨 [FORGOT PASSWORD] Exceção capturada:', [
-                'message' => $e->getMessage(),
+            \Log::error('[FORGOT PASSWORD] Falha ao processar solicitação', [
+                'user_id' => isset($user) && $user ? $user->id : null,
+                'exception' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'message' => 'Erro interno ao processar solicitação de recuperação'
             ], 500);

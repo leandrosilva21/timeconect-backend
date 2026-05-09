@@ -51,17 +51,22 @@ use App\Http\Controllers\ProjectContactController;
 
 // Grupo de rotas versionadas v1
 Route::prefix('v1')->group(function () {
-    // Rotas públicas (sem autenticação)
+    // Rotas públicas (sem autenticação) — throttle obrigatório para mitigar brute-force
     Route::prefix('auth')->group(function () {
-        // Autenticação
-        Route::post('/login', [AuthController::class, 'login'])->name('auth.login');
+        // Autenticação — 5 tentativas por minuto por IP
+        Route::post('/login', [AuthController::class, 'login'])
+            ->middleware('throttle:5,1')
+            ->name('auth.login');
 
-        // Recuperação de senha
+        // Recuperação de senha — 3 solicitações por hora por IP
         Route::post('/forgot-password', [PasswordResetController::class, 'forgotPassword'])
+            ->middleware('throttle:3,60')
             ->name('password.email');
         Route::post('/reset-password', [PasswordResetController::class, 'resetPassword'])
+            ->middleware('throttle:5,15')
             ->name('password.reset');
         Route::post('/verify-reset-token', [PasswordResetController::class, 'verifyResetToken'])
+            ->middleware('throttle:10,1')
             ->name('password.verify');
     });
 

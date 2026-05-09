@@ -1882,6 +1882,20 @@ class ProjectController extends Controller
             return response()->json(['error' => 'Projeto não está vinculado a um pai'], 422);
         }
 
+        // Código novo: aceitar do request (opcional) ou gerar automaticamente
+        $providedCode = trim((string) $request->input('code', ''));
+        if ($providedCode !== '') {
+            $exists = Project::withTrashed()
+                ->where('code', $providedCode)
+                ->where('id', '!=', $child->id)
+                ->exists();
+            if ($exists) {
+                return response()->json([
+                    'error' => "Código '{$providedCode}' já está em uso por outro projeto",
+                ], 422);
+            }
+        }
+
         $parent = Project::findOrFail($child->parent_project_id);
 
         // Horas consumidas pelo filho: soma de effort_minutes de timesheets não rejeitados
@@ -1893,7 +1907,7 @@ class ProjectController extends Controller
         $aporte = (float) $child->sold_hours;
 
         try {
-            DB::transaction(function () use ($parent, $child, $aporte, $consumedHours) {
+            DB::transaction(function () use ($parent, $child, $aporte, $consumedHours, $providedCode) {
                 // Pai recupera o aporte total (sold_hours atual do filho)
                 $parent->sold_hours = (float) ($parent->sold_hours ?? 0) + $aporte;
                 $parent->save();
@@ -1901,7 +1915,9 @@ class ProjectController extends Controller
                 // Filho independente
                 $child->parent_project_id = null;
                 $child->sold_hours = $consumedHours;
-                $child->code = $this->generateNextProjectCode($child->customer_id);
+                $child->code = $providedCode !== ''
+                    ? $providedCode
+                    : $this->generateNextProjectCode($child->customer_id);
                 $child->save();
             });
         } catch (\Throwable $e) {

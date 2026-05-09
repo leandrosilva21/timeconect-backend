@@ -285,8 +285,9 @@ class MovideskAdminController extends Controller
      */
     public function linkOrg(Request $request): JsonResponse
     {
-        $key = $request->header('X-Admin-Key');
-        if ($key !== config('app.admin_exec_key')) {
+        $key = (string) $request->header('X-Admin-Key', '');
+        $expected = (string) config('app.admin_exec_key');
+        if ($expected === '' || !hash_equals($expected, $key)) {
             return response()->json(['error' => 'Não autorizado'], 403);
         }
 

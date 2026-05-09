@@ -258,7 +258,7 @@ class UserController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'nullable|string|min:6',
+            'password' => 'nullable|string|min:8',
             'enabled' => 'sometimes|boolean',
             'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'rate_type' => 'nullable|in:hourly,monthly',
@@ -725,7 +725,7 @@ class UserController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'password' => 'nullable|string|min:6',
+            'password' => 'nullable|string|min:8',
         ]);
 
         if ($validator->fails()) {

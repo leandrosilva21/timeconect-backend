@@ -334,7 +334,7 @@ class ContractController extends Controller
     public function uploadAttachment(Request $request, Contract $contract): JsonResponse
     {
         $request->validate([
-            'file' => 'required|file|max:20480',
+            'file' => 'required|file|max:20480|mimes:pdf,doc,docx,xls,xlsx,ppt,pptx,jpg,jpeg,png,txt,csv,zip',
             'type' => 'required|in:proposta,contrato,logo',
         ]);
 

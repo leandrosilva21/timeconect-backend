@@ -20,6 +20,19 @@ class User extends Authenticatable
     use HasFactory, Notifiable, HasApiTokens;
 
     /**
+     * Campos que controlam autorização e identidade — fora de $fillable para evitar
+     * escalada de privilégio via mass assignment. Setar apenas via forceFill() ou
+     * setAttribute() em fluxos administrativos com policy/permission validados.
+     */
+    public const PROTECTED_FIELDS = [
+        'is_executive',
+        'type',
+        'coordinator_type',
+        'can_timesheet_sustentacao',
+        'extra_permissions',
+    ];
+
+    /**
      * The attributes that are mass assignable.
      *
      * @var list<string>
@@ -41,11 +54,6 @@ class User extends Authenticatable
         'profile_photo',
         'customer_id',
         'partner_id',
-        'is_executive',
-        'type',
-        'coordinator_type',
-        'can_timesheet_sustentacao',
-        'extra_permissions',
     ];
 
     /**

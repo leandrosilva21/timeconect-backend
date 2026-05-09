@@ -307,8 +307,14 @@ class UserController extends Controller
             // Criar usuário com senha placeholder (setTemporaryPassword irá sobrescrever com hash correto)
             $userData['password'] = 'placeholder';
 
-            // Criar usuário
-            $user = User::create($userData);
+            // Separar campos protegidos (fora de $fillable) — admin pode setar via forceFill
+            $protectedData = array_intersect_key($userData, array_flip(User::PROTECTED_FIELDS));
+            $fillableData = array_diff_key($userData, $protectedData);
+
+            $user = User::create($fillableData);
+            if (!empty($protectedData)) {
+                $user->forceFill($protectedData)->save();
+            }
 
             // Definir senha com hash correto via DB direto (evita duplo hash pelo cast 'hashed')
             $user->setTemporaryPassword($temporaryPassword, 24);
@@ -517,7 +523,14 @@ class UserController extends Controller
             $dashboardTypes = $updateData['dashboard_types'] ?? null;
             unset($updateData['dashboard_types'], $updateData['password_confirmation']);
 
-            $user->update($updateData);
+            // Separar campos protegidos (fora de $fillable) — admin pode setar via forceFill
+            $protectedData = array_intersect_key($updateData, array_flip(User::PROTECTED_FIELDS));
+            $fillableData = array_diff_key($updateData, $protectedData);
+
+            $user->update($fillableData);
+            if (!empty($protectedData)) {
+                $user->forceFill($protectedData)->save();
+            }
 
             // Registrar log de alteração de valor ou tipo de contrato
             if ($shouldLog) {

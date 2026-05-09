@@ -64,7 +64,8 @@ class ExecutiveController extends Controller
      */
     public function toggle(User $user): JsonResponse
     {
-        $user->update(['is_executive' => !$user->is_executive]);
+        // is_executive é PROTECTED_FIELD — usar forceFill, não update().
+        $user->forceFill(['is_executive' => !$user->is_executive])->save();
 
         return response()->json($user->fresh());
     }

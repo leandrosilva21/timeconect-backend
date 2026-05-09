@@ -1877,7 +1877,7 @@ class ProjectController extends Controller
             return response()->json(['error' => 'Apenas administradores podem desvincular projeto'], 403);
         }
 
-        $child = Project::findOrFail($project);
+        $child = Project::with('contractType')->findOrFail($project);
         if (!$child->parent_project_id) {
             return response()->json(['error' => 'Projeto não está vinculado a um pai'], 422);
         }
@@ -1904,17 +1904,23 @@ class ProjectController extends Controller
             ->sum('effort_minutes');
         $consumedHours = round(((int) $consumedMinutes) / 60, 2);
 
-        $aporte = (float) $child->sold_hours;
+        // Regra por tipo de contrato:
+        //  - Fechado (closed): pai recupera o sold_hours total do filho;
+        //                      filho fica com sold_hours = consumido
+        //  - Demais (banco de horas etc): pai recupera só o consumido;
+        //                                  filho mantém o sold_hours atual
+        $contractCode = $child->contractType?->code ?? '';
+        $isClosed     = $contractCode === 'closed';
+        $aporte       = $isClosed ? (float) $child->sold_hours : $consumedHours;
+        $newChildSold = $isClosed ? $consumedHours : (float) $child->sold_hours;
 
         try {
-            DB::transaction(function () use ($parent, $child, $aporte, $consumedHours, $providedCode) {
-                // Pai recupera o aporte total (sold_hours atual do filho)
+            DB::transaction(function () use ($parent, $child, $aporte, $newChildSold, $providedCode) {
                 $parent->sold_hours = (float) ($parent->sold_hours ?? 0) + $aporte;
                 $parent->save();
 
-                // Filho independente
                 $child->parent_project_id = null;
-                $child->sold_hours = $consumedHours;
+                $child->sold_hours = $newChildSold;
                 $child->code = $providedCode !== ''
                     ? $providedCode
                     : $this->generateNextProjectCode($child->customer_id);
@@ -1940,6 +1946,85 @@ class ProjectController extends Controller
                 'sold_hours'      => (float) $child->sold_hours,
                 'aporte_devolvido'=> $aporte,
                 'horas_consumidas'=> $consumedHours,
+                'is_closed'       => $isClosed,
+            ],
+        ]);
+    }
+
+    /**
+     * Vincula um projeto independente como filho de outro (operação inversa
+     * de detach). Pai entrega horas pro filho conforme tipo de contrato:
+     *  - Fechado: pai entrega o sold_hours total do filho
+     *  - Demais: pai entrega só o consumido pelo filho
+     */
+    public function attachToParent(Request $request, int $project): JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user || !$user->isAdmin()) {
+            return response()->json(['error' => 'Apenas administradores podem vincular projeto'], 403);
+        }
+
+        $request->validate([
+            'parent_id' => 'required|integer|exists:projects,id',
+        ]);
+
+        $child = Project::with('contractType')->findOrFail($project);
+        if ($child->parent_project_id) {
+            return response()->json(['error' => 'Projeto já está vinculado a um pai'], 422);
+        }
+
+        $parent = Project::findOrFail($request->parent_id);
+
+        if ($parent->id === $child->id) {
+            return response()->json(['error' => 'Projeto não pode ser pai de si mesmo'], 422);
+        }
+        if ($parent->customer_id !== $child->customer_id) {
+            return response()->json(['error' => 'Pai e filho devem pertencer ao mesmo cliente'], 422);
+        }
+        if ($parent->parent_project_id) {
+            return response()->json(['error' => 'Pai escolhido já é filho de outro projeto'], 422);
+        }
+
+        // Horas consumidas pelo filho
+        $consumedMinutes = \App\Models\Timesheet::where('project_id', $child->id)
+            ->whereNotIn('status', ['rejected'])
+            ->sum('effort_minutes');
+        $consumedHours = round(((int) $consumedMinutes) / 60, 2);
+
+        $contractCode = $child->contractType?->code ?? '';
+        $isClosed     = $contractCode === 'closed';
+        $entrega      = $isClosed ? (float) $child->sold_hours : $consumedHours;
+
+        try {
+            DB::transaction(function () use ($parent, $child, $entrega) {
+                // Pai entrega horas pro filho
+                $parent->sold_hours = (float) ($parent->sold_hours ?? 0) - $entrega;
+                $parent->save();
+
+                $child->parent_project_id = $parent->id;
+                $child->save();
+            });
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Falha ao vincular projeto: ' . $e->getMessage(),
+            ], 500);
+        }
+
+        return response()->json([
+            'message' => 'Projeto vinculado com sucesso',
+            'parent' => [
+                'id'         => $parent->id,
+                'name'       => $parent->name,
+                'sold_hours' => (float) $parent->sold_hours,
+            ],
+            'child' => [
+                'id'                => $child->id,
+                'name'              => $child->name,
+                'parent_project_id' => $child->parent_project_id,
+                'sold_hours'        => (float) $child->sold_hours,
+                'aporte_entregue'   => $entrega,
+                'horas_consumidas'  => $consumedHours,
+                'is_closed'         => $isClosed,
             ],
         ]);
     }

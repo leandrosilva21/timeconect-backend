@@ -396,6 +396,7 @@ Route::prefix('v1')->group(function () {
             Route::put('/projects/{project}/change-history/{log}', [ProjectController::class, 'updateChangeHistory'])->name('projects.change-history.update');
             Route::delete('/projects/{project}/change-history/{log}', [ProjectController::class, 'destroyChangeHistory'])->name('projects.change-history.destroy');
             Route::post('/projects/{project}/detach-from-parent', [ProjectController::class, 'detachFromParent'])->name('projects.detach-from-parent');
+            Route::post('/projects/{project}/attach-to-parent',  [ProjectController::class, 'attachToParent'])->name('projects.attach-to-parent');
         });
 
         Route::middleware('permission.or.admin:projects.delete')->group(function () {

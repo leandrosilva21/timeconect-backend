@@ -1834,6 +1834,101 @@ class ProjectController extends Controller
     }
 
     /**
+     * Gera novo código de projeto pra um cliente, atualizando a sequência.
+     * Uso interno (ex: ao desvincular projeto filho).
+     */
+    private function generateNextProjectCode(int $customerId): string
+    {
+        $customer = Customer::findOrFail($customerId);
+        if (!$customer->code_prefix) {
+            throw new \RuntimeException('Cliente sem prefixo de código');
+        }
+
+        $seq = \App\Models\ProjectSequence::where('customer_id', $customer->id)->first();
+        $nextSeq = ($seq?->last_sequence ?? 0) + 1;
+        $prefix  = strtoupper($customer->code_prefix);
+        $year    = now()->format('y');
+
+        do {
+            $padded = str_pad($nextSeq, 3, '0', STR_PAD_LEFT);
+            $code   = $prefix . $padded . '-' . $year;
+            $nextSeq++;
+        } while (Project::withTrashed()->where('code', $code)->exists());
+
+        \App\Models\ProjectSequence::updateOrCreate(
+            ['customer_id' => $customer->id],
+            ['last_sequence' => $nextSeq - 1]
+        );
+
+        return $code;
+    }
+
+    /**
+     * Desvincula projeto filho do pai e o torna independente.
+     * - Pai recupera as horas vendidas do filho (sold_hours)
+     * - Filho fica com sold_hours = horas consumidas (apontamentos não-rejeitados)
+     * - Filho ganha novo código (próximo da sequência do cliente)
+     * - parent_project_id = null
+     */
+    public function detachFromParent(Request $request, int $project): JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user || !$user->isAdmin()) {
+            return response()->json(['error' => 'Apenas administradores podem desvincular projeto'], 403);
+        }
+
+        $child = Project::findOrFail($project);
+        if (!$child->parent_project_id) {
+            return response()->json(['error' => 'Projeto não está vinculado a um pai'], 422);
+        }
+
+        $parent = Project::findOrFail($child->parent_project_id);
+
+        // Horas consumidas pelo filho: soma de effort_minutes de timesheets não rejeitados
+        $consumedMinutes = \App\Models\Timesheet::where('project_id', $child->id)
+            ->whereNotIn('status', ['rejected'])
+            ->sum('effort_minutes');
+        $consumedHours = round(((int) $consumedMinutes) / 60, 2);
+
+        $aporte = (float) $child->sold_hours;
+
+        try {
+            DB::transaction(function () use ($parent, $child, $aporte, $consumedHours) {
+                // Pai recupera o aporte total (sold_hours atual do filho)
+                $parent->sold_hours = (float) ($parent->sold_hours ?? 0) + $aporte;
+                $parent->save();
+
+                // Filho independente
+                $child->parent_project_id = null;
+                $child->sold_hours = $consumedHours;
+                $child->code = $this->generateNextProjectCode($child->customer_id);
+                $child->save();
+            });
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Falha ao desvincular projeto: ' . $e->getMessage(),
+            ], 500);
+        }
+
+        return response()->json([
+            'message' => 'Projeto desvinculado com sucesso',
+            'parent' => [
+                'id'         => $parent->id,
+                'name'       => $parent->name,
+                'sold_hours' => (float) $parent->sold_hours,
+            ],
+            'child' => [
+                'id'              => $child->id,
+                'name'            => $child->name,
+                'code'            => $child->code,
+                'sold_hours'      => (float) $child->sold_hours,
+                'aporte_devolvido'=> $aporte,
+                'horas_consumidas'=> $consumedHours,
+            ],
+        ]);
+    }
+
+    /**
      * @OA\Get(
      *     path="/api/v1/projects/{id}/available-hours",
      *     tags={"Projects"},

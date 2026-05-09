@@ -12,16 +12,29 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Confia em proxies (Cloudflare/Render/Cloudflare Tunnel/VPS reverse proxy).
+        // Sem isso, request->ip() retorna o IP do load balancer e o throttle
+        // por IP não funciona — todas as requests parecem vir do mesmo (ou de
+        // edges diferentes do CDN, dependendo do hop).
+        $middleware->trustProxies(
+            at: '*',
+            headers: \Illuminate\Http\Request::HEADER_X_FORWARDED_FOR
+                | \Illuminate\Http\Request::HEADER_X_FORWARDED_HOST
+                | \Illuminate\Http\Request::HEADER_X_FORWARDED_PORT
+                | \Illuminate\Http\Request::HEADER_X_FORWARDED_PROTO
+                | \Illuminate\Http\Request::HEADER_X_FORWARDED_AWS_ELB,
+        );
+
         // Middleware para rotas da API
         $middleware->api(append: [
             \App\Http\Middleware\ApiSecurityHeaders::class,
         ]);
-        
+
         // CORS para API
         $middleware->api(prepend: [
             \Illuminate\Http\Middleware\HandleCors::class,
         ]);
-        
+
         // Middleware customizado para permissões
         $middleware->alias([
             'permission.or.admin' => \App\Http\Middleware\CheckPermissionOrAdmin::class,

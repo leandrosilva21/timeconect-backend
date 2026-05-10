@@ -421,6 +421,12 @@ Route::prefix('v1')->group(function () {
         Route::get('/timesheets/summary-by-ticket', [TimesheetController::class, 'summaryByTicket'])->name('timesheets.summary-by-ticket');
         Route::get('/timesheets/{timesheet}', [TimesheetController::class, 'show'])->name('timesheets.show');
 
+        // Histórico de alterações de um apontamento específico (admin/coord)
+        Route::middleware('permission.or.admin:hours.approve')->group(function () {
+            Route::get('/timesheets/{id}/logs', [\App\Http\Controllers\TimesheetLogController::class, 'forTimesheet'])->name('timesheets.logs');
+            Route::get('/timesheet-logs', [\App\Http\Controllers\TimesheetLogController::class, 'index'])->name('timesheet-logs.index');
+        });
+
         // Qualquer usuário autenticado (exceto Cliente — verificado no controller) pode criar apontamentos
         Route::post('/timesheets', [TimesheetController::class, 'store'])->name('timesheets.store');
 

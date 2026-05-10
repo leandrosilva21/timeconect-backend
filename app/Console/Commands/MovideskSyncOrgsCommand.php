@@ -193,7 +193,10 @@ class MovideskSyncOrgsCommand extends Command
                     $updates['project_id'] = $correctProjectId;
                 }
 
-                $affected = Timesheet::where('ticket', $mt->ticket_id)
+                // Iterar e salvar um-a-um para que o TimesheetObserver registre o log
+                // de mudança (mass update via ->update() não dispara model events).
+                $affected = 0;
+                Timesheet::where('ticket', $mt->ticket_id)
                     ->where('origin', 'webhook')
                     ->where(function ($q) use ($correctCustomerId, $correctProjectId) {
                         $q->where('customer_id', '!=', $correctCustomerId);
@@ -201,7 +204,15 @@ class MovideskSyncOrgsCommand extends Command
                             $q->orWhere('project_id', '!=', $correctProjectId);
                         }
                     })
-                    ->update($updates);
+                    ->each(function (Timesheet $ts) use ($updates, &$affected) {
+                        foreach ($updates as $field => $value) {
+                            $ts->$field = $value;
+                        }
+                        $ts->_logSource = 'movidesk_sync';
+                        if ($ts->save()) {
+                            $affected++;
+                        }
+                    });
 
                 if ($affected > 0) {
                     $relinkCount += $affected;

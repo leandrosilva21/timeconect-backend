@@ -53,6 +53,7 @@ class Timesheet extends Model
         'reviewed_at',
         'attachment_path',
         'attachment_original_name',
+        'manual_project_edit',
     ];
 
     /**

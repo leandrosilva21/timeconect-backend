@@ -195,9 +195,12 @@ class MovideskSyncOrgsCommand extends Command
 
                 // Iterar e salvar um-a-um para que o TimesheetObserver registre o log
                 // de mudança (mass update via ->update() não dispara model events).
+                // Respeita manual_project_edit: apontamentos com edição manual de
+                // customer_id/project_id NÃO são reprocessados.
                 $affected = 0;
                 Timesheet::where('ticket', $mt->ticket_id)
                     ->where('origin', 'webhook')
+                    ->where('manual_project_edit', false)
                     ->where(function ($q) use ($correctCustomerId, $correctProjectId) {
                         $q->where('customer_id', '!=', $correctCustomerId);
                         if ($correctProjectId) {

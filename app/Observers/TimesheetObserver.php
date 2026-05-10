@@ -5,6 +5,7 @@ namespace App\Observers;
 use App\Models\Timesheet;
 use App\Models\TimesheetLog;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class TimesheetObserver
 {
@@ -16,6 +17,11 @@ class TimesheetObserver
         'updated_at',
         'attachment_path',
     ];
+
+    /**
+     * Campos cujas edições manuais devem proteger o apontamento contra reprocess do Movidesk.
+     */
+    private const PROTECTED_ON_MANUAL_EDIT = ['customer_id', 'project_id'];
 
     public function updated(Timesheet $timesheet): void
     {
@@ -29,23 +35,35 @@ class TimesheetObserver
             return;
         }
 
-        $this->createLog($timesheet, 'updated', $changes);
+        $source = $this->detectSource($timesheet);
+        $this->createLog($timesheet, 'updated', $changes, $source);
+
+        // Edição manual de customer_id ou project_id em apontamento vindo do Movidesk:
+        // marca manual_project_edit = true para o reprocess automático respeitar a escolha.
+        if ($source === 'manual' && !$timesheet->manual_project_edit) {
+            $touched = array_intersect(self::PROTECTED_ON_MANUAL_EDIT, array_keys($changes));
+            if (!empty($touched)) {
+                // Update direto via DB::table para não disparar o observer recursivamente
+                DB::table('timesheets')->where('id', $timesheet->id)->update([
+                    'manual_project_edit' => true,
+                    'updated_at'          => now(),
+                ]);
+            }
+        }
     }
 
     public function deleted(Timesheet $timesheet): void
     {
-        // Para soft-delete, $timesheet->deleted_at acabou de ser setado.
-        // Para hard-delete (não acontece em timesheets, mas defensivo), changes inclui snapshot.
         $this->createLog($timesheet, 'deleted', [
             'deleted_at' => ['old' => null, 'new' => optional($timesheet->deleted_at)->toIso8601String() ?? now()->toIso8601String()],
-        ]);
+        ], $this->detectSource($timesheet));
     }
 
     public function restored(Timesheet $timesheet): void
     {
         $this->createLog($timesheet, 'restored', [
             'deleted_at' => ['old' => optional($timesheet->getOriginal('deleted_at'))->toString() ?? 'unknown', 'new' => null],
-        ]);
+        ], $this->detectSource($timesheet));
     }
 
     private function buildDiff(Timesheet $timesheet): array
@@ -76,12 +94,12 @@ class TimesheetObserver
         return $value;
     }
 
-    private function createLog(Timesheet $timesheet, string $action, array $changes): void
+    private function createLog(Timesheet $timesheet, string $action, array $changes, ?string $source = null): void
     {
         TimesheetLog::create([
             'timesheet_id' => $timesheet->id,
             'changed_by'   => Auth::id(),
-            'source'       => $this->detectSource($timesheet),
+            'source'       => $source ?? $this->detectSource($timesheet),
             'action'       => $action,
             'changes'      => $changes,
         ]);

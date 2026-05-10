@@ -27,10 +27,12 @@ class TimesheetLogController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        // Sem select restritivo no timesheet — accessors em $appends (status_display,
+        // effort_hours, attachment_url) precisam de status, effort_minutes, attachment_path.
         $q = TimesheetLog::query()
             ->with([
                 'changedBy:id,name',
-                'timesheet' => fn ($q) => $q->withTrashed()->select('id', 'date', 'user_id', 'project_id', 'customer_id'),
+                'timesheet' => fn ($q) => $q->withTrashed(),
                 'timesheet.user:id,name',
                 'timesheet.project:id,code,name',
                 'timesheet.customer:id,name',

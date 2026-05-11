@@ -478,12 +478,21 @@ class MovideskService
         if ($email) {
             $user = User::where('email', $email)->where('enabled', true)->first();
             if ($user) return $user->id;
-            Log::warning('⚠️ [MOVIDESK] Usuário não encontrado ou inativo — usando usuário padrão', ['email' => $email]);
+            Log::info('⏭️ [MOVIDESK] Apontamento descartado — agente não é consultor do Minutor', [
+                'email'     => $email,
+                'action_id' => $action['id'] ?? null,
+            ]);
         } else {
-            Log::warning('⚠️ [MOVIDESK] Email ausente na ação — usando usuário padrão', ['action_id' => $action['id'] ?? null]);
+            Log::warning('⚠️ [MOVIDESK] Apontamento descartado — email ausente na ação', [
+                'action_id' => $action['id'] ?? null,
+            ]);
         }
 
-        return $this->getDefaultUserId();
+        // Retorna null = caller (processAppointment) descarta o apontamento.
+        // Antes caía em getDefaultUserId() que atribuía a um usuário padrão —
+        // poluía estatísticas dos consultores quando agentes externos (ex:
+        // Promax) faziam ações no mesmo ticket.
+        return null;
     }
 
     private function getDefaultUserId(): ?int

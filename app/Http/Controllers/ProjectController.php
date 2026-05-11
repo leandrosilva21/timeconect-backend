@@ -554,25 +554,32 @@ class ProjectController extends Controller
                     $initialConsumed = (float)($project->initial_hours_consumed ?? 0);
                     $totalAvailable = $project->getTotalAvailableHours();
 
-                    // Somar horas vendidas dos filhos Fechado (comprometidas no cadastro)
-                    $closedChildrenHours = 0.0;
+                    // Filhos comprometem horas do banco do pai conforme a regra do tipo:
+                    //  - Fechado:  compromete sold_hours + aportes do filho no ato da criação
+                    //  - BH Fixo:  compromete só o efetivamente apontado pelo filho
+                    //              (sold_hours do filho só serve como limite interno dele)
+                    //  - BH Mensal / On Demand: não podem ser filhos (bloqueado em attach)
+                    $childrenConsumed = 0.0;
                     if ($project->relationLoaded('childProjects')) {
                         foreach ($project->childProjects as $child) {
                             if ($child->isAusterFrozen()) continue;
                             if (!$child->relationLoaded('contractType') || !$child->contractType) continue;
-                            $childContractName = strtolower(trim($child->contractType->name));
-                            if ($childContractName === 'fechado') {
-                                // Fechado: compromete o total vendido
-                                $closedChildrenHours += (float) ($child->sold_hours ?? 0);
-                            } elseif ($childContractName === 'on demand') {
-                                // On Demand filho: consome conforme apontamentos
-                                $closedChildrenHours += ($child->total_logged_minutes ?? 0) / 60;
+                            $childCode = (string) ($child->contractType->code ?? '');
+                            $childName = strtolower(trim($child->contractType->name));
+                            $isClosed   = $childCode === 'closed'      || $childName === 'fechado';
+                            $isBhFixo   = $childCode === 'fixed_hours' || $childName === 'banco de horas fixo';
+                            if ($isClosed) {
+                                $childrenConsumed += (float) $child->getTotalAvailableHours();
+                            } elseif ($isBhFixo) {
+                                $childLogged   = ($child->total_logged_minutes ?? 0) / 60;
+                                $childInitial  = (float) ($child->initial_hours_consumed ?? 0);
+                                $childrenConsumed += $childLogged + $childInitial;
                             }
                         }
                     }
 
-                    $project->consumed_hours = round($consumed + $initialConsumed + $closedChildrenHours, 2);
-                    $project->general_hours_balance = round($totalAvailable - $consumed - $initialConsumed - $closedChildrenHours, 2);
+                    $project->consumed_hours = round($consumed + $initialConsumed + $childrenConsumed, 2);
+                    $project->general_hours_balance = round($totalAvailable - $consumed - $initialConsumed - $childrenConsumed, 2);
                 }
                 $project->balance_percentage = $totalAvailable > 0 ? round(($project->consumed_hours / $totalAvailable) * 100, 2) : 0;
                 $project->total_available_hours = round($totalAvailable, 2);
@@ -1898,29 +1905,12 @@ class ProjectController extends Controller
 
         $parent = Project::findOrFail($child->parent_project_id);
 
-        // Horas consumidas pelo filho: soma de effort_minutes de timesheets não rejeitados
-        $consumedMinutes = \App\Models\Timesheet::where('project_id', $child->id)
-            ->whereNotIn('status', ['rejected'])
-            ->sum('effort_minutes');
-        $consumedHours = round(((int) $consumedMinutes) / 60, 2);
-
-        // Regra por tipo de contrato:
-        //  - Fechado (closed): pai recupera o sold_hours total do filho;
-        //                      filho fica com sold_hours = consumido
-        //  - Demais (banco de horas etc): pai recupera só o consumido;
-        //                                  filho mantém o sold_hours atual
-        $contractCode = $child->contractType?->code ?? '';
-        $isClosed     = $contractCode === 'closed';
-        $aporte       = $isClosed ? (float) $child->sold_hours : $consumedHours;
-        $newChildSold = $isClosed ? $consumedHours : (float) $child->sold_hours;
-
         try {
-            DB::transaction(function () use ($parent, $child, $aporte, $newChildSold, $providedCode) {
-                $parent->sold_hours = (float) ($parent->sold_hours ?? 0) + $aporte;
-                $parent->save();
-
+            DB::transaction(function () use ($child, $providedCode) {
+                // sold_hours do pai e do filho NÃO são alterados — desvínculo é apenas
+                // estrutural. O consumo do filho deixa de contar no consumed_hours do pai
+                // (cálculo dinâmico em index gestao mode).
                 $child->parent_project_id = null;
-                $child->sold_hours = $newChildSold;
                 $child->code = $providedCode !== ''
                     ? $providedCode
                     : $this->generateNextProjectCode($child->customer_id);
@@ -1940,13 +1930,10 @@ class ProjectController extends Controller
                 'sold_hours' => (float) $parent->sold_hours,
             ],
             'child' => [
-                'id'              => $child->id,
-                'name'            => $child->name,
-                'code'            => $child->code,
-                'sold_hours'      => (float) $child->sold_hours,
-                'aporte_devolvido'=> $aporte,
-                'horas_consumidas'=> $consumedHours,
-                'is_closed'       => $isClosed,
+                'id'         => $child->id,
+                'name'       => $child->name,
+                'code'       => $child->code,
+                'sold_hours' => (float) $child->sold_hours,
             ],
         ]);
     }
@@ -1985,22 +1972,20 @@ class ProjectController extends Controller
             return response()->json(['error' => 'Pai escolhido já é filho de outro projeto'], 422);
         }
 
-        // Horas consumidas pelo filho
-        $consumedMinutes = \App\Models\Timesheet::where('project_id', $child->id)
-            ->whereNotIn('status', ['rejected'])
-            ->sum('effort_minutes');
-        $consumedHours = round(((int) $consumedMinutes) / 60, 2);
-
-        $contractCode = $child->contractType?->code ?? '';
-        $isClosed     = $contractCode === 'closed';
-        $entrega      = $isClosed ? (float) $child->sold_hours : $consumedHours;
+        $childCode = (string) ($child->contractType?->code ?? '');
+        $childName = strtolower(trim((string) ($child->contractType?->name ?? '')));
+        $isMonthly  = $childCode === 'monthly_hours' || $childName === 'banco de horas mensal';
+        $isOnDemand = $childCode === 'on_demand'     || $childName === 'on demand';
+        if ($isMonthly || $isOnDemand) {
+            return response()->json([
+                'error' => 'Projetos do tipo Banco de Horas Mensal e On Demand não podem ser filhos de outro projeto',
+            ], 422);
+        }
 
         try {
-            DB::transaction(function () use ($parent, $child, $entrega) {
-                // Pai entrega horas pro filho
-                $parent->sold_hours = (float) ($parent->sold_hours ?? 0) - $entrega;
-                $parent->save();
-
+            DB::transaction(function () use ($parent, $child) {
+                // sold_hours do pai NÃO é alterado por vínculo — o consumo do filho
+                // passa a contar dinamicamente no consumed_hours do pai (ver index gestao).
                 $child->parent_project_id = $parent->id;
                 $child->save();
             });
@@ -2022,9 +2007,6 @@ class ProjectController extends Controller
                 'name'              => $child->name,
                 'parent_project_id' => $child->parent_project_id,
                 'sold_hours'        => (float) $child->sold_hours,
-                'aporte_entregue'   => $entrega,
-                'horas_consumidas'  => $consumedHours,
-                'is_closed'         => $isClosed,
             ],
         ]);
     }

@@ -717,14 +717,15 @@ class Project extends Model
                         + $childInitialBalance;
                     $balance -= $childBalance;
                 } else {
-                    // Outros tipos de Banco de Horas
+                    // Outros tipos de Banco de Horas (inclui Banco de Horas Fixo)
                     $childQuery = $childProject->timesheets()->where('status', '!=', 'rejected');
                     if ($excludeTimesheetId) {
                         $childQuery->where('id', '!=', $excludeTimesheetId);
                     }
                     $childLoggedHours = round(($childQuery->sum('effort_minutes') ?? 0) / 60, 2);
+                    $childInitialConsumed = (float) ($childProject->initial_hours_consumed ?? 0);
                     $childCoordinationHours = $childProject->calculateCoordinationHours($childLoggedHours);
-                    $balance -= ($childLoggedHours + $childCoordinationHours);
+                    $balance -= ($childLoggedHours + $childInitialConsumed + $childCoordinationHours);
                 }
             }
         }
@@ -821,7 +822,7 @@ class Project extends Model
                     $childBalance = ($childSoldHours + $childContributionHours) - $childLoggedHours + $childInitialBalance;
                     $balance -= $childBalance;
                 } else {
-                    // Para outros tipos: subtrair normalmente pelas horas apontadas (excluindo mês atual e rejeitados)
+                    // Para outros tipos (inclui Banco de Horas Fixo): subtrair apontadas + initial_hours_consumed
                     $childQuery = $childProject->timesheets()
                         ->where('status', '!=', 'rejected')
                         ->where('date', '<=', $endOfLastMonth->format('Y-m-d'));
@@ -832,7 +833,8 @@ class Project extends Model
 
                     $childLoggedMinutes = $childQuery->sum('effort_minutes') ?? 0;
                     $childLoggedHours = round($childLoggedMinutes / 60, 2);
-                    $balance -= $childLoggedHours;
+                    $childInitialConsumed = (float) ($childProject->initial_hours_consumed ?? 0);
+                    $balance -= ($childLoggedHours + $childInitialConsumed);
                 }
             }
         }

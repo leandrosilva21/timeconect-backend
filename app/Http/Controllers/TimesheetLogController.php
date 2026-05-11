@@ -28,7 +28,7 @@ class TimesheetLogController extends Controller
      * histórico individual do apontamento (/timesheets/{id}/logs).
      */
     private const APPROVAL_ONLY_FIELDS = [
-        'status', 'reviewed_at', 'reviewed_by_id', 'rejection_reason',
+        'status', 'reviewed_at', 'reviewed_by', 'rejection_reason',
     ];
 
     /**

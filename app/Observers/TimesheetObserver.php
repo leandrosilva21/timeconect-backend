@@ -117,7 +117,7 @@ class TimesheetObserver
             },
             'customer_id'    => fn ($id) => $id ? optional(Customer::find($id))->name : null,
             'user_id'        => fn ($id) => $id ? optional(User::find($id))->name    : null,
-            'reviewed_by_id' => fn ($id) => $id ? optional(User::find($id))->name    : null,
+            'reviewed_by'    => fn ($id) => $id ? optional(User::find($id))->name    : null,
             default          => null,
         };
         if (!$resolver) return null;

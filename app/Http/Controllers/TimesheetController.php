@@ -2591,24 +2591,22 @@ class TimesheetController extends Controller
                 // Cache driver sem suporte a keys() — cada entrada expira em 1h.
             }
 
+            // Sync completo processa 100+ tickets e leva minutos — não cabe num
+            // request HTTP (nginx tem proxy_read_timeout=120s). Despacha pra
+            // fila e retorna imediatamente; o worker (minutor-queue) executa
+            // em background e o usuário vê o resultado ao recarregar a tela.
             try {
-                \Illuminate\Support\Facades\Artisan::call('movidesk:sync');
-                $output = \Illuminate\Support\Facades\Artisan::output();
-                // Extrai contagens do output do command pra retornar pro frontend
-                preg_match('/Timesheets criados:\s*(\d+)/', $output, $createdMatch);
-                $created = (int) ($createdMatch[1] ?? 0);
-                preg_match('/(\d+)\s+ticket\(s\)\s+encontrado/', $output, $ticketsMatch);
-                $tickets = (int) ($ticketsMatch[1] ?? 0);
-
+                \Illuminate\Support\Facades\Artisan::queue('movidesk:sync');
                 return response()->json([
-                    'message' => "Reprocessamento concluído: {$tickets} ticket(s) verificado(s), {$created} apontamento(s) importado(s).",
-                    'updated' => $created,
+                    'message' => 'Reprocessamento iniciado em segundo plano. Os apontamentos serão atualizados em alguns minutos — recarregue a tela em ~3 min.',
+                    'updated' => 0,
                     'skipped' => 0,
                     'errors'  => 0,
+                    'queued'  => true,
                 ]);
             } catch (\Throwable $e) {
-                Log::error('[Reprocess Movidesk] Falha ao rodar sync', ['error' => $e->getMessage()]);
-                return response()->json(['message' => 'Erro ao executar sync. Verifique os logs.', 'updated' => 0, 'skipped' => 0, 'errors' => 1], 500);
+                Log::error('[Reprocess Movidesk] Falha ao enfileirar sync', ['error' => $e->getMessage()]);
+                return response()->json(['message' => 'Erro ao iniciar sync. Verifique os logs.', 'updated' => 0, 'skipped' => 0, 'errors' => 1], 500);
             }
         }
 

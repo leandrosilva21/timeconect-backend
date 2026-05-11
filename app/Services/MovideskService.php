@@ -215,12 +215,24 @@ class MovideskService
             }
         }
 
-        // Atualizar horários do Movidesk se divergirem (sempre — não bloqueado pela trava manual).
-        $newStartTime = $this->extractTime($targetAppointment, 'periodStart');
-        $newEndTime   = $this->extractTime($targetAppointment, 'periodEnd');
+        // Atualizar data/horários/descrição do Movidesk se divergirem
+        // (sempre — não bloqueado pela trava manual de projeto/cliente).
+        $newDate          = $this->extractDate($targetAppointment);
+        $newStartTime     = $this->extractTime($targetAppointment, 'periodStart');
+        $newEndTime       = $this->extractTime($targetAppointment, 'periodEnd');
         $newEffortHours   = $this->extractEffortHours($targetAppointment);
         $newEffortMinutes = $newEffortHours ? $this->calculateEffortMinutes($newEffortHours) : null;
+        $newObservation   = $this->buildObservation($ticket, $targetAction);
 
+        if ($newDate) {
+            $currentDate = $timesheet->date
+                ? (is_string($timesheet->date) ? $timesheet->date : $timesheet->date->format('Y-m-d'))
+                : null;
+            if ($currentDate !== $newDate) {
+                $changes['date'] = ['from' => $currentDate, 'to' => $newDate];
+                $timesheet->date = $newDate;
+            }
+        }
         if ($newStartTime) {
             $currentStart = $timesheet->start_time
                 ? (is_string($timesheet->start_time) ? substr($timesheet->start_time, 0, 5) : $timesheet->start_time->format('H:i'))
@@ -242,6 +254,10 @@ class MovideskService
         if ($newEffortMinutes !== null && (int) $newEffortMinutes !== (int) $timesheet->effort_minutes) {
             $changes['effort_minutes'] = ['from' => $timesheet->effort_minutes, 'to' => (int) $newEffortMinutes];
             $timesheet->effort_minutes = (int) $newEffortMinutes;
+        }
+        if ($newObservation !== null && $newObservation !== $timesheet->observation) {
+            $changes['observation'] = ['from' => $timesheet->observation, 'to' => $newObservation];
+            $timesheet->observation = $newObservation;
         }
 
         if (!empty($changes)) {
@@ -322,12 +338,22 @@ class MovideskService
             return false;
         }
 
-        // Deduplicação por movidesk_appointment_id
-        if ($appointmentId && Timesheet::where('movidesk_appointment_id', $appointmentId)->exists()) {
-            Log::info('⏭️ [MOVIDESK] Apontamento já importado', [
-                'movidesk_appointment_id' => $appointmentId,
-            ]);
-            return false;
+        // Apontamento já existe → reprocess pra refletir edições no Movidesk
+        // (data, descrição, horários, effort). Trava manual de projeto/cliente
+        // permanece ativa via $timesheet->manual_project_edit.
+        if ($appointmentId) {
+            $existing = Timesheet::where('movidesk_appointment_id', $appointmentId)->first();
+            if ($existing) {
+                $result = $this->reprocessTimesheet($existing);
+                if ($result['updated'] ?? false) {
+                    Log::info('🔄 [MOVIDESK] Apontamento atualizado via sync', [
+                        'timesheet_id'            => $existing->id,
+                        'movidesk_appointment_id' => $appointmentId,
+                        'changes'                 => array_keys($result['changes'] ?? []),
+                    ]);
+                }
+                return false; // não conta como criado, mas foi atualizado
+            }
         }
 
         try {

@@ -316,7 +316,14 @@ class MovideskService
                     'movidesk_appointment_id' => $orphan->movidesk_appointment_id,
                 ]);
                 $orphan->_logSource = 'movidesk_sync';
+                $orphanUserId = $orphan->user_id;
+                $orphanDate   = $orphan->date instanceof \Carbon\Carbon
+                    ? $orphan->date->format('Y-m-d')
+                    : (string) $orphan->date;
                 $orphan->delete(); // SoftDeletes — dispara observer pra gerar log
+                // Após soft-delete, re-avaliar timesheets CONFLICTED do mesmo
+                // user/data: os que conflitavam só com esse órfão voltam a pending.
+                Timesheet::resolveStaleConflicts($orphanUserId, $orphanDate);
             }
         }
 

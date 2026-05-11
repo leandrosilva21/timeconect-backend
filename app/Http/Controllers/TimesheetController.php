@@ -2567,24 +2567,17 @@ class TimesheetController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        $ids              = $request->input('ids', []);
-        $defaultProjectId = \App\Models\SystemSetting::get('movidesk_default_project_id');
-
+        $ids             = $request->input('ids', []);
         $movideskOrigins = ['movidesk', 'webhook'];
 
-        if (!empty($ids)) {
-            $timesheets = Timesheet::whereIn('id', array_map('intval', $ids))
-                ->whereIn('origin', $movideskOrigins)
-                ->whereNotNull('ticket')
-                ->whereNotNull('movidesk_appointment_id')
-                ->get();
-        } else {
-            // Sem IDs: prioriza apontamentos que caíram no PROJETO PADRÃO
-            // (esses são os candidatos a re-resolver depois de ajustes feitos
-            // no Movidesk, como amarrar pessoa→organização ou dept→empresa).
-            // Invalida o cache de departamento Movidesk antes do reprocess
-            // para respeitar mudanças recentes feitas no Movidesk.
+        // Sem IDs: roda o MESMO fluxo do cron (movidesk:sync) — fetch tickets
+        // atualizados desde o último sync, importa novos, atualiza existentes
+        // e detecta órfãos. Antes o botão só re-resolvia timesheets do PROJETO
+        // PADRÃO (limit 50) — divergia do automático e deixava de pegar tudo.
+        if (empty($ids)) {
             try {
+                // Invalida cache de departamento Movidesk antes do sync — respeita
+                // mudanças recentes (pessoa→organização, dept→empresa).
                 $store = \Illuminate\Support\Facades\Cache::getStore();
                 if (method_exists($store, 'getRedis')) {
                     $redis = $store->getRedis();
@@ -2594,20 +2587,37 @@ class TimesheetController extends Controller
                     }
                 }
             } catch (\Throwable $e) {
-                // Cache driver sem suporte a keys() — sem invalidação manual.
-                // Cada entrada expira em 1h naturalmente.
+                // Cache driver sem suporte a keys() — cada entrada expira em 1h.
             }
 
-            $query = Timesheet::whereIn('origin', $movideskOrigins)
-                ->whereNotNull('ticket')
-                ->whereNotNull('movidesk_appointment_id');
+            try {
+                \Illuminate\Support\Facades\Artisan::call('movidesk:sync');
+                $output = \Illuminate\Support\Facades\Artisan::output();
+                // Extrai contagens do output do command pra retornar pro frontend
+                preg_match('/Timesheets criados:\s*(\d+)/', $output, $createdMatch);
+                $created = (int) ($createdMatch[1] ?? 0);
+                preg_match('/(\d+)\s+ticket\(s\)\s+encontrado/', $output, $ticketsMatch);
+                $tickets = (int) ($ticketsMatch[1] ?? 0);
 
-            if ($defaultProjectId) {
-                $query->where('project_id', (int) $defaultProjectId);
+                return response()->json([
+                    'message' => "Reprocessamento concluído: {$tickets} ticket(s) verificado(s), {$created} apontamento(s) importado(s).",
+                    'updated' => $created,
+                    'skipped' => 0,
+                    'errors'  => 0,
+                ]);
+            } catch (\Throwable $e) {
+                Log::error('[Reprocess Movidesk] Falha ao rodar sync', ['error' => $e->getMessage()]);
+                return response()->json(['message' => 'Erro ao executar sync. Verifique os logs.', 'updated' => 0, 'skipped' => 0, 'errors' => 1], 500);
             }
-
-            $timesheets = $query->orderByDesc('id')->limit(50)->get();
         }
+
+        // Com IDs: reprocess individual (caso o usuário queira forçar apenas
+        // os apontamentos selecionados via UI).
+        $timesheets = Timesheet::whereIn('id', array_map('intval', $ids))
+            ->whereIn('origin', $movideskOrigins)
+            ->whereNotNull('ticket')
+            ->whereNotNull('movidesk_appointment_id')
+            ->get();
 
         if ($timesheets->isEmpty()) {
             return response()->json(['message' => 'Nenhum apontamento para reprocessar.', 'updated' => 0, 'skipped' => 0, 'errors' => 0]);

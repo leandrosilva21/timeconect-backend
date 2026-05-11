@@ -17,6 +17,13 @@ class Timesheet extends Model
     use HasFactory, SoftDeletes;
 
     /**
+     * Source explícito pra o TimesheetObserver registrar no log de auditoria.
+     * Propriedade pública (não atributo Eloquent) — não vai pro UPDATE SQL.
+     * Setar antes do save() quando origem != contexto padrão (ex: sync Movidesk).
+     */
+    public ?string $_logSource = null;
+
+    /**
      * Status constants
      */
     public const STATUS_PENDING = 'pending';

@@ -74,24 +74,21 @@ class TimesheetLogController extends Controller
             $q->whereDate('created_at', '<=', $request->date('end_date'));
         }
 
+        // Filtro pré-paginação (Postgres JSONB): exclui entradas 'updated' cujos
+        // únicos campos mudados são de aprovação. Filtrar pós-paginação fazia
+        // a página vir vazia quando os 50 mais recentes eram todos aprovação.
+        $q->where(function ($w) {
+            $w->where('action', '!=', 'updated')
+              ->orWhereRaw(
+                  "EXISTS (SELECT 1 FROM jsonb_object_keys(changes::jsonb) k WHERE k NOT IN (?, ?, ?, ?))",
+                  self::APPROVAL_ONLY_FIELDS
+              );
+        });
+
         $perPage = min((int) $request->input('per_page', 50), 200);
 
-        $paginated = $q->orderBy('created_at', 'desc')->paginate($perPage);
-
-        // Filtra entradas que são SÓ aprovação (status/reviewed_at/etc).
-        // Importante: 'updated' com mudanças mistas (status + outros campos)
-        // continua aparecendo — só some quando TODOS os campos são de aprovação.
-        $filtered = $paginated->getCollection()->filter(function ($log) {
-            if ($log->action !== 'updated') return true;
-            $changes = $log->changes ?? [];
-            if (empty($changes)) return true;
-            $changedFields = array_keys($changes);
-            $nonApprovalFields = array_diff($changedFields, self::APPROVAL_ONLY_FIELDS);
-            return !empty($nonApprovalFields); // mantém só se há campos não-aprovação
-        })->values();
-
-        $paginated->setCollection($filtered);
-
-        return response()->json($paginated);
+        return response()->json(
+            $q->orderBy('created_at', 'desc')->paginate($perPage)
+        );
     }
 }

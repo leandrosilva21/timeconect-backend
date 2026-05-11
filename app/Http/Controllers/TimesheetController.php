@@ -1376,8 +1376,14 @@ class TimesheetController extends Controller
                 }
             }
 
-            // Resetar status para pendente se houve alterações após rejeição ou conflito
+            // Resetar status para pendente quando o usuário corrige um apontamento
+            // que foi rejeitado, conflitado ou marcado para ajuste. Edição = correção.
             if ($timesheet->status === Timesheet::STATUS_REJECTED) {
+                $validatedData['status'] = Timesheet::STATUS_PENDING;
+                $validatedData['rejection_reason'] = null;
+                $validatedData['reviewed_by'] = null;
+                $validatedData['reviewed_at'] = null;
+            } elseif ($timesheet->status === Timesheet::STATUS_ADJUSTMENT_REQUESTED) {
                 $validatedData['status'] = Timesheet::STATUS_PENDING;
                 $validatedData['rejection_reason'] = null;
                 $validatedData['reviewed_by'] = null;
@@ -1585,7 +1591,16 @@ class TimesheetController extends Controller
             ], 422);
         }
 
+        // Captura user_id/date ANTES do delete pra resolver conflitos órfãos depois.
+        // Se o apontamento deletado estava em conflito com outro(s), o(s) outro(s)
+        // devem voltar a 'pending' agora que o conflito sumiu.
+        $tsUserId = $timesheet->user_id;
+        $tsDate   = $timesheet->date instanceof \Carbon\Carbon
+            ? $timesheet->date->format('Y-m-d')
+            : (string) $timesheet->date;
+
         $timesheet->delete();
+        $this->resolveStaleConflicts($tsUserId, $tsDate);
         $this->invalidateListCache('timesheets');
 
         return response()->json([

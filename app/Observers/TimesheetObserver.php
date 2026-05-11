@@ -20,8 +20,13 @@ class TimesheetObserver
 
     /**
      * Campos cujas edições manuais devem proteger o apontamento contra reprocess do Movidesk.
+     * Cobre todos os campos de conteúdo — alteração via UI trava sobrescrita pelo sync.
      */
-    private const PROTECTED_ON_MANUAL_EDIT = ['customer_id', 'project_id'];
+    private const PROTECTED_ON_MANUAL_EDIT = [
+        'customer_id', 'project_id',
+        'date', 'start_time', 'end_time',
+        'effort_minutes', 'observation',
+    ];
 
     public function updated(Timesheet $timesheet): void
     {

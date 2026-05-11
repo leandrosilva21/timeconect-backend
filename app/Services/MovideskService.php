@@ -197,8 +197,9 @@ class MovideskService
             $timesheet->user_id = $resolvedUser->id;
         }
 
-        // Trava manual: se o usuário editou projeto/cliente via UI,
-        // o reprocess NÃO sobrescreve mais esses campos.
+        // Trava manual: se o usuário editou qualquer campo de conteúdo via UI
+        // (cliente/projeto/data/horários/effort/observação), o reprocess NÃO
+        // sobrescreve mais. Edições do Minutor têm prioridade sobre o sync.
         if (!$timesheet->manual_project_edit) {
             // Corrige cliente
             $newCustomerId = $this->extractCustomerId($ticket);
@@ -213,51 +214,50 @@ class MovideskService
                 $changes['project_id'] = ['from' => $timesheet->project_id, 'to' => $newProjectId];
                 $timesheet->project_id = $newProjectId;
             }
-        }
 
-        // Atualizar data/horários/descrição do Movidesk se divergirem
-        // (sempre — não bloqueado pela trava manual de projeto/cliente).
-        $newDate          = $this->extractDate($targetAppointment);
-        $newStartTime     = $this->extractTime($targetAppointment, 'periodStart');
-        $newEndTime       = $this->extractTime($targetAppointment, 'periodEnd');
-        $newEffortHours   = $this->extractEffortHours($targetAppointment);
-        $newEffortMinutes = $newEffortHours ? $this->calculateEffortMinutes($newEffortHours) : null;
-        $newObservation   = $this->buildObservation($ticket, $targetAction);
+            // Atualizar data/horários/descrição/effort do Movidesk se divergirem
+            $newDate          = $this->extractDate($targetAppointment);
+            $newStartTime     = $this->extractTime($targetAppointment, 'periodStart');
+            $newEndTime       = $this->extractTime($targetAppointment, 'periodEnd');
+            $newEffortHours   = $this->extractEffortHours($targetAppointment);
+            $newEffortMinutes = $newEffortHours ? $this->calculateEffortMinutes($newEffortHours) : null;
+            $newObservation   = $this->buildObservation($ticket, $targetAction);
 
-        if ($newDate) {
-            $currentDate = $timesheet->date
-                ? (is_string($timesheet->date) ? $timesheet->date : $timesheet->date->format('Y-m-d'))
-                : null;
-            if ($currentDate !== $newDate) {
-                $changes['date'] = ['from' => $currentDate, 'to' => $newDate];
-                $timesheet->date = $newDate;
+            if ($newDate) {
+                $currentDate = $timesheet->date
+                    ? (is_string($timesheet->date) ? $timesheet->date : $timesheet->date->format('Y-m-d'))
+                    : null;
+                if ($currentDate !== $newDate) {
+                    $changes['date'] = ['from' => $currentDate, 'to' => $newDate];
+                    $timesheet->date = $newDate;
+                }
             }
-        }
-        if ($newStartTime) {
-            $currentStart = $timesheet->start_time
-                ? (is_string($timesheet->start_time) ? substr($timesheet->start_time, 0, 5) : $timesheet->start_time->format('H:i'))
-                : null;
-            if ($currentStart !== $newStartTime) {
-                $changes['start_time'] = ['from' => $currentStart, 'to' => $newStartTime];
-                $timesheet->start_time = $newStartTime;
+            if ($newStartTime) {
+                $currentStart = $timesheet->start_time
+                    ? (is_string($timesheet->start_time) ? substr($timesheet->start_time, 0, 5) : $timesheet->start_time->format('H:i'))
+                    : null;
+                if ($currentStart !== $newStartTime) {
+                    $changes['start_time'] = ['from' => $currentStart, 'to' => $newStartTime];
+                    $timesheet->start_time = $newStartTime;
+                }
             }
-        }
-        if ($newEndTime) {
-            $currentEnd = $timesheet->end_time
-                ? (is_string($timesheet->end_time) ? substr($timesheet->end_time, 0, 5) : $timesheet->end_time->format('H:i'))
-                : null;
-            if ($currentEnd !== $newEndTime) {
-                $changes['end_time'] = ['from' => $currentEnd, 'to' => $newEndTime];
-                $timesheet->end_time = $newEndTime;
+            if ($newEndTime) {
+                $currentEnd = $timesheet->end_time
+                    ? (is_string($timesheet->end_time) ? substr($timesheet->end_time, 0, 5) : $timesheet->end_time->format('H:i'))
+                    : null;
+                if ($currentEnd !== $newEndTime) {
+                    $changes['end_time'] = ['from' => $currentEnd, 'to' => $newEndTime];
+                    $timesheet->end_time = $newEndTime;
+                }
             }
-        }
-        if ($newEffortMinutes !== null && (int) $newEffortMinutes !== (int) $timesheet->effort_minutes) {
-            $changes['effort_minutes'] = ['from' => $timesheet->effort_minutes, 'to' => (int) $newEffortMinutes];
-            $timesheet->effort_minutes = (int) $newEffortMinutes;
-        }
-        if ($newObservation !== null && $newObservation !== $timesheet->observation) {
-            $changes['observation'] = ['from' => $timesheet->observation, 'to' => $newObservation];
-            $timesheet->observation = $newObservation;
+            if ($newEffortMinutes !== null && (int) $newEffortMinutes !== (int) $timesheet->effort_minutes) {
+                $changes['effort_minutes'] = ['from' => $timesheet->effort_minutes, 'to' => (int) $newEffortMinutes];
+                $timesheet->effort_minutes = (int) $newEffortMinutes;
+            }
+            if ($newObservation !== null && $newObservation !== $timesheet->observation) {
+                $changes['observation'] = ['from' => $timesheet->observation, 'to' => $newObservation];
+                $timesheet->observation = $newObservation;
+            }
         }
 
         if (!empty($changes)) {

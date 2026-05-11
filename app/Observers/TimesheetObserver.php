@@ -2,8 +2,11 @@
 
 namespace App\Observers;
 
+use App\Models\Customer;
+use App\Models\Project;
 use App\Models\Timesheet;
 use App\Models\TimesheetLog;
+use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
@@ -83,12 +86,45 @@ class TimesheetObserver
             if ($oldValue == $newValue) {
                 continue;
             }
-            $diff[$field] = [
+            $entry = [
                 'old' => $this->normalize($oldValue),
                 'new' => $this->normalize($newValue),
             ];
+            // Resolve label humano pra campos FK (IDs).
+            // Grava no log na hora — preserva nome no momento da mudança
+            // (auditoria não muda se projeto for renomeado depois).
+            $labels = $this->resolveFkLabels($field, $oldValue, $newValue);
+            if ($labels !== null) {
+                $entry['old_label'] = $labels['old'];
+                $entry['new_label'] = $labels['new'];
+            }
+            $diff[$field] = $entry;
         }
         return $diff;
+    }
+
+    /**
+     * Para campos FK, busca os labels humanos (nome/código). Retorna
+     * ['old' => '...', 'new' => '...'] ou null se o campo não for FK.
+     */
+    private function resolveFkLabels(string $field, mixed $oldId, mixed $newId): ?array
+    {
+        $resolver = match ($field) {
+            'project_id' => function ($id) {
+                if (!$id) return null;
+                $p = Project::find($id);
+                return $p ? trim(($p->code ? $p->code . ' — ' : '') . $p->name) : null;
+            },
+            'customer_id'    => fn ($id) => $id ? optional(Customer::find($id))->name : null,
+            'user_id'        => fn ($id) => $id ? optional(User::find($id))->name    : null,
+            'reviewed_by_id' => fn ($id) => $id ? optional(User::find($id))->name    : null,
+            default          => null,
+        };
+        if (!$resolver) return null;
+        return [
+            'old' => $resolver($oldId),
+            'new' => $resolver($newId),
+        ];
     }
 
     private function normalize(mixed $value): mixed

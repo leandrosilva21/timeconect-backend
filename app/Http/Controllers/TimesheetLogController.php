@@ -22,8 +22,19 @@ class TimesheetLogController extends Controller
     }
 
     /**
+     * Campos cuja mudança é considerada "fluxo de aprovação" (não edição de
+     * conteúdo). Quando uma entrada de log SÓ mexe nesses campos, ela é
+     * filtrada da listagem geral (/timesheet-logs) — continua visível no
+     * histórico individual do apontamento (/timesheets/{id}/logs).
+     */
+    private const APPROVAL_ONLY_FIELDS = [
+        'status', 'reviewed_at', 'reviewed_by_id', 'rejection_reason',
+    ];
+
+    /**
      * GET /api/v1/timesheet-logs
      * Filtros: user_id, project_id, customer_id, source, action, start_date, end_date, search
+     * NÃO retorna entradas que são apenas fluxo de aprovação.
      */
     public function index(Request $request): JsonResponse
     {
@@ -65,8 +76,22 @@ class TimesheetLogController extends Controller
 
         $perPage = min((int) $request->input('per_page', 50), 200);
 
-        return response()->json(
-            $q->orderBy('created_at', 'desc')->paginate($perPage)
-        );
+        $paginated = $q->orderBy('created_at', 'desc')->paginate($perPage);
+
+        // Filtra entradas que são SÓ aprovação (status/reviewed_at/etc).
+        // Importante: 'updated' com mudanças mistas (status + outros campos)
+        // continua aparecendo — só some quando TODOS os campos são de aprovação.
+        $filtered = $paginated->getCollection()->filter(function ($log) {
+            if ($log->action !== 'updated') return true;
+            $changes = $log->changes ?? [];
+            if (empty($changes)) return true;
+            $changedFields = array_keys($changes);
+            $nonApprovalFields = array_diff($changedFields, self::APPROVAL_ONLY_FIELDS);
+            return !empty($nonApprovalFields); // mantém só se há campos não-aprovação
+        })->values();
+
+        $paginated->setCollection($filtered);
+
+        return response()->json($paginated);
     }
 }

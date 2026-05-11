@@ -261,7 +261,9 @@ class MovideskService
         }
 
         if (!empty($changes)) {
-            $timesheet->saveQuietly(); // sem disparar observers desnecessários
+            // Dispara observer pra gerar log de auditoria com source=movidesk_sync
+            $timesheet->_logSource = 'movidesk_sync';
+            $timesheet->save();
             return ['updated' => true, 'changes' => $changes];
         }
 
@@ -270,20 +272,51 @@ class MovideskService
 
     /**
      * Processa TODAS as ações do ticket (modo sync/cron).
+     * Além de criar/atualizar appointments, detecta os timesheets órfãos
+     * (existiam no DB mas o appointment correspondente sumiu do Movidesk)
+     * e faz soft-delete.
      * Retorna número de timesheets criados.
      */
     public function processTicket(array $ticketDetails): int
     {
         $this->saveTicketData($ticketDetails);
 
-        $actions = $ticketDetails['actions'] ?? [];
-        $created = 0;
+        $ticketId = $ticketDetails['id'] ?? null;
+        $actions  = $ticketDetails['actions'] ?? [];
+        $created  = 0;
+
+        // Coleta IDs que vieram do Movidesk neste sync — usados depois pra
+        // detectar órfãos no DB.
+        $movideskAppointmentIds = [];
 
         foreach ($actions as $action) {
             foreach ($action['timeAppointments'] ?? [] as $appointment) {
+                if (!empty($appointment['id'])) {
+                    $movideskAppointmentIds[] = $appointment['id'];
+                }
                 if ($this->processAppointment($ticketDetails, $action, $appointment)) {
                     $created++;
                 }
+            }
+        }
+
+        // Apontamentos órfãos: estão no DB com este ticket, mas sumiram do
+        // Movidesk (deletado ou recriado com novo id após edição). Soft-delete
+        // pra não ficar fantasma em dashboards/fechamentos.
+        if ($ticketId) {
+            $orphans = Timesheet::where('ticket', $ticketId)
+                ->whereNotNull('movidesk_appointment_id')
+                ->when(!empty($movideskAppointmentIds), fn($q) => $q->whereNotIn('movidesk_appointment_id', $movideskAppointmentIds))
+                ->get();
+
+            foreach ($orphans as $orphan) {
+                Log::info('🗑️ [MOVIDESK SYNC] Apontamento órfão soft-deletado', [
+                    'timesheet_id'            => $orphan->id,
+                    'ticket'                  => $ticketId,
+                    'movidesk_appointment_id' => $orphan->movidesk_appointment_id,
+                ]);
+                $orphan->_logSource = 'movidesk_sync';
+                $orphan->delete(); // SoftDeletes — dispara observer pra gerar log
             }
         }
 

@@ -440,6 +440,7 @@ class TimesheetController extends Controller
 
                             $arr['conflicting_timesheets'] = Timesheet::with(['customer', 'project.customer'])
                                 ->where('user_id', $ts->user_id)
+                                ->where('customer_id', $ts->customer_id) // só conflita no MESMO cliente
                                 ->whereDate('date', $dateStr)
                                 ->where('id', '!=', $ts->id)
                                 ->whereNotIn('status', [Timesheet::STATUS_REJECTED])

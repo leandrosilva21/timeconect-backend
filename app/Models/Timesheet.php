@@ -3,12 +3,14 @@
 namespace App\Models;
 
 use App\Observers\TimesheetObserver;
+use App\Services\TimesheetN8nNotifier;
 use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
 #[ObservedBy([TimesheetObserver::class])]
@@ -383,7 +385,16 @@ class Timesheet extends Model
         $this->reviewed_at = now();
         $this->rejection_reason = $reason;
 
-        return $this->save();
+        $saved = $this->save();
+
+        if ($saved) {
+            $timesheet = $this;
+            DB::afterCommit(function () use ($timesheet, $reason) {
+                app(TimesheetN8nNotifier::class)->notify($timesheet, 'REJEITADO', $reason);
+            });
+        }
+
+        return $saved;
     }
 
     /**
@@ -432,7 +443,16 @@ class Timesheet extends Model
         $this->reviewed_at = now();
         $this->rejection_reason = $reason;
 
-        return $this->save();
+        $saved = $this->save();
+
+        if ($saved) {
+            $timesheet = $this;
+            DB::afterCommit(function () use ($timesheet, $reason) {
+                app(TimesheetN8nNotifier::class)->notify($timesheet, 'AJUSTE', $reason);
+            });
+        }
+
+        return $saved;
     }
 
     /**

@@ -4814,26 +4814,46 @@ class BankHoursFixedController extends Controller
             return response()->json(['success' => true, 'data' => []]);
         }
 
-        $ts = Timesheet::with(['user', 'project'])
+        $ts = Timesheet::with(['user', 'project.contractType', 'project.customer'])
             ->whereIn('project_id', $projectIds)
             ->where('status', '!=', 'rejected');
         if ($dateFrom) $ts->where('date', '>=', $dateFrom);
         if ($dateTo)   $ts->where('date', '<=', $dateTo);
         $ts = $ts->orderByDesc('date')->orderByDesc('id')->limit(500)->get();
 
+        $fmtTime = fn ($v) => $v instanceof \DateTimeInterface ? $v->format('H:i') : (is_string($v) && strlen($v) >= 5 ? substr($v, -8, 5) : null);
+        $parseRequester = function ($req) {
+            if (is_array($req) && isset($req['name'])) return $req['name'];
+            if (is_string($req) && str_starts_with(trim($req), '{')) {
+                $d = json_decode($req, true);
+                if (is_array($d) && isset($d['name'])) return $d['name'];
+            }
+            return $req;
+        };
+
         return response()->json([
             'success' => true,
             'data' => $ts->map(fn ($t) => [
                 'id'                 => $t->id,
                 'date'               => optional($t->date)->format('Y-m-d'),
+                'start_time'         => $fmtTime($t->start_time),
+                'end_time'           => $fmtTime($t->end_time),
                 'effort_minutes'     => $t->effort_minutes,
                 'description'        => $t->observation,
                 'status'             => $t->status,
                 'status_display'     => $t->status_display,
                 'ticket'             => $t->ticket,
                 'ticket_subject'     => $t->ticket_subject,
+                'requester'          => $parseRequester($t->ticket_solicitante),
+                'attachment_path'    => $t->attachment_path,
                 'user'               => $t->user ? ['id' => $t->user->id, 'name' => $t->user->name] : null,
-                'project'            => $t->project ? ['id' => $t->project->id, 'code' => $t->project->code, 'name' => $t->project->name] : null,
+                'customer'           => $t->project && $t->project->customer ? $t->project->customer->name : null,
+                'project'            => $t->project ? [
+                    'id'            => $t->project->id,
+                    'code'          => $t->project->code,
+                    'name'          => $t->project->name,
+                    'contract_type' => optional($t->project->contractType)->name,
+                ] : null,
             ])->values(),
         ]);
     }

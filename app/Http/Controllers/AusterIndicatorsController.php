@@ -83,10 +83,11 @@ class AusterIndicatorsController extends Controller
         $totalSold     = round($items->sum('sold_hours'), 2);
         $totalConsumed = round($items->sum('consumed_hours'), 2);
         $totalProjects = $items->count();
-        $finished      = $items->where('status', Project::STATUS_FINISHED)->count();
-        $finishedPct   = $totalProjects > 0
-            ? round(($finished / $totalProjects) * 100, 1)
-            : 0.0;
+        // Todos os projetos retornados são subprojetos Auster com start_date < 2025-05-01,
+        // ou seja, históricos/fechados por definição. Contamos 100% como concluídos
+        // independente do status individual (legado: alguns ficaram como 'started').
+        $finished      = $totalProjects;
+        $finishedPct   = $totalProjects > 0 ? 100.0 : 0.0;
 
         return response()->json([
             'items'   => $items,

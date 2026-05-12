@@ -14,10 +14,11 @@ class Project extends Model
 {
     use HasFactory, SoftDeletes;
 
-    protected static function booted(): void
-    {
-        static::addGlobalScope(new HideAusterFrozenScope);
-    }
+    // Nota: o global scope HideAusterFrozenScope foi removido por decisão de produto
+    // (12/05/2026). Esses subprojetos voltam a aparecer em listagens, mas continuam
+    // sendo ignorados nos cálculos de consumed_hours do pai via isAusterFrozen() +
+    // `continue` nos loops (ver getGeneralHoursBalance, index gestao mode, etc).
+    // O frontend marca esses projetos com badge "Histórico" usando o accessor abaixo.
 
     // Contract type constants removidos - agora vem da tabela contract_types
 
@@ -96,7 +97,12 @@ class Project extends Model
     /**
      * Atributos calculados incluídos automaticamente no JSON.
      */
-    protected $appends = ['status_display', 'contract_type_display'];
+    protected $appends = ['status_display', 'contract_type_display', 'is_auster_frozen'];
+
+    public function getIsAusterFrozenAttribute(): bool
+    {
+        return $this->isAusterFrozen();
+    }
 
     /**
      * The attributes that should be cast.

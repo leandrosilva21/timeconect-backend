@@ -4816,6 +4816,81 @@ class BankHoursFixedController extends Controller
     }
 
     /**
+     * Drilldown da aba Indicadores — Tickets por Urgência.
+     * Retorna timesheets dos tickets daquela urgência, respeitando filtros.
+     */
+    public function bankHoursFixedUrgencyTimesheets(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user) return response()->json(['success' => false, 'message' => 'Usuário não autenticado'], 401);
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
+            return response()->json(['success' => false, 'message' => 'Acesso negado'], 403);
+        }
+        $urgency = $request->get('urgency');
+        if (!$urgency) return response()->json(['success' => false, 'message' => 'Parâmetro "urgency" é obrigatório'], 400);
+
+        $customerId = $user->customer_id ?: ($user->isAdmin() ? $request->get('customer_id') : null);
+        $projectId  = $request->get('project_id');
+
+        $tsQ = Timesheet::with(['user', 'project.customer'])
+            ->whereNotNull('ticket')
+            ->where('ticket', '!=', '')
+            ->where('status', '!=', 'rejected')
+            ->whereRaw("ticket ~ '^[0-9]{5}$'");
+
+        $dateRange = $this->resolveIndicatorDateRange($request);
+        if ($dateRange) $tsQ->whereBetween('date', $dateRange);
+
+        if ($customerId) {
+            $tsQ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId));
+        }
+        if ($projectId) {
+            $projectIds = array_merge([$projectId], Project::where('parent_project_id', $projectId)->pluck('id')->toArray());
+            $tsQ->whereIn('project_id', $projectIds);
+        } else {
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) $tsQ->whereHas('project', fn ($q) => $q->where('contract_type_id', $bhFixedType->id));
+        }
+
+        $ticketIds = MovideskTicket::where('urgencia', $urgency)->pluck('ticket_id')->toArray();
+        if (empty($ticketIds)) return response()->json(['success' => true, 'data' => []]);
+
+        $tsQ->whereIn('ticket', $ticketIds);
+        $timesheets = $tsQ->orderByDesc('date')->orderByDesc('id')->limit(500)->get();
+
+        $fmtTime = fn ($v) => $v instanceof \DateTimeInterface ? $v->format('H:i') : (is_string($v) && strlen($v) >= 5 ? substr($v, -8, 5) : null);
+        $parseReq = function ($req) {
+            if (is_array($req) && isset($req['name'])) return $req['name'];
+            if (is_string($req) && str_starts_with(trim($req), '{')) {
+                $d = json_decode($req, true);
+                if (is_array($d) && isset($d['name'])) return $d['name'];
+            }
+            return $req;
+        };
+
+        return response()->json([
+            'success' => true,
+            'data' => $timesheets->map(fn ($t) => [
+                'id'             => $t->id,
+                'date'           => optional($t->date)->format('Y-m-d'),
+                'start_time'     => $fmtTime($t->start_time),
+                'end_time'       => $fmtTime($t->end_time),
+                'effort_minutes' => $t->effort_minutes,
+                'description'    => $t->observation,
+                'ticket'         => $t->ticket,
+                'ticket_subject' => $t->ticket_subject,
+                'requester'      => $parseReq($t->ticket_solicitante),
+                'status'         => $t->status,
+                'status_display' => $t->status_display,
+                'attachment_path'=> $t->attachment_path,
+                'user'           => $t->user ? ['id' => $t->user->id, 'name' => $t->user->name] : null,
+                'customer'       => $t->project && $t->project->customer ? $t->project->customer->name : null,
+                'project'        => $t->project ? ['id' => $t->project->id, 'code' => $t->project->code, 'name' => $t->project->name] : null,
+            ])->values(),
+        ]);
+    }
+
+    /**
      * Lista timesheets por categoria de service_type (architecture | maintenance).
      * Usado pelos modais "Ver Apontamentos" nas abas correspondentes do dashboard.
      */

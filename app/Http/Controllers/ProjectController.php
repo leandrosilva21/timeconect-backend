@@ -1223,9 +1223,22 @@ class ProjectController extends Controller
         // - Sincroniza com Contract Kanban (migra card pra coluna do coord ou
         //   devolve pra fila de sustentação correta).
         $overrideKey = 'kanban_coordinator_override_id';
-        $overrideChanged = array_key_exists($overrideKey, $validated)
+        $overrideRaw = $request->input($overrideKey, '__NOT_SENT__');
+        $overrideInValidated = array_key_exists($overrideKey, $validated);
+        $overrideChanged = $overrideInValidated
             && (int) ($project->kanban_coordinator_override_id ?? 0) !== (int) ($validated[$overrideKey] ?? 0);
-        if (array_key_exists($overrideKey, $validated)) {
+        \Log::info('ProjectController@update override-debug PRE', [
+            'project_id'         => $project->id,
+            'user_id'            => auth()->id(),
+            'is_admin'           => auth()->user()?->isAdmin(),
+            'raw_input'          => $overrideRaw,
+            'in_validated'       => $overrideInValidated,
+            'validated_value'    => $validated[$overrideKey] ?? '__ABSENT__',
+            'current_db_value'   => $project->kanban_coordinator_override_id,
+            'override_changed'   => $overrideChanged,
+            'request_keys'       => array_keys($request->all()),
+        ]);
+        if ($overrideInValidated) {
             if (!auth()->user()->isAdmin()) {
                 unset($validated[$overrideKey]);
                 $overrideChanged = false;
@@ -1234,7 +1247,15 @@ class ProjectController extends Controller
                 $svcCode = $project->serviceType?->code;
                 $svcName = strtolower(trim((string) $project->serviceType?->name));
                 $isSustentacao = $svcCode === 'sustentacao' || str_contains($svcName, 'sustenta');
+                \Log::info('ProjectController@update override-debug SVC', [
+                    'svc_code'        => $svcCode,
+                    'svc_name'        => $svcName,
+                    'is_sustentacao'  => $isSustentacao,
+                ]);
                 if (!$isSustentacao && !empty($validated[$overrideKey])) {
+                    \Log::warning('ProjectController@update override REJECTED (não-sustentação)', [
+                        'project_id' => $project->id,
+                    ]);
                     return response()->json([
                         'code' => 'OVERRIDE_NOT_ALLOWED',
                         'message' => 'Override de coordenador só é permitido em projetos de sustentação.',
@@ -1244,6 +1265,11 @@ class ProjectController extends Controller
         }
 
         $project->update($validated);
+        $project->refresh();
+        \Log::info('ProjectController@update override-debug POST', [
+            'project_id'      => $project->id,
+            'persisted_value' => $project->kanban_coordinator_override_id,
+        ]);
 
         if ($overrideChanged) {
             $this->syncContractKanbanForOverride($project);

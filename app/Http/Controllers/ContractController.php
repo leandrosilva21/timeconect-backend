@@ -1150,6 +1150,7 @@ class ContractController extends Controller
             'expected_end_date'     => $project->expected_end_date,
             'coordinator_ids'       => $project->coordinators->pluck('id'),
             'coordinators'          => $project->coordinators->pluck('name'),
+            'kanban_coordinator_override_id' => $project->kanban_coordinator_override_id,
             'consultants'           => $project->consultants->pluck('name'),
             'executivo_conta_name'  => $project->executivoConta?->name ?? $project->customer?->executive?->name,
             'contract_type'         => $project->contractType?->name,

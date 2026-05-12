@@ -5054,6 +5054,80 @@ class BankHoursFixedController extends Controller
     }
 
     /**
+     * Agrupa apontamentos por ticket (5 dígitos) para um projeto específico
+     * (pai + filhos), sem filtrar por service_type. Usado por dashboards
+     * como On Demand onde não faz sentido split entre Projeto / Sustentação.
+     */
+    public function projectTicketSummary(Request $request): JsonResponse
+    {
+        $user       = $request->user();
+        $projectId  = $request->get('project_id');
+        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        if (!$projectId || !$customerId) return response()->json(['tickets' => []]);
+        $dateFrom = $request->get('date_from');
+        $dateTo   = $request->get('date_to');
+
+        $projectIds = Project::where(function ($q) use ($projectId) {
+                $q->where('id', $projectId)->orWhere('parent_project_id', $projectId);
+            })
+            ->where('customer_id', $customerId)
+            ->whereNull('deleted_at')
+            ->pluck('id');
+        if ($projectIds->isEmpty()) return response()->json(['tickets' => []]);
+
+        $base = Timesheet::query()
+            ->where('timesheets.customer_id', $customerId)
+            ->whereIn('timesheets.project_id', $projectIds)
+            ->whereNotNull('timesheets.ticket')
+            ->where('timesheets.ticket', '!=', '')
+            ->whereRaw("timesheets.ticket ~ '^[0-9]{5}$'")
+            ->where('timesheets.status', '!=', 'rejected');
+
+        $periodQ = (clone $base);
+        if ($dateFrom) $periodQ->where('timesheets.date', '>=', $dateFrom);
+        if ($dateTo)   $periodQ->where('timesheets.date', '<=', $dateTo);
+        $ticketsInPeriod = $periodQ->select('timesheets.ticket')->distinct()->pluck('ticket')->toArray();
+
+        if (empty($ticketsInPeriod)) return response()->json(['tickets' => []]);
+
+        $rows = (clone $base)
+            ->whereIn('timesheets.ticket', $ticketsInPeriod)
+            ->select(
+                'timesheets.ticket',
+                DB::raw("MAX(timesheets.ticket_subject) AS ticket_subject"),
+                DB::raw("MAX(timesheets.ticket_solicitante::text) AS ticket_solicitante"),
+                DB::raw("SUM(timesheets.effort_minutes) AS lifetime_minutes"),
+                DB::raw(
+                    "SUM(CASE WHEN timesheets.date BETWEEN " .
+                    "COALESCE(?, timesheets.date) AND COALESCE(?, timesheets.date) " .
+                    "THEN timesheets.effort_minutes ELSE 0 END) AS period_minutes"
+                ),
+            )
+            ->addBinding($dateFrom, 'select')
+            ->addBinding($dateTo,   'select')
+            ->groupBy('timesheets.ticket')
+            ->get();
+
+        $tickets = $rows->map(function ($r) {
+            $req = $r->ticket_solicitante;
+            $reqName = null;
+            if ($req && str_starts_with((string)$req, '{')) {
+                $decoded = json_decode($req, true);
+                if (is_array($decoded) && isset($decoded['name'])) $reqName = $decoded['name'];
+            } else $reqName = $req;
+            return [
+                'ticket'           => $r->ticket,
+                'title'            => $r->ticket_subject,
+                'requester'        => $reqName,
+                'period_minutes'   => (int) $r->period_minutes,
+                'lifetime_minutes' => (int) $r->lifetime_minutes,
+            ];
+        })->sortBy('ticket', SORT_NATURAL)->values();
+
+        return response()->json(['tickets' => $tickets]);
+    }
+
+    /**
      * Agrupa apontamentos por ticket (5 dígitos) para a categoria informada,
      * respeitando os filtros do dashboard (customer/project/datas).
      * Retorna: ticket, title, requester, period_minutes, lifetime_minutes.

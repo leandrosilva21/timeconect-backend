@@ -1748,39 +1748,35 @@ class BankHoursFixedController extends Controller
         // Buscar todos os timesheets que atendem aos critérios
         $timesheets = $timesheetsQuery->get();
 
-        // Agrupar por solicitante
-        $requesterHours = [];
+        // Agrupar por solicitante (horas + tickets únicos)
+        $requesterHours   = [];
+        $requesterTickets = [];
 
         foreach ($timesheets as $timesheet) {
-            // Buscar o ticket relacionado
             $ticket = MovideskTicket::where('ticket_id', $timesheet->ticket)->first();
 
             if ($ticket && $ticket->solicitante) {
-                // Extrair nome do solicitante do JSON
                 $solicitante = $ticket->solicitante;
                 $requesterName = $solicitante['name'] ?? 'Não informado';
-
-                // Converter minutos para horas
                 $hours = $timesheet->effort_minutes / 60;
 
-                // Acumular horas por solicitante
-                if (!isset($requesterHours[$requesterName])) {
-                    $requesterHours[$requesterName] = 0;
+                $requesterHours[$requesterName] = ($requesterHours[$requesterName] ?? 0) + $hours;
+                if (!isset($requesterTickets[$requesterName])) {
+                    $requesterTickets[$requesterName] = [];
                 }
-                $requesterHours[$requesterName] += $hours;
+                $requesterTickets[$requesterName][$timesheet->ticket] = true;
             }
         }
 
-        // Converter para formato de resposta
         $data = [];
         foreach ($requesterHours as $requester => $totalHours) {
             $data[] = [
-                'requester' => $requester,
-                'total_hours' => round($totalHours, 2)
+                'requester'    => $requester,
+                'total_hours'  => round($totalHours, 2),
+                'ticket_count' => count($requesterTickets[$requester] ?? []),
             ];
         }
 
-        // Ordenar por total de horas (decrescente)
         usort($data, function ($a, $b) {
             return $b['total_hours'] <=> $a['total_hours'];
         });
@@ -2147,38 +2143,34 @@ class BankHoursFixedController extends Controller
         // Buscar todos os timesheets que atendem aos critérios
         $timesheets = $timesheetsQuery->get();
 
-        // Agrupar por serviço/módulo
-        $serviceHours = [];
+        // Agrupar por serviço/módulo (horas + tickets únicos)
+        $serviceHours   = [];
+        $serviceTickets = [];
 
         foreach ($timesheets as $timesheet) {
-            // Buscar o ticket relacionado
             $ticket = MovideskTicket::where('ticket_id', $timesheet->ticket)->first();
 
             if ($ticket && $ticket->servico) {
-                // Extrair serviço/módulo
                 $service = $ticket->servico;
-
-                // Converter minutos para horas
                 $hours = $timesheet->effort_minutes / 60;
 
-                // Acumular horas por serviço
-                if (!isset($serviceHours[$service])) {
-                    $serviceHours[$service] = 0;
+                $serviceHours[$service] = ($serviceHours[$service] ?? 0) + $hours;
+                if (!isset($serviceTickets[$service])) {
+                    $serviceTickets[$service] = [];
                 }
-                $serviceHours[$service] += $hours;
+                $serviceTickets[$service][$timesheet->ticket] = true;
             }
         }
 
-        // Converter para formato de resposta
         $data = [];
         foreach ($serviceHours as $service => $totalHours) {
             $data[] = [
-                'service' => $service,
-                'total_hours' => round($totalHours, 2)
+                'service'      => $service,
+                'total_hours'  => round($totalHours, 2),
+                'ticket_count' => count($serviceTickets[$service] ?? []),
             ];
         }
 
-        // Ordenar por total de horas (decrescente)
         usort($data, function ($a, $b) {
             return $b['total_hours'] <=> $a['total_hours'];
         });

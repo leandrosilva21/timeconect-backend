@@ -4824,16 +4824,110 @@ class BankHoursFixedController extends Controller
         return response()->json([
             'success' => true,
             'data' => $ts->map(fn ($t) => [
-                'id'             => $t->id,
-                'date'           => optional($t->date)->format('Y-m-d'),
-                'effort_minutes' => $t->effort_minutes,
-                'description'    => $t->description,
-                'status'         => $t->status,
-                'status_display' => $t->status_display,
-                'user'           => $t->user ? ['id' => $t->user->id, 'name' => $t->user->name] : null,
-                'project'        => $t->project ? ['id' => $t->project->id, 'code' => $t->project->code, 'name' => $t->project->name] : null,
+                'id'                 => $t->id,
+                'date'               => optional($t->date)->format('Y-m-d'),
+                'effort_minutes'     => $t->effort_minutes,
+                'description'        => $t->description,
+                'status'             => $t->status,
+                'status_display'     => $t->status_display,
+                'ticket'             => $t->ticket,
+                'ticket_subject'     => $t->ticket_subject,
+                'user'               => $t->user ? ['id' => $t->user->id, 'name' => $t->user->name] : null,
+                'project'            => $t->project ? ['id' => $t->project->id, 'code' => $t->project->code, 'name' => $t->project->name] : null,
             ])->values(),
         ]);
+    }
+
+    /**
+     * Agrupa apontamentos por ticket (5 dígitos) para a categoria informada,
+     * respeitando os filtros do dashboard (customer/project/datas).
+     * Retorna: ticket, title, requester, period_minutes, lifetime_minutes.
+     */
+    public function categoryTicketSummary(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $category = (string) $request->get('category', 'maintenance');
+
+        $serviceCodeMap = ['architecture' => 'arquitetura', 'maintenance' => 'sustentação'];
+        $serviceNameMap = ['architecture' => 'Arquitetura',  'maintenance' => 'Sustentação'];
+        if (!isset($serviceCodeMap[$category])) {
+            return response()->json(['tickets' => []]);
+        }
+        $serviceTypeId = ServiceType::where('code', $serviceCodeMap[$category])
+            ->orWhere('name', $serviceNameMap[$category])
+            ->value('id');
+        if (!$serviceTypeId) return response()->json(['tickets' => []]);
+
+        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        if (!$customerId) return response()->json(['tickets' => []]);
+        $projectId  = $request->get('project_id');
+        $dateFrom   = $request->get('date_from');
+        $dateTo     = $request->get('date_to');
+
+        $projectIdsQ = Project::where('service_type_id', $serviceTypeId)
+            ->where('customer_id', $customerId)
+            ->whereNull('deleted_at');
+        if ($projectId) {
+            $projectIdsQ->where(function ($q) use ($projectId) {
+                $q->where('id', $projectId)->orWhere('parent_project_id', $projectId);
+            });
+        }
+        $projectIds = $projectIdsQ->pluck('id');
+        if ($projectIds->isEmpty()) return response()->json(['tickets' => []]);
+
+        $base = Timesheet::query()
+            ->where('timesheets.customer_id', $customerId)
+            ->whereIn('timesheets.project_id', $projectIds)
+            ->whereNotNull('timesheets.ticket')
+            ->where('timesheets.ticket', '!=', '')
+            ->whereRaw("timesheets.ticket ~ '^[0-9]{5}$'")
+            ->where('timesheets.status', '!=', 'rejected');
+
+        $periodQ = (clone $base);
+        if ($dateFrom) $periodQ->where('timesheets.date', '>=', $dateFrom);
+        if ($dateTo)   $periodQ->where('timesheets.date', '<=', $dateTo);
+        $ticketsInPeriod = $periodQ->select('timesheets.ticket')->distinct()->pluck('ticket')->toArray();
+
+        if (empty($ticketsInPeriod)) return response()->json(['tickets' => []]);
+
+        $rows = (clone $base)
+            ->whereIn('timesheets.ticket', $ticketsInPeriod)
+            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+            ->select(
+                'timesheets.ticket',
+                DB::raw("MAX(timesheets.ticket_subject) AS ticket_subject"),
+                DB::raw("MAX(timesheets.ticket_solicitante::text) AS ticket_solicitante"),
+                DB::raw("SUM(timesheets.effort_minutes) AS lifetime_minutes"),
+                DB::raw(
+                    "SUM(CASE WHEN timesheets.date BETWEEN " .
+                    "COALESCE(?, timesheets.date) AND COALESCE(?, timesheets.date) " .
+                    "THEN timesheets.effort_minutes ELSE 0 END) AS period_minutes"
+                ),
+            )
+            ->addBinding($dateFrom, 'select')
+            ->addBinding($dateTo,   'select')
+            ->groupBy('timesheets.ticket')
+            ->get();
+
+        $tickets = $rows->map(function ($r) {
+            $req = $r->ticket_solicitante;
+            $reqName = null;
+            if ($req && str_starts_with($req, '{')) {
+                $decoded = json_decode($req, true);
+                if (is_array($decoded) && isset($decoded['name'])) $reqName = $decoded['name'];
+            } else {
+                $reqName = $req;
+            }
+            return [
+                'ticket'           => $r->ticket,
+                'title'            => $r->ticket_subject,
+                'requester'        => $reqName,
+                'period_minutes'   => (int) $r->period_minutes,
+                'lifetime_minutes' => (int) $r->lifetime_minutes,
+            ];
+        })->sortBy('ticket', SORT_NATURAL)->values();
+
+        return response()->json(['tickets' => $tickets]);
     }
 
     /**

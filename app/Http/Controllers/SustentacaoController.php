@@ -1010,7 +1010,11 @@ class SustentacaoController extends Controller
     {
         $stIds = $this->sustentacaoServiceTypeIds();
         if (empty($stIds)) return [];
-        $q = \App\Models\Project::whereIn('service_type_id', $stIds)->whereNull('deleted_at');
+        $q = \App\Models\Project::whereIn('service_type_id', $stIds)
+            ->whereNull('deleted_at')
+            // Projetos com override de coordenador não pertencem ao "portal de sustentação"
+            // nas abas Apontamentos/Despesas/Aprovações — são gerenciados pelo coord override.
+            ->whereNull('kanban_coordinator_override_id');
         if ($customerId) $q->where('customer_id', $customerId);
         return $q->pluck('id')->all();
     }

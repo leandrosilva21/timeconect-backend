@@ -92,6 +92,7 @@ class Project extends Model
         'contract_request_id',
         'is_investimento_comercial',
         'categoria_interna',
+        'kanban_coordinator_override_id',
     ];
 
     /**
@@ -272,6 +273,19 @@ class Project extends Model
     public function executivoConta(): BelongsTo
     {
         return $this->belongsTo(User::class, 'executivo_conta_id');
+    }
+
+    /**
+     * Coordenador "override" para projetos de sustentação que devem ser
+     * gerenciados por outro coordenador (admin/coord de projetos).
+     * Quando preenchido:
+     *  - Card do contrato migra da fila de sustentação pra coluna desse coord no Kanban
+     *  - Projeto some das abas Apontamentos/Despesas/Aprovações do Portal /sustentacao
+     *  - Aprovações globais e dashboards permanecem inalterados
+     */
+    public function kanbanOverrideCoordinator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'kanban_coordinator_override_id');
     }
 
     public function vendedor(): BelongsTo

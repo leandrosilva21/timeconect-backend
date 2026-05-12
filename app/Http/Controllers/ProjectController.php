@@ -1039,6 +1039,7 @@ class ProjectController extends Controller
             'vendedor_id'           => 'nullable|exists:users,id',
             'architect_id'          => 'nullable|exists:users,id',
             'executivo_conta_id'    => 'nullable|exists:users,id',
+            'kanban_coordinator_override_id' => 'nullable|exists:users,id',
         ], [
             'name.max' => 'O nome não pode ter mais de 255 caracteres',
             'name.min' => 'O nome deve ter pelo menos 2 caracteres',
@@ -1216,7 +1217,37 @@ class ProjectController extends Controller
             unset($validated['allow_negative_balance']);
         }
 
+        // Override de coordenador para projetos de sustentação:
+        // - Só admin pode setar/limpar
+        // - Só pra projetos cujo service_type seja sustentação
+        // - Sincroniza com Contract Kanban (migra card pra coluna do coord ou
+        //   devolve pra fila de sustentação correta).
+        $overrideKey = 'kanban_coordinator_override_id';
+        $overrideChanged = array_key_exists($overrideKey, $validated)
+            && (int) ($project->kanban_coordinator_override_id ?? 0) !== (int) ($validated[$overrideKey] ?? 0);
+        if (array_key_exists($overrideKey, $validated)) {
+            if (!auth()->user()->isAdmin()) {
+                unset($validated[$overrideKey]);
+                $overrideChanged = false;
+            } else {
+                $project->loadMissing('serviceType');
+                $svcCode = $project->serviceType?->code;
+                $svcName = strtolower(trim((string) $project->serviceType?->name));
+                $isSustentacao = $svcCode === 'sustentacao' || str_contains($svcName, 'sustenta');
+                if (!$isSustentacao && !empty($validated[$overrideKey])) {
+                    return response()->json([
+                        'code' => 'OVERRIDE_NOT_ALLOWED',
+                        'message' => 'Override de coordenador só é permitido em projetos de sustentação.',
+                    ], 422);
+                }
+            }
+        }
+
         $project->update($validated);
+
+        if ($overrideChanged) {
+            $this->syncContractKanbanForOverride($project);
+        }
 
         // Garantir que accumulated_sold_hours está atualizado para Banco de Horas Mensal
         if (!$project->relationLoaded('contractType') && $project->contract_type_id) {
@@ -2731,5 +2762,68 @@ class ProjectController extends Controller
             ->get(['id', 'year_month', 'opened_by', 'created_at']);
 
         return response()->json(['data' => $periods]);
+    }
+
+    /**
+     * Sincroniza o card do contract no Kanban quando o `kanban_coordinator_override_id`
+     * do projeto é setado ou limpo.
+     *
+     * - Setando o override → contract muda pra coluna do coord (alocado + kanban_coordinator_id)
+     *   e zera sustentacao_column. Card sai das colunas sust_* do Kanban.
+     * - Limpando o override → recalcula sustentacao_column pelo tipo de contrato e devolve
+     *   o card pra fila correta. Zera kanban_coordinator_id e kanban_status.
+     */
+    private function syncContractKanbanForOverride(Project $project): void
+    {
+        $project->refresh();
+        $contract = \App\Models\Contract::where('project_id', $project->id)->first();
+        if (!$contract) return; // projetos sem contrato vinculado: nada a fazer
+
+        $fromColumn = $contract->kanban_status ?: ($contract->sustentacao_column ?: null);
+        $overrideId = $project->kanban_coordinator_override_id;
+
+        if ($overrideId) {
+            // Move pra coluna do coord override
+            $contract->update([
+                'kanban_status'         => \App\Models\Contract::KANBAN_ALOCADO,
+                'kanban_coordinator_id' => $overrideId,
+                'sustentacao_column'    => null,
+            ]);
+            \App\Models\ContractKanbanLog::create([
+                'contract_id'    => $contract->id,
+                'from_column'    => $fromColumn,
+                'to_column'      => 'coordinator:' . $overrideId,
+                'moved_by_id'    => auth()->id(),
+                'coordinator_id' => $overrideId,
+            ]);
+            return;
+        }
+
+        // Sem override → devolve pra fila de sustentação correta (recalcula pelo tipo de contrato).
+        $project->loadMissing('contractType');
+        $contractName = strtolower(trim((string) ($project->contractType?->name ?? '')));
+        $sustColumn = null;
+        if (str_contains($contractName, 'banco de horas fixo') || str_contains($contractName, 'banco horas fixo')) {
+            $sustColumn = 'sust_bh_fixo';
+        } elseif (str_contains($contractName, 'banco de horas mensal') || str_contains($contractName, 'banco horas mensal')) {
+            $sustColumn = 'sust_bh_mensal';
+        } elseif (str_contains($contractName, 'on demand')) {
+            $sustColumn = 'sust_on_demand';
+        } elseif (str_contains($contractName, 'cloud')) {
+            $sustColumn = 'sust_cloud';
+        }
+
+        $contract->update([
+            'kanban_status'         => $contract->kanban_status === \App\Models\Contract::KANBAN_ALOCADO ? null : $contract->kanban_status,
+            'kanban_coordinator_id' => null,
+            'sustentacao_column'    => $sustColumn,
+        ]);
+        \App\Models\ContractKanbanLog::create([
+            'contract_id'    => $contract->id,
+            'from_column'    => $fromColumn,
+            'to_column'      => $sustColumn ?? 'sustentacao_default',
+            'moved_by_id'    => auth()->id(),
+            'coordinator_id' => null,
+        ]);
     }
 }

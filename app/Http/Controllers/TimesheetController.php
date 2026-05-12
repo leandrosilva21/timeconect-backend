@@ -160,6 +160,16 @@ class TimesheetController extends Controller
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject', 'movidesk_tickets.solicitante as ticket_solicitante')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket');
 
+        // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
+        if ($request->get('scope') === 'sustentacao') {
+            $scopedIds = app(\App\Services\SustentacaoScopeService::class)->projectIds();
+            if (empty($scopedIds)) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('timesheets.project_id', $scopedIds);
+            }
+        }
+
         // Controle de visibilidade por perfil
         if ($user->isCliente()) {
             // Cliente vê apenas apontamentos do seu cliente (empresa)

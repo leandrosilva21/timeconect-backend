@@ -49,6 +49,16 @@ class TimesheetLogController extends Controller
                 'timesheet.customer:id,name',
             ]);
 
+        // Portal de Sustentação: restringe a logs cujo timesheet pertença a projeto elegível.
+        if ($request->get('scope') === 'sustentacao') {
+            $scopedIds = app(\App\Services\SustentacaoScopeService::class)->projectIds();
+            if (empty($scopedIds)) {
+                $q->whereRaw('1 = 0');
+            } else {
+                $q->whereHas('timesheet', fn ($s) => $s->whereIn('project_id', $scopedIds));
+            }
+        }
+
         if ($request->filled('user_id')) {
             $q->whereHas('timesheet', fn ($s) => $s->where('user_id', $request->integer('user_id')));
         }

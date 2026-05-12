@@ -604,6 +604,16 @@ class ApprovalController extends Controller
         ->orderBy('date', 'desc')
         ->orderBy('created_at', 'desc');
 
+        // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
+        if ($request && $request->get('scope') === 'sustentacao') {
+            $scopedIds = app(\App\Services\SustentacaoScopeService::class)->projectIds();
+            if (empty($scopedIds)) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('project_id', $scopedIds);
+            }
+        }
+
         // Se não é admin, filtrar apenas timesheets dos projetos que pode aprovar
         if (!$user->isAdmin()) {
             $isSustentacao = $user->isCoordenador() && $user->coordinator_type === 'sustentacao';
@@ -638,6 +648,16 @@ class ApprovalController extends Controller
         ->where('status', Expense::STATUS_PENDING)
         ->orderBy('expense_date', 'desc')
         ->orderBy('created_at', 'desc');
+
+        // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
+        if ($request && $request->get('scope') === 'sustentacao') {
+            $scopedIds = app(\App\Services\SustentacaoScopeService::class)->projectIds();
+            if (empty($scopedIds)) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('project_id', $scopedIds);
+            }
+        }
 
         // Se não é admin, filtrar apenas despesas dos projetos que pode aprovar
         if (!$user->isAdmin()) {

@@ -1271,8 +1271,16 @@ class ProjectController extends Controller
             'persisted_value' => $project->kanban_coordinator_override_id,
         ]);
 
-        if ($overrideChanged) {
-            $this->syncContractKanbanForOverride($project);
+        // Sempre que o campo veio no payload (e projeto é sustentação), garantir consistência
+        // do contract no Kanban. Idempotente: só escreve se o estado divergir.
+        if ($overrideInValidated && auth()->user()->isAdmin()) {
+            $project->loadMissing('serviceType');
+            $svcCodeS = $project->serviceType?->code;
+            $svcNameS = strtolower(trim((string) $project->serviceType?->name));
+            $isSustS = $svcCodeS === 'sustentacao' || str_contains($svcNameS, 'sustenta');
+            if ($isSustS) {
+                $this->syncContractKanbanForOverride($project);
+            }
         }
 
         // Garantir que accumulated_sold_hours está atualizado para Banco de Horas Mensal
@@ -2802,26 +2810,51 @@ class ProjectController extends Controller
     private function syncContractKanbanForOverride(Project $project): void
     {
         $project->refresh();
-        $contract = \App\Models\Contract::where('project_id', $project->id)->first();
-        if (!$contract) return; // projetos sem contrato vinculado: nada a fazer
+
+        // Busca contract pelos dois lados da relação (alguns vêm com contract.project_id setado,
+        // outros vêm com project.contract_id apontando pro contract).
+        $contract = null;
+        if ($project->contract_id) {
+            $contract = \App\Models\Contract::find($project->contract_id);
+        }
+        if (!$contract) {
+            $contract = \App\Models\Contract::where('project_id', $project->id)->first();
+        }
+        \Log::info('syncContractKanbanForOverride', [
+            'project_id'        => $project->id,
+            'project_contract_id' => $project->contract_id,
+            'contract_found'    => $contract?->id,
+            'override_id'       => $project->kanban_coordinator_override_id,
+            'contract_state_before' => $contract ? [
+                'kanban_status'         => $contract->kanban_status,
+                'kanban_coordinator_id' => $contract->kanban_coordinator_id,
+                'sustentacao_column'    => $contract->sustentacao_column,
+            ] : null,
+        ]);
+        if (!$contract) return;
 
         $fromColumn = $contract->kanban_status ?: ($contract->sustentacao_column ?: null);
         $overrideId = $project->kanban_coordinator_override_id;
 
         if ($overrideId) {
-            // Move pra coluna do coord override
-            $contract->update([
+            $expected = [
                 'kanban_status'         => \App\Models\Contract::KANBAN_ALOCADO,
-                'kanban_coordinator_id' => $overrideId,
+                'kanban_coordinator_id' => (int) $overrideId,
                 'sustentacao_column'    => null,
-            ]);
-            \App\Models\ContractKanbanLog::create([
-                'contract_id'    => $contract->id,
-                'from_column'    => $fromColumn,
-                'to_column'      => 'coordinator:' . $overrideId,
-                'moved_by_id'    => auth()->id(),
-                'coordinator_id' => $overrideId,
-            ]);
+            ];
+            $needsUpdate = $contract->kanban_status !== $expected['kanban_status']
+                || (int) $contract->kanban_coordinator_id !== $expected['kanban_coordinator_id']
+                || $contract->sustentacao_column !== null;
+            if ($needsUpdate) {
+                $contract->update($expected);
+                \App\Models\ContractKanbanLog::create([
+                    'contract_id'    => $contract->id,
+                    'from_column'    => $fromColumn,
+                    'to_column'      => 'coordinator:' . $overrideId,
+                    'moved_by_id'    => auth()->id(),
+                    'coordinator_id' => $overrideId,
+                ]);
+            }
             return;
         }
 
@@ -2839,17 +2872,23 @@ class ProjectController extends Controller
             $sustColumn = 'sust_cloud';
         }
 
-        $contract->update([
-            'kanban_status'         => $contract->kanban_status === \App\Models\Contract::KANBAN_ALOCADO ? null : $contract->kanban_status,
-            'kanban_coordinator_id' => null,
-            'sustentacao_column'    => $sustColumn,
-        ]);
-        \App\Models\ContractKanbanLog::create([
-            'contract_id'    => $contract->id,
-            'from_column'    => $fromColumn,
-            'to_column'      => $sustColumn ?? 'sustentacao_default',
-            'moved_by_id'    => auth()->id(),
-            'coordinator_id' => null,
-        ]);
+        $expectedStatus = $contract->kanban_status === \App\Models\Contract::KANBAN_ALOCADO ? null : $contract->kanban_status;
+        $needsUpdate = $contract->kanban_status !== $expectedStatus
+            || $contract->kanban_coordinator_id !== null
+            || $contract->sustentacao_column !== $sustColumn;
+        if ($needsUpdate) {
+            $contract->update([
+                'kanban_status'         => $expectedStatus,
+                'kanban_coordinator_id' => null,
+                'sustentacao_column'    => $sustColumn,
+            ]);
+            \App\Models\ContractKanbanLog::create([
+                'contract_id'    => $contract->id,
+                'from_column'    => $fromColumn,
+                'to_column'      => $sustColumn ?? 'sustentacao_default',
+                'moved_by_id'    => auth()->id(),
+                'coordinator_id' => null,
+            ]);
+        }
     }
 }

@@ -1223,39 +1223,17 @@ class ProjectController extends Controller
         // - Sincroniza com Contract Kanban (migra card pra coluna do coord ou
         //   devolve pra fila de sustentação correta).
         $overrideKey = 'kanban_coordinator_override_id';
-        $overrideRaw = $request->input($overrideKey, '__NOT_SENT__');
         $overrideInValidated = array_key_exists($overrideKey, $validated);
-        $overrideChanged = $overrideInValidated
-            && (int) ($project->kanban_coordinator_override_id ?? 0) !== (int) ($validated[$overrideKey] ?? 0);
-        \Log::info('ProjectController@update override-debug PRE', [
-            'project_id'         => $project->id,
-            'user_id'            => auth()->id(),
-            'is_admin'           => auth()->user()?->isAdmin(),
-            'raw_input'          => $overrideRaw,
-            'in_validated'       => $overrideInValidated,
-            'validated_value'    => $validated[$overrideKey] ?? '__ABSENT__',
-            'current_db_value'   => $project->kanban_coordinator_override_id,
-            'override_changed'   => $overrideChanged,
-            'request_keys'       => array_keys($request->all()),
-        ]);
         if ($overrideInValidated) {
             if (!auth()->user()->isAdmin()) {
                 unset($validated[$overrideKey]);
-                $overrideChanged = false;
+                $overrideInValidated = false;
             } else {
                 $project->loadMissing('serviceType');
                 $svcCode = $project->serviceType?->code;
                 $svcName = strtolower(trim((string) $project->serviceType?->name));
                 $isSustentacao = $svcCode === 'sustentacao' || str_contains($svcName, 'sustenta');
-                \Log::info('ProjectController@update override-debug SVC', [
-                    'svc_code'        => $svcCode,
-                    'svc_name'        => $svcName,
-                    'is_sustentacao'  => $isSustentacao,
-                ]);
                 if (!$isSustentacao && !empty($validated[$overrideKey])) {
-                    \Log::warning('ProjectController@update override REJECTED (não-sustentação)', [
-                        'project_id' => $project->id,
-                    ]);
                     return response()->json([
                         'code' => 'OVERRIDE_NOT_ALLOWED',
                         'message' => 'Override de coordenador só é permitido em projetos de sustentação.',
@@ -1265,20 +1243,14 @@ class ProjectController extends Controller
         }
 
         $project->update($validated);
-        $project->refresh();
-        \Log::info('ProjectController@update override-debug POST', [
-            'project_id'      => $project->id,
-            'persisted_value' => $project->kanban_coordinator_override_id,
-        ]);
 
-        // Sempre que o campo veio no payload (e projeto é sustentação), garantir consistência
-        // do contract no Kanban. Idempotente: só escreve se o estado divergir.
+        // Idempotente: garante consistência do contract no Kanban sempre que admin envia
+        // o campo num projeto de sustentação, mesmo que o valor não tenha mudado.
         if ($overrideInValidated && auth()->user()->isAdmin()) {
             $project->loadMissing('serviceType');
             $svcCodeS = $project->serviceType?->code;
             $svcNameS = strtolower(trim((string) $project->serviceType?->name));
-            $isSustS = $svcCodeS === 'sustentacao' || str_contains($svcNameS, 'sustenta');
-            if ($isSustS) {
+            if ($svcCodeS === 'sustentacao' || str_contains($svcNameS, 'sustenta')) {
                 $this->syncContractKanbanForOverride($project);
             }
         }
@@ -2820,17 +2792,6 @@ class ProjectController extends Controller
         if (!$contract) {
             $contract = \App\Models\Contract::where('project_id', $project->id)->first();
         }
-        \Log::info('syncContractKanbanForOverride', [
-            'project_id'        => $project->id,
-            'project_contract_id' => $project->contract_id,
-            'contract_found'    => $contract?->id,
-            'override_id'       => $project->kanban_coordinator_override_id,
-            'contract_state_before' => $contract ? [
-                'kanban_status'         => $contract->kanban_status,
-                'kanban_coordinator_id' => $contract->kanban_coordinator_id,
-                'sustentacao_column'    => $contract->sustentacao_column,
-            ] : null,
-        ]);
         if (!$contract) return;
 
         $fromColumn = $contract->kanban_status ?: ($contract->sustentacao_column ?: null);

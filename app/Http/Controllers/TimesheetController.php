@@ -422,7 +422,33 @@ class TimesheetController extends Controller
 
                 $timesheets = $query->paginate($perPage, ['*'], 'page', $page);
 
-                $items = collect($timesheets->items())->map(function ($ts) use ($hideClientPct) {
+                // Total acumulado (lifetime) por ticket, no mesmo cliente — para coluna
+                // "Consumo do Ticket" no frontend. Só tickets com padrão 5 dígitos.
+                $ticketsByCustomer = [];
+                foreach ($timesheets->items() as $ts) {
+                    $t = $ts->ticket;
+                    if (!$t || !$ts->customer_id) continue;
+                    if (!preg_match('/^\d{5}$/', (string) $t)) continue;
+                    $ticketsByCustomer[$ts->customer_id][$t] = true;
+                }
+                $ticketTotalsMap = [];
+                if (!empty($ticketsByCustomer)) {
+                    $totalsQ = \Illuminate\Support\Facades\DB::table('timesheets')
+                        ->where('status', '!=', 'rejected')
+                        ->whereRaw("ticket ~ '^[0-9]{5}$'");
+                    $totalsQ->where(function ($q) use ($ticketsByCustomer) {
+                        foreach ($ticketsByCustomer as $cid => $tickets) {
+                            $q->orWhere(function ($qq) use ($cid, $tickets) {
+                                $qq->where('customer_id', $cid)->whereIn('ticket', array_keys($tickets));
+                            });
+                        }
+                    });
+                    foreach ($totalsQ->groupBy('customer_id', 'ticket')->selectRaw('customer_id, ticket, SUM(effort_minutes) AS total')->get() as $r) {
+                        $ticketTotalsMap[$r->customer_id . ':' . $r->ticket] = (int) $r->total;
+                    }
+                }
+
+                $items = collect($timesheets->items())->map(function ($ts) use ($hideClientPct, $ticketTotalsMap) {
                     if ($hideClientPct) {
                         $ts->makeHidden(['client_extra_pct']);
                     }
@@ -467,6 +493,13 @@ class TimesheetController extends Controller
                                 'error'        => $e->getMessage(),
                             ]);
                         }
+                    }
+                    // Total acumulado do ticket no mesmo cliente (lifetime)
+                    $tk = (string) ($ts->ticket ?? '');
+                    if ($tk !== '' && preg_match('/^\d{5}$/', $tk) && $ts->customer_id) {
+                        $arr['ticket_total_minutes'] = $ticketTotalsMap[$ts->customer_id . ':' . $tk] ?? null;
+                    } else {
+                        $arr['ticket_total_minutes'] = null;
                     }
                     return $arr;
                 })->all();

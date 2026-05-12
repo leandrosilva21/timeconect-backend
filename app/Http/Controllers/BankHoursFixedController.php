@@ -4762,6 +4762,60 @@ class BankHoursFixedController extends Controller
     }
 
     /**
+     * Tickets agrupados por urgência (Urgente | Alta | Média | Baixa).
+     * Respeita filtros do dashboard (customer/project/mês/ano).
+     */
+    public function bankHoursFixedTicketsByUrgency(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Usuário não autenticado'], 401);
+        }
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
+            return response()->json(['success' => false, 'message' => 'Acesso negado'], 403);
+        }
+
+        $customerId = $user->customer_id ?: ($user->isAdmin() ? $request->get('customer_id') : null);
+        $projectId  = $request->get('project_id');
+
+        $tsQ = Timesheet::whereNotNull('ticket')
+            ->where('ticket', '!=', '')
+            ->where('status', '!=', 'rejected')
+            ->whereRaw("ticket ~ '^[0-9]{5}$'");
+
+        $dateRange = $this->resolveIndicatorDateRange($request);
+        if ($dateRange) $tsQ->whereBetween('date', $dateRange);
+
+        if ($customerId) {
+            $tsQ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId));
+        }
+        if ($projectId) {
+            $projectIds = array_merge([$projectId], Project::where('parent_project_id', $projectId)->pluck('id')->toArray());
+            $tsQ->whereIn('project_id', $projectIds);
+        } else {
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) $tsQ->whereHas('project', fn ($q) => $q->where('contract_type_id', $bhFixedType->id));
+        }
+
+        $ticketIds = $tsQ->pluck('ticket')->unique()->values();
+        if ($ticketIds->isEmpty()) return response()->json(['success' => true, 'data' => []]);
+
+        $rows = MovideskTicket::whereIn('ticket_id', $ticketIds)
+            ->whereNotNull('urgencia')
+            ->where('urgencia', '!=', '')
+            ->selectRaw('urgencia, COUNT(*) AS ticket_count')
+            ->groupBy('urgencia')
+            ->get()
+            ->map(fn ($r) => ['urgency' => $r->urgencia, 'ticket_count' => (int) $r->ticket_count]);
+
+        // Ordenação fixa Urgente → Alta → Média → Baixa → outros
+        $order = ['Urgente' => 0, 'Alta' => 1, 'Média' => 2, 'Baixa' => 3];
+        $rows = $rows->sortBy(fn ($r) => $order[$r['urgency']] ?? 99)->values();
+
+        return response()->json(['success' => true, 'data' => $rows]);
+    }
+
+    /**
      * Lista timesheets por categoria de service_type (architecture | maintenance).
      * Usado pelos modais "Ver Apontamentos" nas abas correspondentes do dashboard.
      */

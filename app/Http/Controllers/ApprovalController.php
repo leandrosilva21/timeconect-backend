@@ -147,9 +147,42 @@ class ApprovalController extends Controller
 
             $timesheets = $query->paginate($perPage);
 
+            // Total acumulado por ticket (lifetime, mesmo cliente) — coluna "Consumo do Ticket"
+            $ticketsByCustomer = [];
+            foreach ($timesheets->items() as $ts) {
+                $t = $ts->ticket;
+                if (!$t || !$ts->customer_id) continue;
+                if (!preg_match('/^\d{5}$/', (string) $t)) continue;
+                $ticketsByCustomer[$ts->customer_id][$t] = true;
+            }
+            $ticketTotalsMap = [];
+            if (!empty($ticketsByCustomer)) {
+                $totalsQ = DB::table('timesheets')
+                    ->where('status', '!=', 'rejected')
+                    ->whereRaw("ticket ~ '^[0-9]{5}$'");
+                $totalsQ->where(function ($q) use ($ticketsByCustomer) {
+                    foreach ($ticketsByCustomer as $cid => $tickets) {
+                        $q->orWhere(function ($qq) use ($cid, $tickets) {
+                            $qq->where('customer_id', $cid)->whereIn('ticket', array_keys($tickets));
+                        });
+                    }
+                });
+                foreach ($totalsQ->groupBy('customer_id', 'ticket')->selectRaw('customer_id, ticket, SUM(effort_minutes) AS total')->get() as $r) {
+                    $ticketTotalsMap[$r->customer_id . ':' . $r->ticket] = (int) $r->total;
+                }
+            }
+            $items = collect($timesheets->items())->map(function ($ts) use ($ticketTotalsMap) {
+                $arr = $ts->toArray();
+                $tk = (string) ($ts->ticket ?? '');
+                $arr['ticket_total_minutes'] = ($tk !== '' && preg_match('/^\d{5}$/', $tk) && $ts->customer_id)
+                    ? ($ticketTotalsMap[$ts->customer_id . ':' . $tk] ?? null)
+                    : null;
+                return $arr;
+            })->all();
+
             return response()->json([
                 'success' => true,
-                'data' => $timesheets->items(),
+                'data' => $items,
                 'pagination' => [
                     'current_page' => $timesheets->currentPage(),
                     'last_page' => $timesheets->lastPage(),

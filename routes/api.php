@@ -144,6 +144,8 @@ Route::prefix('v1')->group(function () {
                 ->name('dashboards.bank-hours-fixed.indicators.hours-by-service');
             Route::get('/dashboards/bank-hours-fixed/indicators/service-timesheets', [BankHoursFixedController::class, 'bankHoursFixedServiceTimesheets'])
                 ->name('dashboards.bank-hours-fixed.indicators.service-timesheets');
+            Route::get('/dashboards/bank-hours-fixed/indicators/tickets-by-urgency', [BankHoursFixedController::class, 'bankHoursFixedTicketsByUrgency'])
+                ->name('dashboards.bank-hours-fixed.indicators.tickets-by-urgency');
             Route::get('/dashboards/bank-hours-fixed/indicators/tickets-by-status', [BankHoursFixedController::class, 'bankHoursFixedTicketsByStatus'])
                 ->name('dashboards.bank-hours-fixed.indicators.tickets-by-status');
             Route::get('/dashboards/bank-hours-fixed/indicators/status-timesheets', [BankHoursFixedController::class, 'bankHoursFixedStatusTimesheets'])

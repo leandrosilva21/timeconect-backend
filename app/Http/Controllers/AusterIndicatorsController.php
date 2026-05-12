@@ -13,13 +13,18 @@ class AusterIndicatorsController extends Controller
 {
     private const AUSTER_CUSTOMER_ID = HideAusterFrozenScope::AUSTER_CUSTOMER_ID;
 
-    private function denyIfNotAdmin(): ?JsonResponse
+    private function denyIfNotAllowed(): ?JsonResponse
     {
         $user = Auth::user();
-        if (!$user || !$user->isAdmin()) {
-            return response()->json(['message' => 'Apenas administradores'], 403);
+        if (!$user) {
+            return response()->json(['message' => 'Não autenticado'], 401);
         }
-        return null;
+        if ($user->isAdmin()) return null;
+        // Cliente da Auster vê os próprios indicadores
+        if ($user->type === 'cliente' && (int) $user->customer_id === self::AUSTER_CUSTOMER_ID) {
+            return null;
+        }
+        return response()->json(['message' => 'Acesso negado'], 403);
     }
 
     /**
@@ -28,7 +33,7 @@ class AusterIndicatorsController extends Controller
      */
     public function projects(Request $request): JsonResponse
     {
-        if ($deny = $this->denyIfNotAdmin()) return $deny;
+        if ($deny = $this->denyIfNotAllowed()) return $deny;
 
         $rows = Project::withoutGlobalScope(HideAusterFrozenScope::class)
             ->with(['contractType'])
@@ -93,7 +98,7 @@ class AusterIndicatorsController extends Controller
      */
     public function topConsumed(Request $request): JsonResponse
     {
-        if ($deny = $this->denyIfNotAdmin()) return $deny;
+        if ($deny = $this->denyIfNotAllowed()) return $deny;
 
         $limitParam = (string) $request->get('limit', '10');
 

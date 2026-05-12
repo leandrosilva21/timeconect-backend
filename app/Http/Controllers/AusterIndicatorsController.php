@@ -42,6 +42,9 @@ class AusterIndicatorsController extends Controller
             ->whereNotNull('parent_project_id')
             ->whereNotNull('start_date')
             ->where('start_date', '<', HideAusterFrozenScope::FREEZE_DATE)
+            ->whereHas('contractType', function ($q) {
+                $q->where('code', 'closed')->orWhereRaw('LOWER(TRIM(name)) = ?', ['fechado']);
+            })
             ->orderBy('start_date', 'asc')
             ->orderBy('id', 'asc')
             ->get();
@@ -113,6 +116,9 @@ class AusterIndicatorsController extends Controller
             ->whereNotNull('parent_project_id')
             ->whereNotNull('start_date')
             ->where('start_date', '<', HideAusterFrozenScope::FREEZE_DATE)
+            ->whereHas('contractType', function ($q) {
+                $q->where('code', 'closed')->orWhereRaw('LOWER(TRIM(name)) = ?', ['fechado']);
+            })
             ->get();
 
         $ids = $rows->pluck('id')->all();

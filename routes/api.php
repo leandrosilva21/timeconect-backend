@@ -845,6 +845,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/debug-project-map',   [SustentacaoController::class, 'debugProjectMap'])->name('sustentacao.debug-project-map');
             Route::post('/sync-orgs',          [SustentacaoController::class, 'syncOrgs'])->name('sustentacao.sync-orgs');
             Route::post('/sync-agents',        [SustentacaoController::class, 'syncAgents'])->name('sustentacao.sync-agents');
+            // Rotinas embarcadas no portal — filtradas por service_type Sustentação
+            Route::get('/timesheets',          [SustentacaoController::class, 'timesheets'])->name('sustentacao.timesheets');
+            Route::get('/expenses',            [SustentacaoController::class, 'expenses'])->name('sustentacao.expenses');
+            Route::get('/approvals',           [SustentacaoController::class, 'approvals'])->name('sustentacao.approvals');
         });
 
         // ⚙️ CONFIGURAÇÕES DO SISTEMA - Protegido por permissões específicas (Admins sempre têm acesso)

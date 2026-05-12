@@ -2,6 +2,7 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\AusterIndicatorsController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ContractTypeController;
 use App\Http\Controllers\CustomerController;
@@ -576,6 +577,10 @@ Route::prefix('v1')->group(function () {
 
         // Histórico de alterações de valor hora
         Route::get('/users/{user}/hourly-rate-history', [UserController::class, 'getHourlyRateHistory'])->name('users.hourly-rate-history');
+
+        // 📊 INDICADORES — Auster (admin only via check no controller; inclui projetos congelados)
+        Route::get('/indicadores/auster/projects',      [AusterIndicatorsController::class, 'projects'])->name('indicadores.auster.projects');
+        Route::get('/indicadores/auster/top-consumed',  [AusterIndicatorsController::class, 'topConsumed'])->name('indicadores.auster.top-consumed');
 
         // 🎯 APROVAÇÕES - Endpoints para gerenciar aprovações pendentes
         Route::middleware('permission.or.admin:timesheets.approve,expenses.approve')->group(function () {

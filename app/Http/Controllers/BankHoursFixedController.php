@@ -5240,16 +5240,16 @@ class BankHoursFixedController extends Controller
                    ->orWhereHas('project', fn ($pq) => $pq->where('parent_project_id', $projectId));
             });
         }
-        if ($dateFrom) $q->where('date', '>=', $dateFrom);
-        if ($dateTo)   $q->where('date', '<=', $dateTo);
+        if ($dateFrom) $q->where('expense_date', '>=', $dateFrom);
+        if ($dateTo)   $q->where('expense_date', '<=', $dateTo);
 
-        $expenses = $q->orderByDesc('date')->orderByDesc('id')->limit(500)->get();
+        $expenses = $q->orderByDesc('expense_date')->orderByDesc('id')->limit(500)->get();
 
         return response()->json([
             'success' => true,
             'data' => $expenses->map(fn ($e) => [
                 'id'             => $e->id,
-                'date'           => optional($e->date)->format('Y-m-d'),
+                'date'           => optional($e->expense_date)->format('Y-m-d'),
                 'amount'         => (float) $e->amount,
                 'description'    => $e->description,
                 'status'         => $e->status,

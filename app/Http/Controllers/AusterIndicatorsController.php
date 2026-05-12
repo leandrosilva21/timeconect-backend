@@ -28,9 +28,10 @@ class AusterIndicatorsController extends Controller
     }
 
     /**
-     * Lista apenas os projetos históricos da Auster (subprojetos com start_date
-     * anterior a 2025-05-01) — mesma regra de `isAusterFrozen()`. Projetos
-     * recentemente desvinculados (parent virou NULL) não entram aqui.
+     * Lista todos os subprojetos Fechado da Auster (históricos + recentes).
+     * Antes restringia a start_date < 2025-05-01; agora traz tudo pra o cliente
+     * ver projetos antigos e atuais juntos. Recentemente desvinculados
+     * (parent virou NULL) continuam fora.
      */
     public function projects(Request $request): JsonResponse
     {
@@ -41,7 +42,6 @@ class AusterIndicatorsController extends Controller
             ->where('customer_id', self::AUSTER_CUSTOMER_ID)
             ->whereNotNull('parent_project_id')
             ->whereNotNull('start_date')
-            ->where('start_date', '<', HideAusterFrozenScope::FREEZE_DATE)
             ->whereHas('contractType', function ($q) {
                 $q->where('code', 'closed')->orWhereRaw('LOWER(TRIM(name)) = ?', ['fechado']);
             })
@@ -83,11 +83,10 @@ class AusterIndicatorsController extends Controller
         $totalSold     = round($items->sum('sold_hours'), 2);
         $totalConsumed = round($items->sum('consumed_hours'), 2);
         $totalProjects = $items->count();
-        // Todos os projetos retornados são subprojetos Auster com start_date < 2025-05-01,
-        // ou seja, históricos/fechados por definição. Contamos 100% como concluídos
-        // independente do status individual (legado: alguns ficaram como 'started').
-        $finished      = $totalProjects;
-        $finishedPct   = $totalProjects > 0 ? 100.0 : 0.0;
+        $finished      = $items->where('status', Project::STATUS_FINISHED)->count();
+        $finishedPct   = $totalProjects > 0
+            ? round(($finished / $totalProjects) * 100, 1)
+            : 0.0;
 
         return response()->json([
             'items'   => $items,
@@ -116,7 +115,6 @@ class AusterIndicatorsController extends Controller
             ->where('customer_id', self::AUSTER_CUSTOMER_ID)
             ->whereNotNull('parent_project_id')
             ->whereNotNull('start_date')
-            ->where('start_date', '<', HideAusterFrozenScope::FREEZE_DATE)
             ->whereHas('contractType', function ($q) {
                 $q->where('code', 'closed')->orWhereRaw('LOWER(TRIM(name)) = ?', ['fechado']);
             })

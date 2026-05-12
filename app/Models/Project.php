@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Scopes\HideAusterFrozenScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -12,6 +13,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class Project extends Model
 {
     use HasFactory, SoftDeletes;
+
+    protected static function booted(): void
+    {
+        static::addGlobalScope(new HideAusterFrozenScope);
+    }
 
     // Contract type constants removidos - agora vem da tabela contract_types
 
@@ -883,13 +889,17 @@ class Project extends Model
     /**
      * Subprojetos da Auster com início anterior a 01/05/2025 são somente-leitura histórica:
      * não devem contribuir para saldos, totais ou custos do projeto pai.
+     *
+     * Nota: o global scope HideAusterFrozenScope já filtra esses projetos das queries
+     * por padrão. Este método é mantido como guarda defensiva (caso alguém carregue
+     * via withoutGlobalScope) e como fonte da regra para indicadores futuros.
      */
     public function isAusterFrozen(): bool
     {
-        return $this->customer_id === 220
+        return $this->customer_id === HideAusterFrozenScope::AUSTER_CUSTOMER_ID
             && $this->parent_project_id !== null
             && $this->start_date !== null
-            && \Carbon\Carbon::parse($this->start_date)->lt(\Carbon\Carbon::parse('2025-05-01'));
+            && \Carbon\Carbon::parse($this->start_date)->lt(\Carbon\Carbon::parse(HideAusterFrozenScope::FREEZE_DATE));
     }
 
     /**

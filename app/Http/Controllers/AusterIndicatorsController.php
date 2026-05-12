@@ -28,8 +28,9 @@ class AusterIndicatorsController extends Controller
     }
 
     /**
-     * Lista todos os projetos da Auster (frozen + ativos) com horas
-     * vendidas, consumidas e cards de resumo.
+     * Lista apenas os projetos históricos da Auster (subprojetos com start_date
+     * anterior a 2025-05-01) — mesma regra de `isAusterFrozen()`. Projetos
+     * recentemente desvinculados (parent virou NULL) não entram aqui.
      */
     public function projects(Request $request): JsonResponse
     {
@@ -38,7 +39,11 @@ class AusterIndicatorsController extends Controller
         $rows = Project::withoutGlobalScope(HideAusterFrozenScope::class)
             ->with(['contractType'])
             ->where('customer_id', self::AUSTER_CUSTOMER_ID)
-            ->orderByRaw('start_date IS NULL, start_date ASC, id ASC')
+            ->whereNotNull('parent_project_id')
+            ->whereNotNull('start_date')
+            ->where('start_date', '<', HideAusterFrozenScope::FREEZE_DATE)
+            ->orderBy('start_date', 'asc')
+            ->orderBy('id', 'asc')
             ->get();
 
         $ids = $rows->pluck('id')->all();
@@ -105,6 +110,9 @@ class AusterIndicatorsController extends Controller
         $rows = Project::withoutGlobalScope(HideAusterFrozenScope::class)
             ->with(['contractType'])
             ->where('customer_id', self::AUSTER_CUSTOMER_ID)
+            ->whereNotNull('parent_project_id')
+            ->whereNotNull('start_date')
+            ->where('start_date', '<', HideAusterFrozenScope::FREEZE_DATE)
             ->get();
 
         $ids = $rows->pluck('id')->all();

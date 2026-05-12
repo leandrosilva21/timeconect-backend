@@ -1005,7 +1005,12 @@ class TimesheetController extends Controller
             $step = 'auth_check';
             $isOwner      = $timesheet->user_id === $user->id;
             $isClienteOk  = $user->isCliente() && $user->customer_id && $timesheet->customer_id === $user->customer_id;
-            $canView      = $user->isAdmin() || $user->isCoordenador() || $user->hasAccess('hours.view_all') || $isOwner || $isClienteOk;
+            // Parceiro Admin/Gestor: vê apontamentos de qualquer membro da sua parceria
+            $isTeamTimesheet = $user->isParceiroAdmin() && $user->partner_id &&
+                \App\Models\User::where('id', $timesheet->user_id)
+                    ->where('partner_id', $user->partner_id)
+                    ->exists();
+            $canView      = $user->isAdmin() || $user->isCoordenador() || $user->hasAccess('hours.view_all') || $isOwner || $isClienteOk || $isTeamTimesheet;
             if ($user && !$canView) {
                 return response()->json(['success' => false, 'message' => 'Acesso negado'], 403);
             }

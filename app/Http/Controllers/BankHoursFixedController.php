@@ -551,11 +551,14 @@ class BankHoursFixedController extends Controller
 
         $serviceTypeProjetoId = ServiceType::where('code', 'projeto')->orWhere('name', 'Projeto')->value('id');
         $serviceTypeManutId   = ServiceType::where('code', 'sustentação')->orWhere('name', 'Sustentação')->value('id');
+        $serviceTypeArqId     = ServiceType::where('code', 'arquitetura')->orWhere('name', 'Arquitetura')->value('id');
 
-        $projectsConsumedHours         = 0.0;
-        $projectsMonthConsumedHours    = 0.0;
-        $maintenanceConsumedHours      = 0.0;
-        $maintenanceMonthConsumedHours = 0.0;
+        $projectsConsumedHours          = 0.0;
+        $projectsMonthConsumedHours     = 0.0;
+        $maintenanceConsumedHours       = 0.0;
+        $maintenanceMonthConsumedHours  = 0.0;
+        $architectureConsumedHours      = 0.0;
+        $architectureMonthConsumedHours = 0.0;
 
         foreach ($parentProjects as $parentProject) {
             $processProject = function ($proj, $stId, &$accum, &$accumMonth)
@@ -593,11 +596,14 @@ class BankHoursFixedController extends Controller
                 }
             };
 
-            $processProject($parentProject, $serviceTypeProjetoId, $projectsConsumedHours, $projectsMonthConsumedHours);
-            $processProject($parentProject, $serviceTypeManutId,   $maintenanceConsumedHours, $maintenanceMonthConsumedHours);
+            $processProject($parentProject, $serviceTypeProjetoId, $projectsConsumedHours,     $projectsMonthConsumedHours);
+            $processProject($parentProject, $serviceTypeManutId,   $maintenanceConsumedHours,  $maintenanceMonthConsumedHours);
+            if ($serviceTypeArqId) {
+                $processProject($parentProject, $serviceTypeArqId, $architectureConsumedHours, $architectureMonthConsumedHours);
+            }
             // initial_hours_consumed do pai já é somado dentro de processProject (alinhamento com gestao mode)
 
-            // Filhos: sempre processa para Projeto; para Manutenção apenas quando pai NÃO é sustentação
+            // Filhos: sempre processa para Projeto; para Manutenção/Arquitetura apenas quando pai NÃO for daquele tipo
             if ($parentProject->hasChildProjects()) {
                 foreach ($parentProject->childProjects as $childProject) {
                     if ($childProject->isAusterFrozen()) continue;
@@ -605,27 +611,36 @@ class BankHoursFixedController extends Controller
                     if ($parentProject->service_type_id !== $serviceTypeManutId) {
                         $processProject($childProject, $serviceTypeManutId, $maintenanceConsumedHours, $maintenanceMonthConsumedHours);
                     }
+                    if ($serviceTypeArqId && $parentProject->service_type_id !== $serviceTypeArqId) {
+                        $processProject($childProject, $serviceTypeArqId, $architectureConsumedHours, $architectureMonthConsumedHours);
+                    }
                 }
             }
         }
 
-        $projectsConsumedHours         = round($projectsConsumedHours, 2);
-        $projectsMonthConsumedHours    = round($projectsMonthConsumedHours, 2);
-        $maintenanceConsumedHours      = round($maintenanceConsumedHours, 2);
-        $maintenanceMonthConsumedHours = round($maintenanceMonthConsumedHours, 2);
+        $projectsConsumedHours          = round($projectsConsumedHours, 2);
+        $projectsMonthConsumedHours     = round($projectsMonthConsumedHours, 2);
+        $maintenanceConsumedHours       = round($maintenanceConsumedHours, 2);
+        $maintenanceMonthConsumedHours  = round($maintenanceMonthConsumedHours, 2);
+        $architectureConsumedHours      = round($architectureConsumedHours, 2);
+        $architectureMonthConsumedHours = round($architectureMonthConsumedHours, 2);
         // ─────────────────────────────────────────────────────────────────────────
 
-        // ─── has_support ─────────────────────────────────────────────────────────
-        // true se algum projeto (ou filho) tem service_type = Sustentação
+        // ─── has_support / has_architecture ──────────────────────────────────────
+        // true se algum projeto (ou filho) tem service_type = Sustentação / Arquitetura
         // Usa dados já carregados via eager loading — sem queries extras (N+1)
-        $hasSupport = false;
+        $hasSupport      = false;
+        $hasArchitecture = false;
         foreach ($parentProjects as $proj) {
             $typeName = strtolower(trim($proj->serviceType->name ?? ''));
-            if (str_contains($typeName, 'sustenta')) { $hasSupport = true; break; }
+            if (str_contains($typeName, 'sustenta'))   $hasSupport      = true;
+            if (str_contains($typeName, 'arquitet'))   $hasArchitecture = true;
             foreach ($proj->childProjects ?? [] as $child) {
                 $childType = strtolower(trim($child->serviceType->name ?? ''));
-                if (str_contains($childType, 'sustenta')) { $hasSupport = true; break 2; }
+                if (str_contains($childType, 'sustenta'))  $hasSupport      = true;
+                if (str_contains($childType, 'arquitet'))  $hasArchitecture = true;
             }
+            if ($hasSupport && $hasArchitecture) break;
         }
         // ─────────────────────────────────────────────────────────────────────────
 
@@ -641,6 +656,8 @@ class BankHoursFixedController extends Controller
                 'projects_month_consumed_hours' => $projectsMonthConsumedHours,
                 'maintenance_consumed_hours' => $maintenanceConsumedHours,
                 'maintenance_month_consumed_hours' => $maintenanceMonthConsumedHours,
+                'architecture_consumed_hours' => $architectureConsumedHours,
+                'architecture_month_consumed_hours' => $architectureMonthConsumedHours,
                 'hours_balance' => $hoursBalance,
                 'exceeded_hours' => $exceededHours,
                 'amount_to_pay' => $amountToPay,
@@ -648,6 +665,7 @@ class BankHoursFixedController extends Controller
                 'weighted_hourly_rate' => $weightedHourlyRate,  // ✨ Média ponderada (usado no cálculo)
                 'contributed_hours_history' => $contributionHistory,
                 'has_support' => $hasSupport,
+                'has_architecture' => $hasArchitecture,
                 'customer_id' => $customerId,
                 'project_id' => $projectId ? (int) $projectId : null
             ]

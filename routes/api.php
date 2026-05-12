@@ -123,6 +123,11 @@ Route::prefix('v1')->group(function () {
                 ->name('dashboards.bank-hours-fixed.projects');
             Route::get('/dashboards/bank-hours-fixed/projects/{projectId}/tickets', [BankHoursFixedController::class, 'bankHoursFixedProjectTickets'])
                 ->name('dashboards.bank-hours-fixed.projects.tickets');
+            // Modais "Ver Apontamentos" e "Ver Despesas" dentro do dashboard
+            Route::get('/dashboards/bank-hours-fixed/category-timesheets', [BankHoursFixedController::class, 'categoryTimesheetsModal'])
+                ->name('dashboards.bank-hours-fixed.category-timesheets');
+            Route::get('/dashboards/bank-hours-fixed/expenses', [BankHoursFixedController::class, 'expensesModal'])
+                ->name('dashboards.bank-hours-fixed.expenses');
             Route::get('/dashboards/bank-hours-fixed/maintenance/tickets', [BankHoursFixedController::class, 'bankHoursFixedMaintenanceTickets'])
                 ->name('dashboards.bank-hours-fixed.maintenance.tickets');
             Route::get('/dashboards/bank-hours-fixed/maintenance/tickets/{ticketId}/timesheets', [BankHoursFixedController::class, 'bankHoursFixedMaintenanceTicketTimesheets'])

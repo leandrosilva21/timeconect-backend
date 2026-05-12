@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Expense;
 use App\Models\Project;
 use App\Models\ProjectChangeLog;
 use App\Models\Timesheet;
@@ -4765,6 +4766,115 @@ class BankHoursFixedController extends Controller
             'success' => true,
             'message' => 'Apontamentos obtidos com sucesso',
             'data' => $timesheetsData
+        ]);
+    }
+
+    /**
+     * Lista timesheets por categoria de service_type (architecture | maintenance).
+     * Usado pelos modais "Ver Apontamentos" nas abas correspondentes do dashboard.
+     */
+    public function categoryTimesheetsModal(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $category = (string) $request->get('category', '');
+
+        $serviceCodeMap = [
+            'architecture' => 'arquitetura',
+            'maintenance'  => 'sustentação',
+        ];
+        $serviceNameMap = [
+            'architecture' => 'Arquitetura',
+            'maintenance'  => 'Sustentação',
+        ];
+        if (!isset($serviceCodeMap[$category])) {
+            return response()->json(['success' => false, 'message' => 'category inválida'], 422);
+        }
+
+        $serviceTypeId = ServiceType::where('code', $serviceCodeMap[$category])
+            ->orWhere('name', $serviceNameMap[$category])
+            ->value('id');
+        if (!$serviceTypeId) {
+            return response()->json(['success' => true, 'data' => []]);
+        }
+
+        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        $projectId  = $request->get('project_id');
+        $dateFrom   = $request->get('date_from');
+        $dateTo     = $request->get('date_to');
+
+        $projectIdsQuery = Project::where('service_type_id', $serviceTypeId)->whereNull('deleted_at');
+        if ($customerId) $projectIdsQuery->where('customer_id', $customerId);
+        if ($projectId) {
+            $projectIdsQuery->where(function ($q) use ($projectId) {
+                $q->where('id', $projectId)->orWhere('parent_project_id', $projectId);
+            });
+        }
+        $projectIds = $projectIdsQuery->pluck('id');
+        if ($projectIds->isEmpty()) {
+            return response()->json(['success' => true, 'data' => []]);
+        }
+
+        $ts = Timesheet::with(['user', 'project'])
+            ->whereIn('project_id', $projectIds)
+            ->where('status', '!=', 'rejected');
+        if ($dateFrom) $ts->where('date', '>=', $dateFrom);
+        if ($dateTo)   $ts->where('date', '<=', $dateTo);
+        $ts = $ts->orderByDesc('date')->orderByDesc('id')->limit(500)->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $ts->map(fn ($t) => [
+                'id'             => $t->id,
+                'date'           => optional($t->date)->format('Y-m-d'),
+                'effort_minutes' => $t->effort_minutes,
+                'description'    => $t->description,
+                'status'         => $t->status,
+                'status_display' => $t->status_display,
+                'user'           => $t->user ? ['id' => $t->user->id, 'name' => $t->user->name] : null,
+                'project'        => $t->project ? ['id' => $t->project->id, 'code' => $t->project->code, 'name' => $t->project->name] : null,
+            ])->values(),
+        ]);
+    }
+
+    /**
+     * Lista despesas relacionadas ao recorte do dashboard (customer/project/datas).
+     */
+    public function expensesModal(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        $projectId  = $request->get('project_id');
+        $dateFrom   = $request->get('date_from');
+        $dateTo     = $request->get('date_to');
+
+        $q = Expense::with(['user', 'project', 'category']);
+        if ($customerId) {
+            $q->whereHas('project', fn ($pq) => $pq->where('customer_id', $customerId));
+        }
+        if ($projectId) {
+            $q->where(function ($qq) use ($projectId) {
+                $qq->where('project_id', $projectId)
+                   ->orWhereHas('project', fn ($pq) => $pq->where('parent_project_id', $projectId));
+            });
+        }
+        if ($dateFrom) $q->where('date', '>=', $dateFrom);
+        if ($dateTo)   $q->where('date', '<=', $dateTo);
+
+        $expenses = $q->orderByDesc('date')->orderByDesc('id')->limit(500)->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $expenses->map(fn ($e) => [
+                'id'             => $e->id,
+                'date'           => optional($e->date)->format('Y-m-d'),
+                'amount'         => (float) $e->amount,
+                'description'    => $e->description,
+                'status'         => $e->status,
+                'status_display' => $e->status_display ?? $e->status,
+                'user'           => $e->user ? ['id' => $e->user->id, 'name' => $e->user->name] : null,
+                'project'        => $e->project ? ['id' => $e->project->id, 'code' => $e->project->code, 'name' => $e->project->name] : null,
+                'category'       => $e->category ? ['id' => $e->category->id, 'name' => $e->category->name] : null,
+            ])->values(),
         ]);
     }
 }

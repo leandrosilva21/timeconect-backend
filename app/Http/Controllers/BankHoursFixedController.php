@@ -355,12 +355,14 @@ class BankHoursFixedController extends Controller
                         $childTotalHours = $childProject->getTotalAvailableHours();
                         $consumedHours += $childTotalHours;
                     } else {
-                        // Para outros tipos: usar horas apontadas normalmente (excluindo rejeitados)
+                        // Para outros tipos (inclui BH Fixo): apontadas + initial_hours_consumed
+                        // (alinhado com ProjectController::index gestao mode)
                         $childLoggedMinutes = $childProject->timesheets()
                             ->where('status', '!=', 'rejected')
                             ->sum('effort_minutes') ?? 0;
                         $childLoggedHours = round($childLoggedMinutes / 60, 2);
                         $consumedHours += $childLoggedHours;
+                        $consumedHours += (float) ($childProject->initial_hours_consumed ?? 0);
                     }
                 }
             }
@@ -570,6 +572,8 @@ class BankHoursFixedController extends Controller
                 } else {
                     $mins = $proj->timesheets()->where('status', '!=', 'rejected')->sum('effort_minutes') ?? 0;
                     $accum += round($mins / 60, 2);
+                    // Histórico pré-importação (alinhado com ProjectController::index gestao mode)
+                    $accum += (float) ($proj->initial_hours_consumed ?? 0);
                 }
 
                 // Consumo do mês
@@ -591,12 +595,7 @@ class BankHoursFixedController extends Controller
 
             $processProject($parentProject, $serviceTypeProjetoId, $projectsConsumedHours, $projectsMonthConsumedHours);
             $processProject($parentProject, $serviceTypeManutId,   $maintenanceConsumedHours, $maintenanceMonthConsumedHours);
-
-            // Pai sustentação: somar apenas initial_hours_consumed (horas históricas pré-importação)
-            // Filhos são processados pelo loop abaixo via processProject, evitando dupla contagem
-            if ($parentProject->service_type_id === $serviceTypeManutId) {
-                $maintenanceConsumedHours += (float) ($parentProject->initial_hours_consumed ?? 0);
-            }
+            // initial_hours_consumed do pai já é somado dentro de processProject (alinhamento com gestao mode)
 
             // Filhos: sempre processa para Projeto; para Manutenção apenas quando pai NÃO é sustentação
             if ($parentProject->hasChildProjects()) {

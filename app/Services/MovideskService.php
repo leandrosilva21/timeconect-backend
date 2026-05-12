@@ -394,6 +394,33 @@ class MovideskService
                 }
                 return false; // não conta como criado, mas foi atualizado
             }
+
+            // Detecção de EDIÇÃO COM NOVO appointment.id: o Movidesk, ao editar um
+            // apontamento, às vezes descarta o id antigo e gera um novo. Sem essa
+            // detecção, o sync criaria um novo timesheet e marcaria o original como
+            // órfão (soft-delete), quebrando a auditoria (vira "deletado + criado"
+            // em vez de "atualizado"). Aqui buscamos um candidato no DB com a mesma
+            // chave natural (ticket + user + ação Movidesk) cujo movidesk_appointment_id
+            // ESTEJA fora da lista atual do Movidesk — assinatura clássica de edição.
+            $editCandidate = $this->findEditedCandidate($ticket, $action, $appointment, $appointmentId);
+            if ($editCandidate) {
+                $oldAppointmentId = $editCandidate->movidesk_appointment_id;
+                // Aponta pro novo id no Movidesk; salvamos primeiro pra garantir
+                // persistência mesmo se reprocessTimesheet não detectar outras mudanças.
+                // O observer gera log de auditoria automaticamente (source=movidesk_sync).
+                $editCandidate->movidesk_appointment_id = $appointmentId;
+                $editCandidate->_logSource = 'movidesk_sync';
+                $editCandidate->save();
+
+                $result = $this->reprocessTimesheet($editCandidate->fresh());
+                Log::info('🔄 [MOVIDESK] Apontamento ALTERADO no Movidesk reconhecido como edição (novo appointment.id)', [
+                    'timesheet_id'                 => $editCandidate->id,
+                    'old_movidesk_appointment_id'  => $oldAppointmentId,
+                    'new_movidesk_appointment_id'  => $appointmentId,
+                    'changes'                      => array_keys($result['changes'] ?? []),
+                ]);
+                return false; // não cria duplicata; foi update
+            }
         }
 
         try {
@@ -794,6 +821,54 @@ class MovideskService
     // ─────────────────────────────────────────────────────────────
     // Persistência
     // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Procura um timesheet EXISTENTE que provavelmente corresponde a este appointment
+     * mas com `movidesk_appointment_id` antigo — caso típico de edição no Movidesk
+     * que recria o id do apontamento.
+     *
+     * Estratégia (em ordem de especificidade — só consolida se encontrar ÚNICO match):
+     *   1. ticket + user + date + start_time (chave natural mais forte)
+     *   2. ticket + user + date (cobre quando o start_time também foi editado)
+     *
+     * Excluímos timesheets já com o NOVO id e os já soft-deletados. Em qualquer caso
+     * de ambiguidade (mais de 1 candidato) cai pro fluxo de criação normal — melhor
+     * uma duplicata visível do que sobrescrever silenciosamente o timesheet errado.
+     */
+    private function findEditedCandidate(array $ticket, array $action, array $appointment, $newAppointmentId): ?\App\Models\Timesheet
+    {
+        $ticketId = $ticket['id'] ?? null;
+        if (!$ticketId) return null;
+
+        // Pra identificar o user, usamos a MESMA lógica do extractUserId. Se não
+        // conseguirmos resolver o user, sem chave natural confiável — desiste.
+        $userId = $this->extractUserId($action);
+        if (!$userId) return null;
+
+        $date = $this->extractDate($appointment);
+        if (!$date) return null;
+
+        $startTime = $this->extractTime($appointment, 'periodStart');
+
+        $baseQuery = fn() => Timesheet::query()
+            ->where('ticket', (string) $ticketId)
+            ->where('user_id', $userId)
+            ->where('date', $date)
+            ->where(function ($q) use ($newAppointmentId) {
+                $q->where('movidesk_appointment_id', '!=', $newAppointmentId)
+                  ->orWhereNull('movidesk_appointment_id');
+            });
+
+        // Nível 1: bate com start_time idêntico — assinatura forte de edição
+        if ($startTime) {
+            $matches = $baseQuery()->where('start_time', $startTime)->limit(2)->get();
+            if ($matches->count() === 1) return $matches->first();
+        }
+
+        // Nível 2: sem start_time, só ticket+user+date (start/end pode ter mudado)
+        $matches = $baseQuery()->limit(2)->get();
+        return $matches->count() === 1 ? $matches->first() : null;
+    }
 
     private function createTimesheet(array $data): void
     {

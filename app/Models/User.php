@@ -54,6 +54,27 @@ class User extends Authenticatable
         'profile_photo',
         'customer_id',
         'partner_id',
+        // Type/permission flags
+        'type',
+        'coordinator_type',
+        'is_executive',
+        'can_timesheet_sustentacao',
+        'extra_permissions',
+        // Capacity (módulo skills)
+        'capacity_hours',
+        'allocated_hours',
+        // Profile fields (form perfil-skills + candidato)
+        'availability_status',
+        'availability_start_date',
+        'relevant_projects',
+        'segments',
+        // Candidato form
+        'phone',
+        'linkedin_url',
+        'work_model',
+        'city',
+        'state',
+        'protheus_years_experience',
     ];
 
     /**
@@ -95,6 +116,8 @@ class User extends Authenticatable
             'bank_hours_start_date' => 'date:Y-m-d',
             'guaranteed_hours'      => 'decimal:2',
             'extra_permissions'     => 'array',
+            'segments' => 'array',
+            'extra_permissions' => 'array',
         ];
     }
 

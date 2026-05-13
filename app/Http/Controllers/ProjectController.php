@@ -139,7 +139,11 @@ class ProjectController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $perPage = min($request->get('pageSize', $request->get('per_page', 15)), 200);
+        // Cap maior para listagem de Investimento Interno: cada cliente tem ~3 projetos
+        // (Comercial/Suporte/Projetos) + manuais → o cap padrão de 200 cortava a página
+        // e clientes sumiam da tela /investimento-comercial.
+        $maxPerPage = $request->boolean('only_investimento_comercial') ? 2000 : 200;
+        $perPage = min($request->get('pageSize', $request->get('per_page', 15)), $maxPerPage);
         $minimal = $request->boolean('minimal');
         $search = $request->get('filter') ?? $request->get('search');
         $status = $request->get('status');

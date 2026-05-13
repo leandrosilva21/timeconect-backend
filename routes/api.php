@@ -39,6 +39,7 @@ use App\Http\Controllers\CustomerContactController;
 use App\Http\Controllers\ProjectContactController;
 use App\Http\Controllers\SkillController;
 use App\Http\Controllers\ConsultantSkillController;
+use App\Http\Controllers\GapController;
 
 /*
 |--------------------------------------------------------------------------
@@ -862,5 +863,11 @@ Route::prefix('v1')->group(function () {
         Route::get('/consultants/{id}/skills',         [ConsultantSkillController::class, 'indexByConsultant'])->name('consultants.skills.index');
         Route::post('/consultants/{id}/skills',        [ConsultantSkillController::class, 'storeForConsultant'])->name('consultants.skills.store');
         Route::put('/consultant-skills/{id}',          [ConsultantSkillController::class, 'update'])->name('consultant-skills.update');
+
+        // 🎯 GAPS — Detecção de lacunas de skills (critical e por projeto)
+        Route::get('/consultants/{id}/gaps',          [GapController::class, 'consultantGaps'])->name('consultants.gaps');
+        Route::get('/projects/{id}/gaps',             [GapController::class, 'projectGaps'])->name('projects.gaps');
+        Route::post('/critical-skills',               [GapController::class, 'storeCriticalSkill'])->name('critical-skills.store');
+        Route::post('/projects/{id}/required-skills', [GapController::class, 'storeProjectRequiredSkill'])->name('projects.required-skills.store');
     });
 });

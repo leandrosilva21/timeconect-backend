@@ -41,6 +41,7 @@ use App\Http\Controllers\ProjectContactController;
 use App\Http\Controllers\SkillController;
 use App\Http\Controllers\ConsultantSkillController;
 use App\Http\Controllers\GapController;
+use App\Http\Controllers\CandidateController;
 
 /*
 |--------------------------------------------------------------------------
@@ -105,6 +106,14 @@ Route::prefix('v1')->group(function () {
     })->name('api.health');
 
     // Rotas protegidas (com autenticação Sanctum)
+    // 👤 CADASTRO PÚBLICO DE CANDIDATO — sem auth, com throttle pra evitar spam
+    Route::get('/candidates/form-data', [CandidateController::class, 'formData'])
+        ->middleware('throttle:30,1')
+        ->name('candidates.form-data');
+    Route::post('/candidates',          [CandidateController::class, 'store'])
+        ->middleware('throttle:5,1')
+        ->name('candidates.store');
+
     Route::middleware('auth:sanctum')->group(function () {
         // Dados do usuário
         Route::get('/user', [AuthController::class, 'user'])->name('user.profile');

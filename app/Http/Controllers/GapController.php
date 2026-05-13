@@ -395,4 +395,225 @@ class GapController extends Controller
             'risk_reason' => $data['risk_reason'] ?? null,
         ], 201);
     }
+
+    /**
+     * Equipe sugerida via algoritmo guloso (set cover):
+     *  - A cada iteração, seleciona o consultor que cobre mais skills pendentes
+     *    (desempate: internal > partner > candidate, depois nome).
+     *  - Remove skills cobertas + consultor da lista.
+     *  - Para quando: tudo coberto OR time chega a 5 OR ninguém cobre nada novo.
+     *  - Ignora consultores com availability < 0.2.
+     */
+    public function teamRecommendation(int $projectId): JsonResponse
+    {
+        $project = Project::findOrFail($projectId);
+
+        $required = DB::table('project_required_skills as prs')
+            ->join('skills as s', 's.id', '=', 'prs.skill_id')
+            ->join('skill_levels as sl', 'sl.id', '=', 'prs.min_level_id')
+            ->where('prs.project_id', $projectId)
+            ->select('prs.skill_id', 's.name as skill_name', 's.category as skill_category',
+                     'sl.id as level_id', 'sl.name as level_name', 'sl.weight as req_weight')
+            ->get()
+            ->keyBy('skill_id');
+
+        if ($required->isEmpty()) {
+            return response()->json([
+                'project'   => ['id' => $project->id, 'name' => $project->name],
+                'team'      => [],
+                'message'   => 'Projeto não tem skills exigidas cadastradas.',
+            ]);
+        }
+
+        $skillIds  = $required->keys();
+        $allocated = DB::table('project_consultants')->where('project_id', $projectId)->pluck('user_id');
+
+        // Candidatos elegíveis (com availability >= 0.2)
+        $candidates = User::whereIn('type', ['consultor', 'parceiro_admin'])
+            ->whereNotIn('id', $allocated)
+            ->select('id', 'name', 'type', 'consultant_type', 'capacity_hours', 'allocated_hours')
+            ->get()
+            ->map(function ($u) {
+                $cap = (int) ($u->capacity_hours  ?? 160);
+                $alc = (int) ($u->allocated_hours ?? 0);
+                $avail = $cap > 0 ? max(0.0, min(1.0, ($cap - $alc) / $cap)) : 1.0;
+                $type = $u->type === 'parceiro_admin'
+                    ? 'partner'
+                    : ($u->consultant_type === 'candidate' ? 'candidate' : 'internal');
+                return (object) [
+                    'id'           => $u->id,
+                    'name'         => $u->name,
+                    'rtype'        => $type,
+                    'availability' => round($avail, 3),
+                    'priority'     => $type === 'internal' ? 0 : ($type === 'partner' ? 1 : 2),
+                ];
+            })
+            ->filter(fn($c) => $c->availability >= 0.2)
+            ->keyBy('id');
+
+        // Mapa consultor → [skill_id => actual_weight] pra todas as skills required
+        $consultantSkills = ConsultantSkill::with('level:id,weight')
+            ->whereIn('consultant_id', $candidates->keys())
+            ->whereIn('skill_id', $skillIds)
+            ->get()
+            ->groupBy('consultant_id')
+            ->map(fn($coll) => $coll->mapWithKeys(fn($cs) => [$cs->skill_id => $cs->level?->weight ?? 0]));
+
+        // Algoritmo guloso
+        $pending     = $skillIds->all();
+        $team        = [];
+        $coveredBy   = []; // user_id → [skill_id]
+        $remaining   = $candidates;
+        $teamSize    = 0;
+        $maxTeamSize = 5;
+
+        while (!empty($pending) && $teamSize < $maxTeamSize) {
+            $bestUserId  = null;
+            $bestCovers  = [];
+            $bestPri     = 99;
+
+            foreach ($remaining as $cid => $c) {
+                $userSkills = $consultantSkills->get($cid, collect());
+                $covers = [];
+                foreach ($pending as $skillId) {
+                    $req = $required[$skillId]->req_weight;
+                    $actual = $userSkills->get($skillId, 0);
+                    if ($actual >= $req) {
+                        $covers[] = $skillId;
+                    }
+                }
+                if (count($covers) > count($bestCovers)
+                    || (count($covers) > 0
+                        && count($covers) === count($bestCovers)
+                        && $c->priority < $bestPri)) {
+                    $bestUserId = $cid;
+                    $bestCovers = $covers;
+                    $bestPri    = $c->priority;
+                }
+            }
+
+            if ($bestUserId === null || empty($bestCovers)) {
+                break; // ninguém cobre nada novo
+            }
+
+            $u = $candidates[$bestUserId];
+            $team[] = [
+                'consultant_id' => (int) $u->id,
+                'name'          => $u->name,
+                'type'          => $u->rtype,
+                'availability'  => $u->availability,
+                'skills_covered' => collect($bestCovers)->map(fn($sid) => [
+                    'id'             => (int) $sid,
+                    'name'           => $required[$sid]->skill_name,
+                    'category'       => $required[$sid]->skill_category,
+                    'required_level' => $required[$sid]->level_name,
+                ])->values(),
+                'skills_covered_count' => count($bestCovers),
+            ];
+            $coveredBy[$bestUserId] = $bestCovers;
+            $pending  = array_values(array_diff($pending, $bestCovers));
+            $remaining->forget($bestUserId);
+            $teamSize++;
+        }
+
+        // Score individual (mesma fórmula da recommendations: base+bonus * avail)
+        // contra TODAS as required skills (não só as pending)
+        $teamScores = [];
+        foreach ($team as &$member) {
+            $userSkills = $consultantSkills->get($member['consultant_id'], collect());
+            $baseSum = 0.0; $bonusSum = 0.0; $n = 0;
+            foreach ($required as $sid => $r) {
+                $actual = $userSkills->get($sid, null);
+                if ($actual === null || $actual === 0) {
+                    $baseSum += -0.5;
+                } elseif ($actual >= $r->req_weight) {
+                    $baseSum += 1.0;
+                    if ($actual > $r->req_weight) $bonusSum += ($actual - $r->req_weight) * 0.1;
+                } else {
+                    $baseSum += $actual / $r->req_weight;
+                }
+                $n++;
+            }
+            $indScore = $n > 0
+                ? round((($baseSum + $bonusSum) / $n) * $member['availability'], 3)
+                : 0.0;
+            $member['score'] = $indScore;
+            $teamScores[] = $indScore;
+        }
+        unset($member);
+
+        $teamScore = count($teamScores) > 0
+            ? round(array_sum($teamScores) / count($teamScores), 3)
+            : 0.0;
+
+        $gapsRemaining = collect($pending)->map(fn($sid) => [
+            'id'             => (int) $sid,
+            'name'           => $required[$sid]->skill_name,
+            'category'       => $required[$sid]->skill_category,
+            'required_level' => $required[$sid]->level_name,
+        ])->values();
+
+        return response()->json([
+            'project'  => ['id' => $project->id, 'name' => $project->name],
+            'team'     => $team,
+            'coverage' => [
+                'total'   => $required->count(),
+                'covered' => $required->count() - count($pending),
+                'missing' => count($pending),
+            ],
+            'team_score'      => $teamScore,
+            'gaps_remaining'  => $gapsRemaining,
+        ]);
+    }
+
+    /**
+     * Aloca um time inteiro de uma vez em project_consultants.
+     * Idempotente: ignora consultores já alocados.
+     */
+    public function allocateTeam(Request $request, int $projectId): JsonResponse
+    {
+        Project::findOrFail($projectId);
+
+        $data = $request->validate([
+            'consultant_ids'   => 'required|array|min:1|max:10',
+            'consultant_ids.*' => 'integer|exists:users,id',
+            'risk_flags'       => 'nullable|array',
+            'risk_flags.*'     => 'boolean',
+            'risk_reasons'     => 'nullable|array',
+            'risk_reasons.*'   => 'nullable|string|max:1000',
+        ]);
+
+        $ids = $data['consultant_ids'];
+        $existing = DB::table('project_consultants')
+            ->where('project_id', $projectId)
+            ->whereIn('user_id', $ids)
+            ->pluck('user_id')
+            ->all();
+        $toInsert = array_values(array_diff($ids, $existing));
+
+        $now = now();
+        $rows = [];
+        foreach ($toInsert as $i => $userId) {
+            $idxInArray = array_search($userId, $ids);
+            $rows[] = [
+                'project_id'             => $projectId,
+                'user_id'                => $userId,
+                'allow_manual_timesheet' => false,
+                'risk_flag'              => (bool) ($data['risk_flags'][$idxInArray] ?? false),
+                'risk_reason'            => $data['risk_reasons'][$idxInArray] ?? null,
+                'created_at'             => $now,
+                'updated_at'             => $now,
+            ];
+        }
+
+        if (!empty($rows)) {
+            DB::table('project_consultants')->insert($rows);
+        }
+
+        return response()->json([
+            'allocated_count' => count($rows),
+            'skipped_already' => $existing,
+            'allocated_ids'   => $toInsert,
+        ], 201);
+    }
 }

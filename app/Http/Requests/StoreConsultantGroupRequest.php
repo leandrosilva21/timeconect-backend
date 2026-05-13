@@ -65,9 +65,11 @@ class StoreConsultantGroupRequest extends FormRequest
      */
     protected function prepareForValidation(): void
     {
-        // Garantir que apenas usuários com role Consultant são aceitos
+        // Garantir que só consultores e parceiros (parceiro_admin) podem entrar
+        // num grupo de consultor. Reflete a regra de bcb5c5f, onde parceiros
+        // são tratados como consultores nas alocações.
         if ($this->has('consultant_ids') && is_array($this->consultant_ids)) {
-            $validConsultantIds = \App\Models\User::where('type', 'consultor')
+            $validConsultantIds = \App\Models\User::whereIn('type', ['consultor', 'parceiro_admin'])
                 ->whereIn('id', $this->consultant_ids)->pluck('id')->toArray();
 
             $this->merge([

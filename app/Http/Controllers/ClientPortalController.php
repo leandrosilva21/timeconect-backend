@@ -513,4 +513,113 @@ class ClientPortalController extends Controller
 
         return $alerts;
     }
+
+    /**
+     * Resumo executivo do cliente: tickets abertos no Movidesk, qtd projetos,
+     * horas contratadas total e saúde dos projetos não-fechados.
+     * Substitui a antiga "Visão Executiva" por uma visão minimalista.
+     */
+    public function summary(Request $request): JsonResponse
+    {
+        $user        = $request->user();
+        $customerId  = $request->get('customer_id');
+
+        if ($user->isCliente()) {
+            $customerId = $user->customer_id;
+        }
+        if (!$customerId) {
+            return response()->json(['message' => 'customer_id obrigatório'], 422);
+        }
+
+        $customer = Customer::find($customerId);
+        if (!$customer) {
+            return response()->json(['message' => 'Cliente não encontrado'], 404);
+        }
+
+        // Coordenador: mesma regra de acesso da action portal()
+        if ($user->isCoordenador()) {
+            $isSustentacao = $user->coordinator_type === 'sustentacao';
+            $hasAccess = Project::where('customer_id', $customerId)
+                ->where(function ($q) use ($user, $isSustentacao) {
+                    $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id));
+                    if ($isSustentacao) {
+                        $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'));
+                    }
+                })
+                ->exists();
+            if (!$hasAccess) {
+                return response()->json(['message' => 'Acesso negado'], 403);
+            }
+        }
+
+        // Tickets abertos no Movidesk — mesma regra de SustentacaoController.
+        $openTickets = MovideskTicket::where('customer_id', $customerId)
+            ->where(function ($q) {
+                $q->whereIn('base_status', ['New', 'InAttendance'])
+                  ->orWhere(function ($qq) {
+                      $qq->where('base_status', 'Stopped')
+                         ->whereIn('status', ['Pendente Terceiros', 'Pendente TOTVS', 'Agendado']);
+                  });
+            })
+            ->count();
+
+        // Projetos do cliente (apenas raiz; excluem-se manuais de Investimento Interno)
+        $projects = Project::with(['contractType'])
+            ->where('customer_id', $customerId)
+            ->where('is_investimento_comercial', false)
+            ->whereNull('parent_project_id')
+            ->get();
+
+        $totalProjects     = $projects->count();
+        $totalSoldHours    = round((float) $projects->sum('sold_hours'), 2);
+
+        // Saúde só pra não-Fechado. Para cada um, calcular % de uso (consumed/sold).
+        $health = $projects->filter(function ($p) {
+            $ctName = strtolower(trim(optional($p->contractType)->name ?? ''));
+            $ctCode = optional($p->contractType)->code ?? '';
+            return $ctName !== 'fechado' && $ctCode !== 'closed';
+        })->map(function ($p) {
+            try {
+                $balance = $p->getGeneralHoursBalance(false);
+            } catch (\Throwable $e) {
+                $balance = null;
+            }
+            $sold = (float) ($p->sold_hours ?? 0);
+            $available = $sold > 0 ? $sold : null;
+            $consumed = $available !== null && $balance !== null
+                ? max(0, $available - $balance)
+                : null;
+            $pct = ($available && $available > 0 && $consumed !== null)
+                ? round(($consumed / $available) * 100, 1)
+                : null;
+            $status = match (true) {
+                $pct === null    => 'unknown',
+                $pct >= 90       => 'critical',
+                $pct >= 70       => 'warning',
+                default          => 'ok',
+            };
+            return [
+                'id'             => $p->id,
+                'code'           => $p->code,
+                'name'           => $p->name,
+                'contract_type'  => optional($p->contractType)->name,
+                'sold_hours'     => $sold,
+                'consumed_hours' => $consumed,
+                'balance_hours'  => $balance,
+                'percentage'     => $pct,
+                'status'         => $status,
+            ];
+        })->values();
+
+        return response()->json([
+            'customer' => [
+                'id'   => $customer->id,
+                'name' => $customer->name,
+            ],
+            'open_tickets'      => $openTickets,
+            'total_projects'    => $totalProjects,
+            'total_sold_hours'  => $totalSoldHours,
+            'projects_health'   => $health,
+        ]);
+    }
 }

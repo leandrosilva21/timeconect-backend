@@ -306,6 +306,7 @@ Route::prefix('v1')->group(function () {
         // 🏢 CLIENT PORTAL
         Route::get('/client/portal', [ClientPortalController::class, 'portal'])->name('client.portal');
         Route::get('/client/portal/customers', [ClientPortalController::class, 'customers'])->name('client.portal.customers');
+        Route::get('/client/portal/summary', [ClientPortalController::class, 'summary'])->name('client.portal.summary');
 
         // 👥 CUSTOMERS - Protegido por permissões específicas (Admins sempre têm acesso)
         Route::middleware('permission.or.admin:customers.view')->group(function () {

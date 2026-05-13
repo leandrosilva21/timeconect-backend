@@ -37,6 +37,8 @@ use App\Http\Controllers\SustentacaoController;
 use App\Http\Controllers\ContractController;
 use App\Http\Controllers\CustomerContactController;
 use App\Http\Controllers\ProjectContactController;
+use App\Http\Controllers\SkillController;
+use App\Http\Controllers\ConsultantSkillController;
 
 /*
 |--------------------------------------------------------------------------
@@ -852,5 +854,13 @@ Route::prefix('v1')->group(function () {
             Route::post('/movidesk/link-org',         [\App\Http\Controllers\MovideskAdminController::class, 'linkOrg'])->name('movidesk.link.org');
             Route::post('/movidesk/link-org-project', [\App\Http\Controllers\MovideskAdminController::class, 'linkOrgProject'])->name('movidesk.link.org.project');
         });
+
+        // 🧠 MATRIZ DE CONHECIMENTO — Skills + Consultant Skills
+        // Auth simples (sanctum); permissões granulares ficam pra evolução conforme o módulo amadurece.
+        Route::get('/skills',                          [SkillController::class, 'index'])->name('skills.index');
+        Route::post('/skills',                         [SkillController::class, 'store'])->name('skills.store');
+        Route::get('/consultants/{id}/skills',         [ConsultantSkillController::class, 'indexByConsultant'])->name('consultants.skills.index');
+        Route::post('/consultants/{id}/skills',        [ConsultantSkillController::class, 'storeForConsultant'])->name('consultants.skills.store');
+        Route::put('/consultant-skills/{id}',          [ConsultantSkillController::class, 'update'])->name('consultant-skills.update');
     });
 });

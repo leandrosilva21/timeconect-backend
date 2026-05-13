@@ -192,13 +192,24 @@ class GapController extends Controller
     }
 
     /**
-     * Top 10 consultores recomendados para um projeto, baseado em match
-     * entre project_required_skills e consultant_skills.
-     * Score por skill:
+     * Top 10 consultores recomendados para um projeto.
+     *
+     * Score por skill (base):
      *   actual >= required → 1.0
      *   actual <  required → actual/required
      *   sem skill          → -0.5
-     * Score final = AVG.
+     * Bonus por skill (over-qualification):
+     *   actual > required  → (actual - required) * 0.1
+     *   senão              → 0
+     * Disponibilidade:
+     *   (capacity_hours - allocated_hours) / capacity_hours  (clamp [0,1])
+     * Score final:
+     *   (base_avg + bonus_avg) * disponibilidade
+     *
+     * Filtros:
+     *  - exclui já alocados ao projeto
+     *  - score mínimo 0.3
+     *  - candidates ocultados se houver internal com score >= 0.8
      */
     public function recommendations(int $projectId): JsonResponse
     {
@@ -228,7 +239,7 @@ class GapController extends Controller
 
         $eligible = User::whereIn('type', ['consultor', 'parceiro_admin'])
             ->whereNotIn('id', $allocated)
-            ->select('id', 'name', 'type', 'consultant_type', 'enabled')
+            ->select('id', 'name', 'type', 'consultant_type', 'enabled', 'capacity_hours', 'allocated_hours')
             ->get();
 
         // Pré-carrega skills relevantes de todos os elegíveis
@@ -245,14 +256,16 @@ class GapController extends Controller
 
             $userSkills = $skillsByUser->get($u->id, collect())->keyBy('skill_id');
 
-            $scores  = [];
-            $gaps    = [];
-            $matched = 0;
+            $baseScores  = [];
+            $bonusScores = [];
+            $gaps        = [];
+            $matched     = 0;
             foreach ($reqByGroup as $skillId => $r) {
                 $cs = $userSkills->get($skillId);
                 $actual = $cs?->level?->weight;
                 if ($actual === null) {
-                    $scores[] = -0.5;
+                    $baseScores[]  = -0.5;
+                    $bonusScores[] = 0.0;
                     $gaps[] = [
                         'skill'          => ['id' => (int) $skillId, 'name' => $r->skill_name, 'category' => $r->skill_category],
                         'required_level' => $r->level_name,
@@ -260,10 +273,12 @@ class GapController extends Controller
                         'type'           => 'missing',
                     ];
                 } elseif ($actual >= $r->req_weight) {
-                    $scores[] = 1.0;
+                    $baseScores[]  = 1.0;
+                    $bonusScores[] = $actual > $r->req_weight ? round(($actual - $r->req_weight) * 0.1, 4) : 0.0;
                     $matched++;
                 } else {
-                    $scores[] = round($actual / $r->req_weight, 4);
+                    $baseScores[]  = round($actual / $r->req_weight, 4);
+                    $bonusScores[] = 0.0;
                     $gaps[] = [
                         'skill'          => ['id' => (int) $skillId, 'name' => $r->skill_name, 'category' => $r->skill_category],
                         'required_level' => $r->level_name,
@@ -272,21 +287,38 @@ class GapController extends Controller
                     ];
                 }
             }
-            $finalScore = count($scores) > 0 ? array_sum($scores) / count($scores) : 0;
-            $finalScore = round($finalScore, 3);
+            $n        = max(count($baseScores), 1);
+            $baseAvg  = array_sum($baseScores)  / $n;
+            $bonusAvg = array_sum($bonusScores) / $n;
+
+            $capacity  = (int) ($u->capacity_hours  ?? 160);
+            $allocated = (int) ($u->allocated_hours ?? 0);
+            if ($capacity <= 0) {
+                $availability = 1.0;
+            } else {
+                $availability = ($capacity - $allocated) / $capacity;
+            }
+            $availability = max(0.0, min(1.0, $availability));
+
+            $finalScore = round(($baseAvg + $bonusAvg) * $availability, 3);
 
             $coverage = $finalScore >= 0.9 ? 'Completo'
                       : ($finalScore >= 0.7 ? 'Parcial' : 'Insuficiente');
 
             return [
-                'consultant_id' => (int) $u->id,
-                'name'          => $u->name,
-                'score'         => $finalScore,
-                'coverage'      => $coverage,
-                'skills_match'  => $matched,
-                'skills_total'  => $reqByGroup->count(),
-                'type'          => $type,
-                'gaps'          => $gaps,
+                'consultant_id'  => (int) $u->id,
+                'name'           => $u->name,
+                'score'          => $finalScore,
+                'base_score'     => round($baseAvg, 3),
+                'bonus'          => round($bonusAvg, 3),
+                'availability'   => round($availability, 3),
+                'capacity_hours' => $capacity,
+                'allocated_hours'=> $allocated,
+                'coverage'       => $coverage,
+                'skills_match'   => $matched,
+                'skills_total'   => $reqByGroup->count(),
+                'type'           => $type,
+                'gaps'           => $gaps,
             ];
         });
 
@@ -298,7 +330,18 @@ class GapController extends Controller
             $pb = $typePri[$b['type']] ?? 99;
             if ($pa !== $pb) return $pa <=> $pb;
             return strcmp($a['name'], $b['name']);
-        })->take(10)->values();
+        });
+
+        // Filtro 1: score mínimo 0.3 (descarta fits muito ruins)
+        $sorted = $sorted->filter(fn($r) => $r['score'] >= 0.3);
+
+        // Filtro 2: oculta candidates se já existe internal com score >= 0.8
+        $hasStrongInternal = $sorted->contains(fn($r) => $r['type'] === 'internal' && $r['score'] >= 0.8);
+        if ($hasStrongInternal) {
+            $sorted = $sorted->filter(fn($r) => $r['type'] !== 'candidate');
+        }
+
+        $sorted = $sorted->take(10)->values();
 
         return response()->json([
             'project'         => ['id' => $project->id, 'name' => $project->name],
@@ -317,7 +360,10 @@ class GapController extends Controller
 
         $data = $request->validate([
             'consultant_id' => 'required|exists:users,id',
-            'with_caveat'   => 'nullable|boolean',
+            'score'         => 'nullable|numeric',
+            'risk_flag'     => 'nullable|boolean',
+            'risk_reason'   => 'nullable|string|max:1000',
+            'with_caveat'   => 'nullable|boolean', // mantido pra compatibilidade
         ]);
 
         $exists = DB::table('project_consultants')
@@ -329,17 +375,24 @@ class GapController extends Controller
             return response()->json(['allocated' => true, 'already' => true]);
         }
 
+        // Auto-flag: score < 0.9 ou with_caveat explícito vira risk_flag=true
+        $autoFlag = isset($data['score']) && $data['score'] < 0.9;
+        $riskFlag = (bool) ($data['risk_flag'] ?? ($data['with_caveat'] ?? $autoFlag));
+
         DB::table('project_consultants')->insert([
             'project_id'             => $projectId,
             'user_id'                => $data['consultant_id'],
             'allow_manual_timesheet' => false,
+            'risk_flag'              => $riskFlag,
+            'risk_reason'            => $data['risk_reason'] ?? null,
             'created_at'             => now(),
             'updated_at'             => now(),
         ]);
 
         return response()->json([
             'allocated'   => true,
-            'with_caveat' => (bool) ($data['with_caveat'] ?? false),
+            'risk_flag'   => $riskFlag,
+            'risk_reason' => $data['risk_reason'] ?? null,
         ], 201);
     }
 }

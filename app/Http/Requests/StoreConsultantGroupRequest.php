@@ -12,7 +12,13 @@ class StoreConsultantGroupRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return $this->user()->isAdmin() || $this->user()->hasAccess('consultant_groups.create');
+        // 'groups.manage' é a permissão coerente que libera o menu lateral e que
+        // já está cadastrada em PermissionService — 'consultant_groups.create'
+        // nunca foi registrada lá, então quem só tinha permissão via grupo de
+        // perfil caía em 403 silencioso (mascarado como 422 pelo handler global).
+        return $this->user()->isAdmin()
+            || $this->user()->hasAccess('groups.manage')
+            || $this->user()->hasAccess('consultant_groups.create');
     }
 
     /**

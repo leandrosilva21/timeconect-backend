@@ -12,7 +12,9 @@ class UpdateConsultantGroupRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return $this->user()->isAdmin() || $this->user()->hasAccess('consultant_groups.update');
+        return $this->user()->isAdmin()
+            || $this->user()->hasAccess('groups.manage')
+            || $this->user()->hasAccess('consultant_groups.update');
     }
 
     /**

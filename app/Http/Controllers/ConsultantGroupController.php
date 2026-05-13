@@ -460,8 +460,12 @@ class ConsultantGroupController extends Controller
         try {
             $user = $request->user();
 
-            // Verificar permissões
-            if (!$user->isAdmin() && !$user->hasAccess('consultant_groups.delete')) {
+            // Verificar permissões: groups.manage (cadastrada em PermissionService)
+            // ou consultant_groups.delete (legado).
+            if (!$user->isAdmin()
+                && !$user->hasAccess('groups.manage')
+                && !$user->hasAccess('consultant_groups.delete')
+            ) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',

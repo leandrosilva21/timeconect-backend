@@ -190,4 +190,156 @@ class GapController extends Controller
 
         return response()->json($prs->load(['skill', 'minLevel']), 201);
     }
+
+    /**
+     * Top 10 consultores recomendados para um projeto, baseado em match
+     * entre project_required_skills e consultant_skills.
+     * Score por skill:
+     *   actual >= required → 1.0
+     *   actual <  required → actual/required
+     *   sem skill          → -0.5
+     * Score final = AVG.
+     */
+    public function recommendations(int $projectId): JsonResponse
+    {
+        $project = Project::findOrFail($projectId);
+
+        $required = DB::table('project_required_skills as prs')
+            ->join('skills as s', 's.id', '=', 'prs.skill_id')
+            ->join('skill_levels as sl', 'sl.id', '=', 'prs.min_level_id')
+            ->where('prs.project_id', $projectId)
+            ->select('prs.skill_id', 's.name as skill_name', 's.category as skill_category',
+                     'sl.id as level_id', 'sl.name as level_name', 'sl.weight as req_weight')
+            ->get();
+
+        if ($required->isEmpty()) {
+            return response()->json([
+                'project'         => ['id' => $project->id, 'name' => $project->name],
+                'recommendations' => [],
+                'message'         => 'Projeto não tem skills exigidas cadastradas.',
+            ]);
+        }
+
+        $skillIds   = $required->pluck('skill_id');
+        $reqByGroup = $required->keyBy('skill_id');
+
+        // Exclui consultores já alocados ao projeto
+        $allocated = DB::table('project_consultants')->where('project_id', $projectId)->pluck('user_id');
+
+        $eligible = User::whereIn('type', ['consultor', 'parceiro_admin'])
+            ->whereNotIn('id', $allocated)
+            ->select('id', 'name', 'type', 'consultant_type', 'enabled')
+            ->get();
+
+        // Pré-carrega skills relevantes de todos os elegíveis
+        $skillsByUser = ConsultantSkill::with('level:id,name,weight')
+            ->whereIn('consultant_id', $eligible->pluck('id'))
+            ->whereIn('skill_id', $skillIds)
+            ->get()
+            ->groupBy('consultant_id');
+
+        $recommendations = $eligible->map(function ($u) use ($reqByGroup, $skillsByUser) {
+            $type = $u->type === 'parceiro_admin'
+                ? 'partner'
+                : ($u->consultant_type === 'candidate' ? 'candidate' : 'internal');
+
+            $userSkills = $skillsByUser->get($u->id, collect())->keyBy('skill_id');
+
+            $scores  = [];
+            $gaps    = [];
+            $matched = 0;
+            foreach ($reqByGroup as $skillId => $r) {
+                $cs = $userSkills->get($skillId);
+                $actual = $cs?->level?->weight;
+                if ($actual === null) {
+                    $scores[] = -0.5;
+                    $gaps[] = [
+                        'skill'          => ['id' => (int) $skillId, 'name' => $r->skill_name, 'category' => $r->skill_category],
+                        'required_level' => $r->level_name,
+                        'actual_level'   => null,
+                        'type'           => 'missing',
+                    ];
+                } elseif ($actual >= $r->req_weight) {
+                    $scores[] = 1.0;
+                    $matched++;
+                } else {
+                    $scores[] = round($actual / $r->req_weight, 4);
+                    $gaps[] = [
+                        'skill'          => ['id' => (int) $skillId, 'name' => $r->skill_name, 'category' => $r->skill_category],
+                        'required_level' => $r->level_name,
+                        'actual_level'   => $cs->level->name,
+                        'type'           => 'below',
+                    ];
+                }
+            }
+            $finalScore = count($scores) > 0 ? array_sum($scores) / count($scores) : 0;
+            $finalScore = round($finalScore, 3);
+
+            $coverage = $finalScore >= 0.9 ? 'Completo'
+                      : ($finalScore >= 0.7 ? 'Parcial' : 'Insuficiente');
+
+            return [
+                'consultant_id' => (int) $u->id,
+                'name'          => $u->name,
+                'score'         => $finalScore,
+                'coverage'      => $coverage,
+                'skills_match'  => $matched,
+                'skills_total'  => $reqByGroup->count(),
+                'type'          => $type,
+                'gaps'          => $gaps,
+            ];
+        });
+
+        // Sort: score DESC, type priority (internal=0, partner=1, candidate=2), name ASC
+        $typePri = ['internal' => 0, 'partner' => 1, 'candidate' => 2];
+        $sorted = $recommendations->sort(function ($a, $b) use ($typePri) {
+            if ($a['score'] !== $b['score']) return $b['score'] <=> $a['score'];
+            $pa = $typePri[$a['type']] ?? 99;
+            $pb = $typePri[$b['type']] ?? 99;
+            if ($pa !== $pb) return $pa <=> $pb;
+            return strcmp($a['name'], $b['name']);
+        })->take(10)->values();
+
+        return response()->json([
+            'project'         => ['id' => $project->id, 'name' => $project->name],
+            'required_count'  => $reqByGroup->count(),
+            'recommendations' => $sorted,
+        ]);
+    }
+
+    /**
+     * Aloca um consultor no projeto (insere em project_consultants).
+     * Idempotente — se já alocado, retorna 200 com flag already=true.
+     */
+    public function allocate(Request $request, int $projectId): JsonResponse
+    {
+        Project::findOrFail($projectId);
+
+        $data = $request->validate([
+            'consultant_id' => 'required|exists:users,id',
+            'with_caveat'   => 'nullable|boolean',
+        ]);
+
+        $exists = DB::table('project_consultants')
+            ->where('project_id', $projectId)
+            ->where('user_id', $data['consultant_id'])
+            ->exists();
+
+        if ($exists) {
+            return response()->json(['allocated' => true, 'already' => true]);
+        }
+
+        DB::table('project_consultants')->insert([
+            'project_id'             => $projectId,
+            'user_id'                => $data['consultant_id'],
+            'allow_manual_timesheet' => false,
+            'created_at'             => now(),
+            'updated_at'             => now(),
+        ]);
+
+        return response()->json([
+            'allocated'   => true,
+            'with_caveat' => (bool) ($data['with_caveat'] ?? false),
+        ], 201);
+    }
 }

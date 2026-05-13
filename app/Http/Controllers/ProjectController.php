@@ -563,8 +563,9 @@ class ProjectController extends Controller
 
                     // Filhos comprometem horas do banco do pai conforme a regra do tipo:
                     //  - Fechado:  compromete sold_hours + aportes do filho no ato da criação
-                    //  - BH Fixo:  compromete só o efetivamente apontado pelo filho
-                    //              (sold_hours do filho só serve como limite interno dele)
+                    //  - BH Fixo:  compromete sold_hours + aportes (igual ao Fechado) — a
+                    //              alocação no filho reserva 100% das horas vendidas do
+                    //              saldo do pai, independente de consumo efetivo.
                     //  - BH Mensal / On Demand: não podem ser filhos (bloqueado em attach)
                     $childrenConsumed = 0.0;
                     if ($project->relationLoaded('childProjects')) {
@@ -575,12 +576,8 @@ class ProjectController extends Controller
                             $childName = strtolower(trim($child->contractType->name));
                             $isClosed   = $childCode === 'closed'      || $childName === 'fechado';
                             $isBhFixo   = $childCode === 'fixed_hours' || $childName === 'banco de horas fixo';
-                            if ($isClosed) {
+                            if ($isClosed || $isBhFixo) {
                                 $childrenConsumed += (float) $child->getTotalAvailableHours();
-                            } elseif ($isBhFixo) {
-                                $childLogged   = ($child->total_logged_minutes ?? 0) / 60;
-                                $childInitial  = (float) ($child->initial_hours_consumed ?? 0);
-                                $childrenConsumed += $childLogged + $childInitial;
                             }
                         }
                     }
@@ -2166,17 +2163,19 @@ class ProjectController extends Controller
                 // Carregar contractType se necessário
                 $excludedProject->loadMissing('contractType');
 
-                // Verificar se o projeto excluído tem contract_type com name = "Fechado"
-                $isClosedContract = $excludedProject->contractType &&
-                                    strtolower(trim($excludedProject->contractType->name)) === 'fechado';
+                // Verificar tipo do projeto excluído. Fechado E Banco de Horas Fixo
+                // comprometem sold_hours + aportes no pai, então o "reembolso" ao
+                // excluir é o mesmo total.
+                $excludedCode = (string) ($excludedProject->contractType->code ?? '');
+                $excludedName = $excludedProject->contractType ? strtolower(trim($excludedProject->contractType->name)) : '';
+                $isClosedContract = $excludedName === 'fechado';
+                $isBhFixo = $excludedCode === 'fixed_hours' || $excludedName === 'banco de horas fixo';
 
-                if ($isClosedContract) {
-                    // Para contratos fechados: foi subtraído (horas vendidas + aportes)
-                    // Usar getTotalAvailableHours() que já contempla novos aportes + fallback legado
+                if ($isClosedContract || $isBhFixo) {
                     $excludedTotalHours = $excludedProject->getTotalAvailableHours();
                     $balance += $excludedTotalHours;
                 } else {
-                    // Para outros tipos: foi subtraído pelas horas apontadas
+                    // Demais tipos: foi subtraído pelas horas apontadas
                     $excludedLoggedHours = $excludedProject->getTotalLoggedHours(false);
                     $balance += $excludedLoggedHours;
                 }
@@ -2371,13 +2370,15 @@ class ProjectController extends Controller
             foreach ($project->childProjects as $childProject) {
                 if ($childProject->isAusterFrozen()) continue;
 
-                // Verificar se o projeto filho é do tipo "Fechado"
+                // Verificar se o projeto filho é "Fechado" ou "Banco de Horas Fixo"
                 $isClosedContract = $childProject->contractType &&
                                     strtolower(trim($childProject->contractType->name)) === 'fechado';
+                $childCode = (string) ($childProject->contractType->code ?? '');
+                $childName = $childProject->contractType ? strtolower(trim($childProject->contractType->name)) : '';
+                $isBhFixoChild = $childCode === 'fixed_hours' || $childName === 'banco de horas fixo';
 
-                if ($isClosedContract) {
-                    // Para contratos fechados: subtrair (horas vendidas + aportes) do projeto filho
-                    // Usar getTotalAvailableHours() que já contempla novos aportes + fallback legado
+                if ($isClosedContract || $isBhFixoChild) {
+                    // Fechado E Banco de Horas Fixo (subprojeto): comprometem sold_hours + aportes
                     $childTotalHours = $childProject->getTotalAvailableHours();
                     $balance -= $childTotalHours;
                 } elseif ($childProject->isBankHoursMonthly()) {

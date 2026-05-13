@@ -860,6 +860,7 @@ Route::prefix('v1')->group(function () {
         // Auth simples (sanctum); permissões granulares ficam pra evolução conforme o módulo amadurece.
         Route::get('/skills',                          [SkillController::class, 'index'])->name('skills.index');
         Route::post('/skills',                         [SkillController::class, 'store'])->name('skills.store');
+        Route::get('/skills/{id}/holders',             [SkillController::class, 'holders'])->name('skills.holders');
         Route::get('/consultants/{id}/skills',         [ConsultantSkillController::class, 'indexByConsultant'])->name('consultants.skills.index');
         Route::post('/consultants/{id}/skills',        [ConsultantSkillController::class, 'storeForConsultant'])->name('consultants.skills.store');
         Route::put('/consultant-skills/{id}',          [ConsultantSkillController::class, 'update'])->name('consultant-skills.update');

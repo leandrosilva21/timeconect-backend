@@ -9,12 +9,16 @@ class ConsultantGroupPolicy
 {
     public function viewAny(User $user): bool
     {
-        return $user->isAdmin() || $user->hasAccess('consultant_groups.view');
+        return $user->isAdmin()
+            || $user->hasAccess('groups.manage')
+            || $user->hasAccess('consultant_groups.view');
     }
 
     public function view(User $user, ConsultantGroup $consultantGroup): bool
     {
-        return $user->isAdmin() || $user->hasAccess('consultant_groups.view');
+        return $user->isAdmin()
+            || $user->hasAccess('groups.manage')
+            || $user->hasAccess('consultant_groups.view');
     }
 
     public function create(User $user): bool

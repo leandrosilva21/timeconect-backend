@@ -217,8 +217,9 @@ class ProjectController extends Controller
             $targetUserId = $currentUser->id;
             $targetUser = $currentUser;
 
-            // Se admin forneceu user_id, usar esse usuário
-            if ($requestedUserId && $currentUser->isAdmin()) {
+            // Se admin OU coordenador forneceu user_id, usar esse usuário
+            // (frontend permite a ambos "agir em nome de outro" no modal de apontamento).
+            if ($requestedUserId && ($currentUser->isAdmin() || $currentUser->isCoordenador())) {
                 $targetUserId = $requestedUserId;
                 $targetUser = \App\Models\User::find($targetUserId);
             }

@@ -900,6 +900,11 @@ Route::prefix('v1')->group(function () {
         Route::get('/consultants/{id}/profile',        [ConsultantSkillController::class, 'showProfile'])->name('consultants.profile.show');
         Route::patch('/consultants/{id}/profile',      [ConsultantSkillController::class, 'updateProfile'])->name('consultants.profile.update');
 
+        // 📋 KANBAN DE CANDIDATOS
+        Route::get('/candidates',                      [CandidateController::class, 'index'])->name('candidates.index');
+        Route::patch('/candidates/{id}',               [CandidateController::class, 'update'])->name('candidates.update');
+        Route::patch('/candidates/{id}/status',        [CandidateController::class, 'updateStatus'])->name('candidates.status.update');
+
         // 🎯 GAPS — Detecção de lacunas de skills (critical e por projeto)
         Route::get('/consultants/{id}/gaps',          [GapController::class, 'consultantGaps'])->name('consultants.gaps');
         Route::get('/projects/{id}/gaps',             [GapController::class, 'projectGaps'])->name('projects.gaps');

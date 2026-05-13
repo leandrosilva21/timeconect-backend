@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\CandidateProfile;
 use App\Models\ConsultantSkill;
 use App\Models\Skill;
 use App\Models\SkillLevel;
@@ -97,6 +98,12 @@ class CandidateController extends Controller
                 );
             }
 
+            // Cria o candidate_profile com status='new' pra entrar no Kanban
+            CandidateProfile::create([
+                'user_id' => $user->id,
+                'status'  => 'new',
+            ]);
+
             return $user->id;
         });
 
@@ -104,5 +111,129 @@ class CandidateController extends Controller
             'id'      => $userId,
             'message' => 'Perfil recebido com sucesso. Entraremos em contato.',
         ], 201);
+    }
+
+    /**
+     * Lista candidatos (users.consultant_type='candidate') com perfil + score + top skills.
+     * Filtros: ?status=approved, ?min_score=0.7, ?skill_id=N
+     */
+    public function index(\Illuminate\Http\Request $request): JsonResponse
+    {
+        $query = User::query()
+            ->where('consultant_type', 'candidate')
+            ->select('id','name','email','phone','city','state','work_model',
+                     'capacity_hours','allocated_hours','availability_status',
+                     'hourly_rate','protheus_years_experience');
+
+        if ($skillId = $request->integer('skill_id')) {
+            $query->whereIn('id', function ($q) use ($skillId) {
+                $q->select('consultant_id')->from('consultant_skills')->where('skill_id', $skillId);
+            });
+        }
+
+        $users = $query->get();
+        $userIds = $users->pluck('id');
+
+        // Profiles (LEFT JOIN — default 'new' se faltar)
+        $profiles = CandidateProfile::whereIn('user_id', $userIds)->get()->keyBy('user_id');
+
+        // Top 3 skills por candidato
+        $topSkills = DB::table('consultant_skills as cs')
+            ->join('skills as s', 's.id', '=', 'cs.skill_id')
+            ->join('skill_levels as sl', 'sl.id', '=', 'cs.level_id')
+            ->whereIn('cs.consultant_id', $userIds)
+            ->orderByDesc('sl.weight')
+            ->select('cs.consultant_id','s.name as skill','sl.name as level','sl.weight')
+            ->get()
+            ->groupBy('consultant_id')
+            ->map(fn($coll) => $coll->take(3)->map(fn($r) => ['name' => $r->skill, 'level' => $r->level])->values());
+
+        $statusFilter = $request->string('status')->toString();
+        $minScore     = $request->filled('min_score') ? (float) $request->input('min_score') : null;
+
+        $items = $users->map(function ($u) use ($profiles, $topSkills) {
+            $p = $profiles->get($u->id);
+            $cap = (int) ($u->capacity_hours ?? 160);
+            $alc = (int) ($u->allocated_hours ?? 0);
+            $avail = $cap > 0 ? max(0.0, min(1.0, ($cap - $alc) / $cap)) : 1.0;
+            return [
+                'id'                  => $u->id,
+                'name'                => $u->name,
+                'email'               => $u->email,
+                'phone'               => $u->phone,
+                'city'                => $u->city,
+                'state'               => $u->state,
+                'work_model'          => $u->work_model,
+                'availability_status' => $u->availability_status,
+                'availability'        => round($avail, 3),
+                'hourly_rate'         => $u->hourly_rate,
+                'protheus_years_experience' => $u->protheus_years_experience,
+                'status'              => $p->status ?? 'new',
+                'score_initial'       => $p->score_initial ?? null,
+                'interest_level'      => $p->interest_level ?? null,
+                'expected_rate'       => $p->expected_rate ?? null,
+                'notes'               => $p->notes ?? null,
+                'top_skills'          => $topSkills->get($u->id, collect())->all(),
+            ];
+        })
+        ->filter(function ($c) use ($statusFilter, $minScore) {
+            if ($statusFilter && $c['status'] !== $statusFilter) return false;
+            if ($minScore !== null && ($c['score_initial'] ?? 0) < $minScore) return false;
+            return true;
+        })
+        ->sortBy('name')
+        ->values();
+
+        return response()->json(['candidates' => $items, 'total' => $items->count()]);
+    }
+
+    /**
+     * PATCH /candidates/{id}/status — muda status no Kanban.
+     */
+    public function updateStatus(\Illuminate\Http\Request $request, int $id): JsonResponse
+    {
+        $user = User::where('id', $id)->where('consultant_type', 'candidate')->firstOrFail();
+
+        $data = $request->validate([
+            'status' => 'required|in:' . implode(',', CandidateProfile::STATUSES),
+        ]);
+
+        $profile = CandidateProfile::firstOrNew(['user_id' => $user->id]);
+        $profile->status = $data['status'];
+        $profile->save();
+
+        return response()->json([
+            'id'     => $user->id,
+            'status' => $profile->status,
+        ]);
+    }
+
+    /**
+     * PATCH /candidates/{id} — atualiza score, interest, rate, notes.
+     */
+    public function update(\Illuminate\Http\Request $request, int $id): JsonResponse
+    {
+        $user = User::where('id', $id)->where('consultant_type', 'candidate')->firstOrFail();
+
+        $data = $request->validate([
+            'score_initial'  => 'nullable|numeric|min:0|max:2',
+            'interest_level' => 'nullable|in:alto,medio,baixo',
+            'expected_rate'  => 'nullable|numeric|min:0|max:99999',
+            'notes'          => 'nullable|string|max:5000',
+        ]);
+
+        $profile = CandidateProfile::firstOrNew(['user_id' => $user->id]);
+        $profile->fill($data);
+        if (!$profile->status) $profile->status = 'new';
+        $profile->save();
+
+        return response()->json([
+            'id'             => $user->id,
+            'status'         => $profile->status,
+            'score_initial'  => $profile->score_initial,
+            'interest_level' => $profile->interest_level,
+            'expected_rate'  => $profile->expected_rate,
+            'notes'          => $profile->notes,
+        ]);
     }
 }

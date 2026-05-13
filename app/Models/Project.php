@@ -32,6 +32,24 @@ class Project extends Model
     public const EXPENSE_RESPONSIBLE_CLIENT = 'client';
 
     /**
+     * Kanban executivo — desacoplado do status técnico.
+     * Status técnico (awaiting_start/started/...) ≠ stage executivo (backlog/planning/...).
+     */
+    public const KANBAN_STAGE_BACKLOG      = 'backlog';
+    public const KANBAN_STAGE_PLANNING     = 'planning';
+    public const KANBAN_STAGE_EXECUTION    = 'execution';
+    public const KANBAN_STAGE_HOMOLOGATION = 'homologation';
+    public const KANBAN_STAGE_CLOSED       = 'closed';
+
+    public const KANBAN_STAGES = [
+        self::KANBAN_STAGE_BACKLOG,
+        self::KANBAN_STAGE_PLANNING,
+        self::KANBAN_STAGE_EXECUTION,
+        self::KANBAN_STAGE_HOMOLOGATION,
+        self::KANBAN_STAGE_CLOSED,
+    ];
+
+    /**
      * The attributes that are mass assignable.
      *
      * @var array<int, string>
@@ -77,6 +95,7 @@ class Project extends Model
         'service_type_id',
         'contract_type_id',
         'status',
+        'kanban_stage',
         'allow_negative_balance',
         'proj_sequence',
         'proj_year',
@@ -283,6 +302,11 @@ class Project extends Model
     public function timesheets(): HasMany
     {
         return $this->hasMany(Timesheet::class);
+    }
+
+    public function stages(): HasMany
+    {
+        return $this->hasMany(ProjectStage::class)->orderBy('order_index');
     }
 
     /**

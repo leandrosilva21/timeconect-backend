@@ -7,6 +7,9 @@ use App\Http\Controllers\ContractTypeController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\PasswordResetController;
 use App\Http\Controllers\ProjectController;
+use App\Http\Controllers\ProjectStageController;
+use App\Http\Controllers\StageDeliveryController;
+use App\Http\Controllers\DeliveryEventController;
 use App\Http\Controllers\ServiceTypeController;
 use App\Http\Controllers\TimesheetController;
 use App\Http\Controllers\ExpenseController;
@@ -410,6 +413,28 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:projects.delete')->group(function () {
             Route::delete('/projects/{project}', [ProjectController::class, 'destroy'])->name('projects.destroy');
+        });
+
+        // 🧱 PROJECT STAGES + STAGE DELIVERIES + DELIVERY EVENTS
+        // Etapas (frentes paralelas) e entregas (cards do kanban operacional).
+        // Autorização granular via Policy do Project (read/update do Project).
+        Route::middleware('permission.or.admin:projects.view')->group(function () {
+            Route::get('/projects/{project}/stages', [ProjectStageController::class, 'index'])->name('stages.index');
+            Route::get('/stages/{stage}', [ProjectStageController::class, 'show'])->name('stages.show');
+            Route::get('/stages/{stage}/deliveries', [StageDeliveryController::class, 'index'])->name('deliveries.index');
+            Route::get('/deliveries/{delivery}', [StageDeliveryController::class, 'show'])->name('deliveries.show');
+            Route::get('/deliveries/{delivery}/events', [DeliveryEventController::class, 'index'])->name('deliveries.events');
+        });
+        Route::middleware('permission.or.admin:projects.update')->group(function () {
+            Route::post('/projects/{project}/stages', [ProjectStageController::class, 'store'])->name('stages.store');
+            Route::patch('/stages/{stage}', [ProjectStageController::class, 'update'])->name('stages.update');
+            Route::delete('/stages/{stage}', [ProjectStageController::class, 'destroy'])->name('stages.destroy');
+            Route::post('/projects/{project}/stages/reorder', [ProjectStageController::class, 'reorder'])->name('stages.reorder');
+
+            Route::post('/stages/{stage}/deliveries', [StageDeliveryController::class, 'store'])->name('deliveries.store');
+            Route::patch('/deliveries/{delivery}', [StageDeliveryController::class, 'update'])->name('deliveries.update');
+            Route::delete('/deliveries/{delivery}', [StageDeliveryController::class, 'destroy'])->name('deliveries.destroy');
+            Route::post('/deliveries/{delivery}/move', [StageDeliveryController::class, 'move'])->name('deliveries.move');
         });
 
         // 💰 HOUR CONTRIBUTIONS - Aportes de Horas (vinculados a projetos)

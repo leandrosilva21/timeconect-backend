@@ -2451,11 +2451,16 @@ class ProjectController extends Controller
         if ($from) $base->where('timesheets.date', '>=', $from);
         if ($to)   $base->where('timesheets.date', '<=', $to);
 
+        // Para consultores com rate_type='monthly', hourly_rate guarda o salário
+        // mensal — converter pra valor/hora dividindo por 180 (mesmo critério usado
+        // em FechamentoConsultorController::effectiveHourlyRate).
+        $costExpr = "SUM(timesheets.effort_minutes / 60.0 * CASE WHEN users.rate_type = 'monthly' AND users.hourly_rate > 0 THEN users.hourly_rate / 180.0 ELSE users.hourly_rate END)";
+
         // ── Por cliente ────────────────────────────────────────────────────────
         $byCustomer = (clone $base)
-            ->selectRaw('customers.id as customer_id, customers.name as customer_name,
+            ->selectRaw("customers.id as customer_id, customers.name as customer_name,
                          SUM(timesheets.effort_minutes) as total_minutes,
-                         SUM(timesheets.effort_minutes / 60.0 * users.hourly_rate) as total_cost')
+                         {$costExpr} as total_cost")
             ->groupBy('customers.id', 'customers.name')
             ->orderByDesc('total_minutes')
             ->get()
@@ -2468,10 +2473,10 @@ class ProjectController extends Controller
 
         // ── Por consultor ──────────────────────────────────────────────────────
         $byConsultant = (clone $base)
-            ->selectRaw('users.id as user_id, users.name as user_name,
+            ->selectRaw("users.id as user_id, users.name as user_name,
                          SUM(timesheets.effort_minutes) as total_minutes,
-                         SUM(timesheets.effort_minutes / 60.0 * users.hourly_rate) as total_cost,
-                         COUNT(DISTINCT customers.id) as num_customers')
+                         {$costExpr} as total_cost,
+                         COUNT(DISTINCT customers.id) as num_customers")
             ->groupBy('users.id', 'users.name')
             ->orderByDesc('total_minutes')
             ->limit(20)
@@ -2488,7 +2493,7 @@ class ProjectController extends Controller
         $monthly = (clone $base)
             ->selectRaw("TO_CHAR(timesheets.date, 'YYYY-MM') as month,
                          SUM(timesheets.effort_minutes) as total_minutes,
-                         SUM(timesheets.effort_minutes / 60.0 * users.hourly_rate) as total_cost")
+                         {$costExpr} as total_cost")
             ->groupByRaw("TO_CHAR(timesheets.date, 'YYYY-MM')")
             ->orderByRaw("TO_CHAR(timesheets.date, 'YYYY-MM')")
             ->get()
@@ -2500,10 +2505,10 @@ class ProjectController extends Controller
 
         // ── Detalhamento consultor × cliente ───────────────────────────────────
         $detail = (clone $base)
-            ->selectRaw('users.id as user_id, users.name as user_name,
+            ->selectRaw("users.id as user_id, users.name as user_name,
                          customers.id as customer_id, customers.name as customer_name,
                          SUM(timesheets.effort_minutes) as total_minutes,
-                         SUM(timesheets.effort_minutes / 60.0 * users.hourly_rate) as total_cost')
+                         {$costExpr} as total_cost")
             ->groupBy('users.id', 'users.name', 'customers.id', 'customers.name')
             ->orderBy('users.name')
             ->get()

@@ -16,11 +16,13 @@ class ConsultantSkill extends Model
         'source',
         'confidence',
         'notes',
+        'atuacao_types',
     ];
 
     protected $casts = [
         'last_used_at'     => 'date',
         'years_experience' => 'integer',
+        'atuacao_types'    => 'array',
     ];
 
     public function consultant(): BelongsTo

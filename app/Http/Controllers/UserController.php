@@ -181,6 +181,10 @@ class UserController extends Controller
             $query->where('partner_id', $request->partner_id);
         }
 
+        if ($request->filled('customer_id')) {
+            $query->where('customer_id', $request->customer_id);
+        }
+
         // Filtro por status (ativo/inativo) usando campo enabled
         $status = $request->get('status');
         if ($status === 'active') {

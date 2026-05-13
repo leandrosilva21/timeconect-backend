@@ -193,6 +193,8 @@ class ProjectController extends Controller
             $withRelations[] = 'executivoConta';
             if ($withTeam) {
                 $withRelations[] = 'consultants';
+                // Grupos vinculados (necessário pra pré-selecionar no modal de Equipe).
+                $withRelations[] = 'consultantGroups';
             }
         }
         // childProjects: sempre carregado em gestaoMode (para calcular closedChildrenHours)

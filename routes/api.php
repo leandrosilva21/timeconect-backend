@@ -894,5 +894,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/projects/{id}/gaps',             [GapController::class, 'projectGaps'])->name('projects.gaps');
         Route::post('/critical-skills',               [GapController::class, 'storeCriticalSkill'])->name('critical-skills.store');
         Route::post('/projects/{id}/required-skills', [GapController::class, 'storeProjectRequiredSkill'])->name('projects.required-skills.store');
+        Route::get('/projects/{id}/recommendations',  [GapController::class, 'recommendations'])->name('projects.recommendations');
+        Route::post('/projects/{id}/allocate',        [GapController::class, 'allocate'])->name('projects.allocate');
     });
 });

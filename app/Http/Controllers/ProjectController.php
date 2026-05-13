@@ -1043,6 +1043,7 @@ class ProjectController extends Controller
             'architect_id'          => 'nullable|exists:users,id',
             'executivo_conta_id'    => 'nullable|exists:users,id',
             'kanban_coordinator_override_id' => 'nullable|exists:users,id',
+            'categoria_interna' => 'nullable|in:Sustentação,Projeto,Suporte,Comercial',
         ], [
             'name.max' => 'O nome não pode ter mais de 255 caracteres',
             'name.min' => 'O nome deve ter pelo menos 2 caracteres',

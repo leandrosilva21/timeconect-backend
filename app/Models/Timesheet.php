@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Observers\TimesheetObserver;
+use App\Notifications\TimesheetStatusNotification;
 use App\Services\TimesheetN8nNotifier;
 use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -391,6 +392,7 @@ class Timesheet extends Model
             $timesheet = $this;
             DB::afterCommit(function () use ($timesheet, $reason) {
                 app(TimesheetN8nNotifier::class)->notify($timesheet, 'REJEITADO', $reason);
+                $timesheet->notifyOwnerOfStatus('REJEITADO', $reason);
             });
         }
 
@@ -449,10 +451,34 @@ class Timesheet extends Model
             $timesheet = $this;
             DB::afterCommit(function () use ($timesheet, $reason) {
                 app(TimesheetN8nNotifier::class)->notify($timesheet, 'AJUSTE', $reason);
+                $timesheet->notifyOwnerOfStatus('AJUSTE', $reason);
             });
         }
 
         return $saved;
+    }
+
+    /**
+     * Envia e-mail para o dono do apontamento avisando da mudança de status.
+     * Funciona em paralelo ao webhook n8n (caso de redundância); o destino é
+     * sempre o user.email do timesheet — fix da reclamação onde o n8n estava
+     * caindo no admin em vez do dono.
+     */
+    public function notifyOwnerOfStatus(string $statusKey, ?string $reason = null): void
+    {
+        $owner = $this->user;
+        if (!$owner || !$owner->email) {
+            return;
+        }
+        try {
+            $owner->notify(new TimesheetStatusNotification($this, $statusKey, $reason));
+        } catch (\Throwable $e) {
+            \Log::warning('notifyOwnerOfStatus: falha ao enviar', [
+                'timesheet_id' => $this->id,
+                'status'       => $statusKey,
+                'error'        => $e->getMessage(),
+            ]);
+        }
     }
 
     /**

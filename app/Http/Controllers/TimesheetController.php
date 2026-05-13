@@ -908,13 +908,25 @@ class TimesheetController extends Controller
             }
 
             // Marcar apontamentos sobrepostos como conflitados
+            $newlyConflictedIds = collect();
             if ($hasConflict && isset($overlappingIds) && $overlappingIds->isNotEmpty()) {
-                Timesheet::whereIn('id', $overlappingIds)
+                $newlyConflictedIds = Timesheet::whereIn('id', $overlappingIds)
                     ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED])
+                    ->pluck('id');
+                Timesheet::whereIn('id', $newlyConflictedIds)
                     ->update(['status' => Timesheet::STATUS_CONFLICTED]);
             }
 
             DB::commit();
+
+            // Notifica donos dos apontamentos marcados como conflito
+            if ($hasConflict) {
+                $timesheet->notifyOwnerOfStatus('CONFLITO');
+            }
+            foreach ($newlyConflictedIds as $cid) {
+                $conflicted = Timesheet::find($cid);
+                if ($conflicted) $conflicted->notifyOwnerOfStatus('CONFLITO');
+            }
 
             $timesheet->load(['user', 'customer', 'project']);
 
@@ -1539,11 +1551,14 @@ class TimesheetController extends Controller
                     ->where('end_time', '>', $timesheet->start_time)
                     ->pluck('id');
 
+                $newlyConflictedIds = collect();
                 if ($overlappingIds->isNotEmpty()) {
                     $timesheet->status = Timesheet::STATUS_CONFLICTED;
                     $timesheet->save();
-                    Timesheet::whereIn('id', $overlappingIds)
+                    $newlyConflictedIds = Timesheet::whereIn('id', $overlappingIds)
                         ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED])
+                        ->pluck('id');
+                    Timesheet::whereIn('id', $newlyConflictedIds)
                         ->update(['status' => Timesheet::STATUS_CONFLICTED]);
                 }
             }
@@ -1552,6 +1567,17 @@ class TimesheetController extends Controller
             $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
 
             DB::commit();
+
+            // Notifica donos dos apontamentos marcados como conflito
+            if ($timesheet->status === Timesheet::STATUS_CONFLICTED) {
+                $timesheet->notifyOwnerOfStatus('CONFLITO');
+            }
+            if (isset($newlyConflictedIds)) {
+                foreach ($newlyConflictedIds as $cid) {
+                    $conflicted = Timesheet::find($cid);
+                    if ($conflicted) $conflicted->notifyOwnerOfStatus('CONFLITO');
+                }
+            }
 
             $timesheet->load(['user', 'customer', 'project']);
 

@@ -36,6 +36,15 @@ class ContractRequestMessageController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
+        // Cliente só interage enquanto é requisição. Quando vira projeto
+        // (req_decision setado em requestPlanDecision), chat fica read-only
+        // pro cliente — internos (admin/coord) seguem podendo comentar.
+        if ($user->isCliente() && $contractRequest->req_decision !== null) {
+            return response()->json([
+                'message' => 'A requisição virou projeto. O chat ficou disponível apenas para histórico.',
+            ], 403);
+        }
+
         $request->validate([
             'message' => 'nullable|string|max:2000',
             'files'   => 'nullable|array|max:10',

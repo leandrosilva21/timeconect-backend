@@ -2602,7 +2602,10 @@ class ProjectController extends Controller
             'status'                    => Project::STATUS_STARTED,
             'is_investimento_comercial' => true,
             'is_manual_code'            => true,
+            'categoria_interna'         => $data['categoria'],
         ]);
+
+        $this->invalidateListCache('projects');
 
         return response()->json([
             'message' => 'Projeto interno criado com sucesso.',

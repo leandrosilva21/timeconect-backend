@@ -18,7 +18,7 @@ class StageAllocationController extends Controller
     {
         $items = StageAllocation::query()
             ->where('stage_allocations.stage_id', $stage->id)
-            ->with('user:id,name,email,profile_photo_path')
+            ->with('user:id,name,email')
             ->leftJoinSub(
                 Timesheet::query()
                     ->selectRaw('user_id, stage_id, COALESCE(SUM(effort_minutes), 0) AS minutes_sum')
@@ -44,12 +44,9 @@ class StageAllocationController extends Controller
                 'stage_id'        => $a->stage_id,
                 'user_id'         => $a->user_id,
                 'user'            => $a->user ? [
-                    'id'                 => $a->user->id,
-                    'name'               => $a->user->name,
-                    'email'              => $a->user->email,
-                    'profile_photo_url'  => $a->user->profile_photo_path
-                        ? rtrim(config('app.url'), '/') . '/storage/' . $a->user->profile_photo_path
-                        : null,
+                    'id'    => $a->user->id,
+                    'name'  => $a->user->name,
+                    'email' => $a->user->email,
                 ] : null,
                 'planned_hours'   => $planned,
                 'actual_hours'    => round($actual, 2),

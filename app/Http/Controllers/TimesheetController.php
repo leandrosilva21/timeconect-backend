@@ -443,7 +443,11 @@ class TimesheetController extends Controller
                 }
                 $ticketTotalsMap = [];
                 if (!empty($ticketsByCustomer)) {
+                    // DB::table não aplica global scope de soft-delete; sem o
+                    // whereNull('deleted_at') o "Hist. de Hs Ticket" continua
+                    // somando apontamentos já soft-deletados (ex.: limpeza dos <5min).
                     $totalsQ = \Illuminate\Support\Facades\DB::table('timesheets')
+                        ->whereNull('deleted_at')
                         ->where('status', '!=', 'rejected')
                         ->whereRaw("ticket ~ '^[0-9]{5}$'");
                     $totalsQ->where(function ($q) use ($ticketsByCustomer) {

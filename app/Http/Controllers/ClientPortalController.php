@@ -581,29 +581,35 @@ class ClientPortalController extends Controller
         // iniciados no mês e quantas horas eles totalizam.
         $monthsBack = 11;
         $start12     = now()->startOfMonth()->subMonths($monthsBack);
-        // Inclui subprojetos: cada filho com start_date no mês conta como
-        // um novo projeto contratado (novo ticket / release / serviço).
-        $rawProjects = DB::table('projects')
-            ->where('customer_id', $customerId)
-            ->where('is_investimento_comercial', false)
-            ->whereNull('deleted_at')
-            ->whereNotNull('start_date')
-            ->where('start_date', '>=', $start12)
-            ->selectRaw("TO_CHAR(start_date, 'YYYY-MM') as ym, COUNT(*) as c, COALESCE(SUM(sold_hours), 0) as h")
-            ->groupByRaw("TO_CHAR(start_date, 'YYYY-MM')")
-            ->get()
-            ->keyBy('ym');
+        // Tickets abertos por mês (created_date no Movidesk)
+        $rawTickets = MovideskTicket::where('customer_id', $customerId)
+            ->whereNotNull('created_date')
+            ->where('created_date', '>=', $start12)
+            ->selectRaw("TO_CHAR(created_date, 'YYYY-MM') as ym, COUNT(*) as c")
+            ->groupByRaw("TO_CHAR(created_date, 'YYYY-MM')")
+            ->pluck('c', 'ym')->toArray();
+
+        // Horas consumidas por mês — soma de effort_minutes dos timesheets do
+        // cliente que não foram rejeitados.
+        $rawHours = DB::table('timesheets')
+            ->join('projects', 'projects.id', '=', 'timesheets.project_id')
+            ->where('projects.customer_id', $customerId)
+            ->whereNull('timesheets.deleted_at')
+            ->whereNotIn('timesheets.status', ['rejected', 'adjustment_requested', 'conflicted'])
+            ->where('timesheets.date', '>=', $start12)
+            ->selectRaw("TO_CHAR(timesheets.date, 'YYYY-MM') as ym, COALESCE(SUM(timesheets.effort_minutes), 0) as m")
+            ->groupByRaw("TO_CHAR(timesheets.date, 'YYYY-MM')")
+            ->pluck('m', 'ym')->toArray();
 
         $monthly = [];
         for ($i = $monthsBack; $i >= 0; $i--) {
             $d  = now()->startOfMonth()->subMonths($i);
             $ym = $d->format('Y-m');
-            $row = $rawProjects->get($ym);
             $monthly[] = [
-                'month'         => $ym,
-                'label'         => $d->translatedFormat('M/y'),
-                'projects'      => (int)   ($row->c ?? 0),
-                'sold_hours'    => (float) ($row->h ?? 0),
+                'month'           => $ym,
+                'label'           => $d->translatedFormat('M/y'),
+                'tickets'         => (int)   ($rawTickets[$ym] ?? 0),
+                'consumed_hours'  => round(((float) ($rawHours[$ym] ?? 0)) / 60, 1),
             ];
         }
 

@@ -888,6 +888,20 @@ class MovideskService
 
         $startTime = $this->extractTime($appointment, 'periodStart');
 
+        // Lista TODOS os appointment.id atuais do ticket no Movidesk. Qualquer
+        // timesheet cujo movidesk_appointment_id apareça nessa lista NÃO é um
+        // candidato de edição — é um apontamento legítimo do próprio ciclo
+        // (ou já existente vinculado a outro appt do mesmo ticket). Sem essa
+        // exclusão, o Nível 2 sequestra o timesheet recém-criado do appt
+        // anterior quando o ticket tem múltiplos apontamentos do mesmo
+        // ticket+user+date (caso William ticket 47852 dia 13/05).
+        $currentApptIds = [];
+        foreach ($ticket['actions'] ?? [] as $a) {
+            foreach ($a['timeAppointments'] ?? [] as $appt) {
+                if (isset($appt['id'])) $currentApptIds[] = $appt['id'];
+            }
+        }
+
         $baseQuery = fn() => Timesheet::query()
             ->where('ticket', (string) $ticketId)
             ->where('user_id', $userId)
@@ -895,7 +909,8 @@ class MovideskService
             ->where(function ($q) use ($newAppointmentId) {
                 $q->where('movidesk_appointment_id', '!=', $newAppointmentId)
                   ->orWhereNull('movidesk_appointment_id');
-            });
+            })
+            ->when(!empty($currentApptIds), fn ($q) => $q->whereNotIn('movidesk_appointment_id', $currentApptIds));
 
         // Nível 1: bate com start_time idêntico — assinatura forte de edição
         if ($startTime) {

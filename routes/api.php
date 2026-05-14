@@ -444,6 +444,7 @@ Route::prefix('v1')->group(function () {
             // Atividade como unidade de execução (Pilar A do refactor 2026-05-15)
             Route::get('/activities/{delivery}/activity', [StageDeliveryController::class, 'activity'])->name('activities.activity');
             Route::post('/activities/{delivery}/comments', [StageDeliveryController::class, 'storeComment'])->name('activities.comments.store');
+            Route::get('/activities/{delivery}/aportes', [StageHourAporteController::class, 'indexForActivity'])->name('activities.aportes.index');
         });
         Route::middleware(['permission.or.admin:projects.update', 'block.cliente'])->group(function () {
             Route::post('/projects/{project}/stages', [ProjectStageController::class, 'store'])->name('stages.store');
@@ -457,6 +458,8 @@ Route::prefix('v1')->group(function () {
             Route::post('/deliveries/{delivery}/move', [StageDeliveryController::class, 'move'])->name('deliveries.move');
             Route::post('/stages/{stage}/allocations', [StageAllocationController::class, 'store'])->name('stages.allocations.store');
             Route::post('/stages/{stage}/aportes', [StageHourAporteController::class, 'store'])->name('stages.aportes.store');
+            // Aporte no nível da atividade (Pilar C do refactor 2026-05-15)
+            Route::post('/activities/{delivery}/aportes', [StageHourAporteController::class, 'storeForActivity'])->name('activities.aportes.store');
             Route::patch('/allocations/{allocation}', [StageAllocationController::class, 'update'])->name('allocations.update');
             Route::delete('/allocations/{allocation}', [StageAllocationController::class, 'destroy'])->name('allocations.destroy');
         });

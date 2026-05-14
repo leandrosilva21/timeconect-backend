@@ -20,12 +20,17 @@ class ContractRequestMessageController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        $messages = $contractRequest->messages()
+        $query = $contractRequest->messages()
             ->with(['author:id,name', 'attachments'])
-            ->orderBy('created_at')
-            ->get();
+            ->orderBy('created_at');
 
-        return response()->json($messages);
+        // Cliente: depois que a requisição virou projeto (req_decided_at preenchido),
+        // mensagens novas da equipe ficam invisíveis. Cliente só vê o histórico até a transição.
+        if ($user->isCliente() && $contractRequest->req_decided_at) {
+            $query->where('created_at', '<=', $contractRequest->req_decided_at);
+        }
+
+        return response()->json($query->get());
     }
 
     public function store(Request $request, ContractRequest $contractRequest): JsonResponse

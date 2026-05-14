@@ -907,11 +907,12 @@ class ContractController extends Controller
         }
 
         $contractRequest->update([
-            'req_decision'         => $decision,
-            'linked_contract_id'   => $linkedContractId,
-            'linked_project_id'    => $linkedProjectId,
-            'linked_coordinator_id'=> $linkedCoordinatorId,
-            'kanban_column'        => $toColumn,
+            'req_decision'          => $decision,
+            'req_decided_at'        => $contractRequest->req_decided_at ?? now(),
+            'linked_contract_id'    => $linkedContractId,
+            'linked_project_id'     => $linkedProjectId,
+            'linked_coordinator_id' => $linkedCoordinatorId,
+            'kanban_column'         => $toColumn,
         ]);
 
         \App\Models\ContractRequestKanbanLog::create([

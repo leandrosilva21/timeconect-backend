@@ -28,6 +28,7 @@ class ProjectStage extends Model
         'responsible_user_id',
         'hours_planned',
         'status',
+        'blocked_reason',
         'order_index',
         'expected_end_date',
     ];

@@ -52,7 +52,6 @@ class ProjectStageController extends Controller
 
     public function store(Request $request, Project $project): JsonResponse
     {
-
         $data = $request->validate([
             'name'                => 'required|string|max:100',
             'responsible_user_id' => 'nullable|exists:users,id',
@@ -60,6 +59,13 @@ class ProjectStageController extends Controller
             'status'              => ['nullable', Rule::in(ProjectStage::STATUSES)],
             'expected_end_date'   => 'nullable|date',
         ]);
+
+        // Bloqueia se a nova etapa fizer SUM(stages.planned) > project.sold_hours
+        $project->loadMissing('serviceType');
+        if ($project->isOperational() && isset($data['hours_planned']) && $data['hours_planned'] > 0) {
+            $err = $this->guardProjectCapacity($project, (float) $data['hours_planned']);
+            if ($err !== null) return $err;
+        }
 
         $data['project_id'] = $project->id;
         $data['order_index'] = (int) $project->stages()->max('order_index') + 1;
@@ -71,7 +77,6 @@ class ProjectStageController extends Controller
 
     public function update(Request $request, ProjectStage $stage): JsonResponse
     {
-
         $data = $request->validate([
             'name'                => 'sometimes|string|max:100',
             'responsible_user_id' => 'nullable|exists:users,id',
@@ -80,9 +85,43 @@ class ProjectStageController extends Controller
             'expected_end_date'   => 'nullable|date',
         ]);
 
+        // Se está aumentando hours_planned em projeto operacional, valida saldo
+        $stage->loadMissing('project.serviceType');
+        if (
+            $stage->project?->isOperational()
+            && isset($data['hours_planned'])
+            && (float) $data['hours_planned'] > (float) $stage->hours_planned
+        ) {
+            $delta = (float) $data['hours_planned'] - (float) $stage->hours_planned;
+            $err = $this->guardProjectCapacity($stage->project, $delta);
+            if ($err !== null) return $err;
+        }
+
         $stage->update($data);
 
         return response()->json($stage->fresh()->load('responsible:id,name,email'));
+    }
+
+    /**
+     * Bloqueia se SUM(stages.planned_hours) + $delta > project.sold_hours.
+     * Retorna 422 com mensagem padrão; ou null se está OK.
+     */
+    private function guardProjectCapacity(Project $project, float $delta): ?JsonResponse
+    {
+        $sold      = (float) ($project->sold_hours ?? 0);
+        $allocated = (float) $project->stages()->sum('hours_planned');
+        $available = $sold - $allocated;
+
+        if ($delta > $available + 0.001) {
+            return response()->json([
+                'message' => 'Sem saldo disponível. Verifique com o coordenador.',
+                'detail'  => sprintf(
+                    'Tentativa de alocar %.1fh. Saldo do projeto: %.1fh (vendidas %.1fh, alocadas %.1fh).',
+                    $delta, $available, $sold, $allocated
+                ),
+            ], 422);
+        }
+        return null;
     }
 
     public function destroy(ProjectStage $stage): JsonResponse

@@ -614,7 +614,14 @@ class ClientPortalController extends Controller
             ->whereNull('parent_project_id')
             ->get();
 
-        $totalProjects  = $projects->count();
+        // Card "Projetos": contagem TOTAL (raiz + filhos, qualquer tipo,
+        // qualquer data, incluindo Investimento Interno). Árvore abaixo
+        // continua só com raízes — divergência é intencional.
+        $totalProjects  = (int) DB::table('projects')
+            ->where('customer_id', $customerId)
+            ->whereNull('deleted_at')
+            ->count();
+        // Horas contratadas: soma apenas das raízes pra evitar duplicidade pai+filho.
         $totalSoldHours = round((float) $projects->sum('sold_hours'), 2);
 
         $mapProject = function ($p) {

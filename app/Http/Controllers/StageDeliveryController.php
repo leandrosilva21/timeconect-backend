@@ -119,4 +119,98 @@ class StageDeliveryController extends Controller
 
         return response()->json($delivery->fresh());
     }
+
+    /**
+     * Timeline da atividade — eventos com delivery_id=X. Mais recentes primeiro.
+     * Reaproveita a tabela stage_activity_events (ADR 0005 + 0010).
+     */
+    public function activity(StageDelivery $delivery, Request $request): JsonResponse
+    {
+        $limit = min((int) $request->get('limit', 50), 200);
+
+        $events = \App\Models\StageActivityEvent::query()
+            ->where('delivery_id', $delivery->id)
+            ->with('actor:id,name,email')
+            ->orderByDesc('created_at')
+            ->limit($limit)
+            ->get();
+
+        return response()->json(['items' => $events]);
+    }
+
+    /**
+     * Comentário operacional na atividade (Pilar A do refactor).
+     *
+     * Cria evento append-only `type=comment` em `stage_activity_events`
+     * com `delivery_id` setado. Texto livre, anexo opcional, mentions
+     * via `mentioned_user_ids`.
+     *
+     * Filtro de escrita: consultor só comenta em atividade onde é
+     * `responsible_user_id` OU está alocado (stage_allocations.delivery_id).
+     */
+    public function storeComment(Request $request, StageDelivery $delivery): JsonResponse
+    {
+        $user = $request->user();
+
+        if ($user && method_exists($user, 'isConsultor') && $user->isConsultor()) {
+            $isResponsible = (int) $delivery->responsible_user_id === (int) $user->id;
+            $isAllocated = \App\Models\StageAllocation::query()
+                ->where('user_id', $user->id)
+                ->where(function ($q) use ($delivery) {
+                    $q->where('delivery_id', $delivery->id)
+                      ->orWhere(function ($s) use ($delivery) {
+                          $s->whereNull('delivery_id')
+                            ->where('stage_id', $delivery->stage_id);
+                      });
+                })
+                ->exists();
+            if (!$isResponsible && !$isAllocated) {
+                return response()->json([
+                    'message' => 'Você não está alocado nesta atividade.',
+                ], 403);
+            }
+        }
+
+        $data = $request->validate([
+            'text'                 => 'nullable|string|max:5000',
+            'attachment'           => 'nullable|file|max:20480|mimes:jpg,jpeg,png,gif,webp,pdf,doc,docx,xls,xlsx,ppt,pptx,txt,csv,zip',
+            'mentioned_user_ids'   => 'nullable|array',
+            'mentioned_user_ids.*' => 'integer|exists:users,id',
+        ]);
+
+        $text       = trim((string) ($data['text'] ?? ''));
+        $hasAttach  = $request->hasFile('attachment');
+        $mentioned  = array_map('intval', $data['mentioned_user_ids'] ?? []);
+
+        if ($text === '' && !$hasAttach) {
+            return response()->json([
+                'message' => 'Comentário precisa de texto ou anexo.',
+            ], 422);
+        }
+
+        $attachmentData = [];
+        if ($hasAttach) {
+            $file = $request->file('attachment');
+            $path = $file->store("stage-attachments/{$delivery->stage_id}", 'public');
+            $attachmentData = [
+                'attachment_path'          => $path,
+                'attachment_original_name' => $file->getClientOriginalName(),
+                'attachment_mime'          => $file->getMimeType(),
+                'attachment_size'          => $file->getSize(),
+            ];
+        }
+
+        $event = \App\Models\StageActivityEvent::create(array_merge([
+            'stage_id'      => $delivery->stage_id,
+            'delivery_id'   => $delivery->id,
+            'actor_user_id' => $user?->id,
+            'type'          => \App\Models\StageActivityEvent::TYPE_COMMENT,
+            'payload'       => array_filter([
+                'text'               => $text !== '' ? $text : null,
+                'mentioned_user_ids' => !empty($mentioned) ? $mentioned : null,
+            ]),
+        ], $attachmentData));
+
+        return response()->json($event->load('actor:id,name,email'), 201);
+    }
 }

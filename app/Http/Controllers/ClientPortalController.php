@@ -589,11 +589,18 @@ class ClientPortalController extends Controller
             ->groupByRaw("TO_CHAR(created_date, 'YYYY-MM')")
             ->pluck('c', 'ym')->toArray();
 
-        // Horas consumidas por mês — soma de effort_minutes dos timesheets do
-        // cliente que não foram rejeitados.
+        // Horas consumidas por mês — soma de effort_minutes APENAS dos projetos
+        // de sustentação (service_type.code = 'sustentacao' ou name ~ 'sustenta').
+        // Histórico de apontamentos começa em 2025-05 (início do Minutor); meses
+        // anteriores não têm dados — o front exibe nota explicativa.
         $rawHours = DB::table('timesheets')
             ->join('projects', 'projects.id', '=', 'timesheets.project_id')
+            ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
             ->where('projects.customer_id', $customerId)
+            ->where(function ($q) {
+                $q->where('service_types.code', 'sustentacao')
+                  ->orWhere('service_types.name', 'ilike', '%sustenta%');
+            })
             ->whereNull('timesheets.deleted_at')
             ->whereNotIn('timesheets.status', ['rejected', 'adjustment_requested', 'conflicted'])
             ->where('timesheets.date', '>=', $start12)

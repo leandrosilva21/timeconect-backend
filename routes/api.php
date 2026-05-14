@@ -11,6 +11,7 @@ use App\Http\Controllers\ProjectStageController;
 use App\Http\Controllers\StageDeliveryController;
 use App\Http\Controllers\DeliveryEventController;
 use App\Http\Controllers\StageAllocationController;
+use App\Http\Controllers\StageHourAporteController;
 use App\Http\Controllers\ServiceTypeController;
 use App\Http\Controllers\TimesheetController;
 use App\Http\Controllers\ExpenseController;
@@ -428,6 +429,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/deliveries/{delivery}', [StageDeliveryController::class, 'show'])->name('deliveries.show');
             Route::get('/deliveries/{delivery}/events', [DeliveryEventController::class, 'index'])->name('deliveries.events');
             Route::get('/stages/{stage}/allocations', [StageAllocationController::class, 'index'])->name('stages.allocations.index');
+            Route::get('/stages/{stage}/aportes', [StageHourAporteController::class, 'index'])->name('stages.aportes.index');
         });
         Route::middleware(['permission.or.admin:projects.update', 'block.cliente'])->group(function () {
             Route::post('/projects/{project}/stages', [ProjectStageController::class, 'store'])->name('stages.store');
@@ -440,6 +442,7 @@ Route::prefix('v1')->group(function () {
             Route::delete('/deliveries/{delivery}', [StageDeliveryController::class, 'destroy'])->name('deliveries.destroy');
             Route::post('/deliveries/{delivery}/move', [StageDeliveryController::class, 'move'])->name('deliveries.move');
             Route::post('/stages/{stage}/allocations', [StageAllocationController::class, 'store'])->name('stages.allocations.store');
+            Route::post('/stages/{stage}/aportes', [StageHourAporteController::class, 'store'])->name('stages.aportes.store');
             Route::patch('/allocations/{allocation}', [StageAllocationController::class, 'update'])->name('allocations.update');
             Route::delete('/allocations/{allocation}', [StageAllocationController::class, 'destroy'])->name('allocations.destroy');
         });

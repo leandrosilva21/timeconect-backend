@@ -909,6 +909,7 @@ Route::prefix('v1')->group(function () {
 
         // 🔍 BUSCA GLOBAL
         Route::get('/search',                          [SearchController::class, 'search'])->name('search.global');
+        Route::get('/search/advanced',                 [SearchController::class, 'advanced'])->name('search.advanced');
         Route::patch('/candidates/{id}',               [CandidateController::class, 'update'])->name('candidates.update');
         Route::patch('/candidates/{id}/status',        [CandidateController::class, 'updateStatus'])->name('candidates.status.update');
 

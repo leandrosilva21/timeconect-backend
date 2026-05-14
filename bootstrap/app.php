@@ -38,6 +38,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // Middleware customizado para permissões
         $middleware->alias([
             'permission.or.admin' => \App\Http\Middleware\CheckPermissionOrAdmin::class,
+            'block.cliente'       => \App\Http\Middleware\BlockCliente::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

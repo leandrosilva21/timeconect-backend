@@ -4,9 +4,12 @@ namespace App\Http\Controllers;
 
 use App\Models\Customer;
 use App\Models\Project;
+use App\Models\ProjectStage;
 use App\Models\ServiceType;
+use App\Models\StageDelivery;
 use App\Models\Timesheet;
 use App\Models\MovideskTicket;
+use App\Services\ProjectWorkflowService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -687,6 +690,143 @@ class ClientPortalController extends Controller
             'total_sold_hours'              => $totalSoldHours,
             'projects_health'               => $health,
             'monthly_series'                => $monthly,
+        ]);
+    }
+
+    /**
+     * Visão macro do projeto pra perfil cliente — read-only.
+     * 6 indicadores derivados; sem etapas/entregas/timeline técnica.
+     *
+     * Ver ADR 0002: cliente nunca vê `status` cru — só labels derivados.
+     */
+    public function operationalSummary(Request $request, int $projectId): JsonResponse
+    {
+        $user = $request->user();
+
+        $project = Project::with(['customer:id,name', 'consultants:id,name'])
+            ->find($projectId);
+
+        if (!$project) {
+            return response()->json(['message' => 'Projeto não encontrado.'], 404);
+        }
+
+        // Cliente só pode ver projetos do próprio customer; admin/coord não-cliente passam.
+        if ($user && method_exists($user, 'isCliente') && $user->isCliente()) {
+            if ((int) $user->customer_id !== (int) $project->customer_id) {
+                return response()->json(['message' => 'Acesso negado.'], 403);
+            }
+        }
+
+        // Status macro humano — mapping fixo, NÃO expõe status técnico
+        $statusMacroMap = [
+            Project::STATUS_AWAITING_START       => 'Aguardando início',
+            Project::STATUS_BACKLOG              => 'Em planejamento',
+            Project::STATUS_STARTED              => 'Em execução',
+            Project::STATUS_LIBERADO_PARA_TESTES => 'Em homologação',
+            Project::STATUS_FINISHED             => 'Concluído',
+            Project::STATUS_PAUSED               => 'Pausado',
+            Project::STATUS_CANCELLED            => 'Cancelado',
+        ];
+        $statusMacro = $statusMacroMap[$project->status] ?? 'Em andamento';
+
+        // % geral — earned value das etapas se houver; senão pelo consumo de horas
+        $stages = ProjectStage::where('project_id', $project->id)
+            ->withCount(['deliveries', 'deliveries as deliveries_done_count' => function ($q) {
+                $q->where('status', StageDelivery::STATUS_DONE);
+            }])
+            ->withSum('deliveries as deliveries_hours_planned_sum', 'hours_planned')
+            ->withSum(['deliveries as deliveries_hours_planned_done_sum' => function ($q) {
+                $q->where('status', StageDelivery::STATUS_DONE);
+            }], 'hours_planned')
+            ->get();
+
+        $totalPlanned = (float) $stages->sum('deliveries_hours_planned_sum');
+        $totalDone    = (float) $stages->sum('deliveries_hours_planned_done_sum');
+        $sold         = (float) ($project->sold_hours ?? 0);
+        $consumed     = (float) ($project->getTotalLoggedHours() ?? 0);
+
+        if ($totalPlanned > 0) {
+            $progressPct = round(($totalDone / $totalPlanned) * 100, 1);
+        } elseif ($sold > 0) {
+            $progressPct = round(min(100, ($consumed / $sold) * 100), 1);
+        } else {
+            $progressPct = 0.0;
+        }
+
+        // Health dominante — precedência: atrasado > estourando > atenção > saudável
+        $today = now()->startOfDay();
+        $deadline = $project->expected_end_date ? Carbon::parse($project->expected_end_date) : null;
+        $daysLeft = $deadline ? $today->diffInDays($deadline, false) : null;
+
+        $isTerminal = ProjectWorkflowService::isTerminal($project->status);
+        $health = 'ok';
+        if (!$isTerminal) {
+            $ratioHours = $sold > 0 ? $consumed / $sold : 0;
+            if ($deadline && $daysLeft < 0 && $progressPct < 100) {
+                $health = 'atrasado';
+            } elseif ($ratioHours > 1.1) {
+                $health = 'estourando';
+            } elseif (
+                ($deadline && $daysLeft !== null && $daysLeft <= 7) ||
+                ($sold > 0 && $ratioHours > 0.9)
+            ) {
+                $health = 'atencao';
+            }
+        }
+
+        // Atualizações macro — só timesheets aprovados + entregas concluídas (sem
+        // status_changed técnico). Limitado a 10 itens mais recentes.
+        $approvedTimesheets = Timesheet::where('project_id', $project->id)
+            ->where('status', Timesheet::STATUS_APPROVED)
+            ->with('user:id,name')
+            ->latest('date')
+            ->limit(10)
+            ->get(['id', 'date', 'effort_minutes', 'user_id']);
+
+        $completedDeliveryIds = StageDelivery::whereHas('stage', fn ($q) => $q->where('project_id', $project->id))
+            ->where('status', StageDelivery::STATUS_DONE)
+            ->orderByDesc('completed_at')
+            ->limit(10)
+            ->get(['id', 'title', 'completed_at']);
+
+        $updates = collect();
+        foreach ($approvedTimesheets as $t) {
+            $updates->push([
+                'type'  => 'hours_approved',
+                'label' => 'Horas registradas',
+                'who'   => $t->user?->name ?? 'Consultor',
+                'when'  => $t->date?->toIso8601String(),
+                'value' => round(($t->effort_minutes ?? 0) / 60, 1) . 'h',
+            ]);
+        }
+        foreach ($completedDeliveryIds as $d) {
+            $updates->push([
+                'type'  => 'delivery_completed',
+                'label' => 'Entrega concluída',
+                'who'   => null,
+                'when'  => $d->completed_at?->toIso8601String(),
+                'value' => $d->title,
+            ]);
+        }
+        $updates = $updates->sortByDesc('when')->take(10)->values();
+
+        return response()->json([
+            'project' => [
+                'id'   => $project->id,
+                'name' => $project->name,
+                'code' => $project->code,
+                'customer' => $project->customer ? [
+                    'id'   => $project->customer->id,
+                    'name' => $project->customer->name,
+                ] : null,
+            ],
+            'status_macro'         => $statusMacro,
+            'progress_pct'         => $progressPct,
+            'expected_end_date'    => $project->expected_end_date?->toDateString(),
+            'sold_hours'           => $sold,
+            'consumed_hours'       => $consumed,
+            'health'               => $health,
+            'recent_activity'      => $updates,
         ]);
     }
 }

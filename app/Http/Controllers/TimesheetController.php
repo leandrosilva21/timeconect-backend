@@ -460,6 +460,21 @@ class TimesheetController extends Controller
                     foreach ($totalsQ->groupBy('customer_id', 'ticket')->selectRaw('customer_id, ticket, SUM(effort_minutes) AS total')->get() as $r) {
                         $ticketTotalsMap[$r->customer_id . ':' . $r->ticket] = (int) $r->total;
                     }
+
+                    // Soma o saldo inicial cadastrado (ticket_initial_balances).
+                    $initQ = \Illuminate\Support\Facades\DB::table('ticket_initial_balances')
+                        ->whereNull('deleted_at')
+                        ->where(function ($q) use ($ticketsByCustomer) {
+                            foreach ($ticketsByCustomer as $cid => $tickets) {
+                                $q->orWhere(function ($qq) use ($cid, $tickets) {
+                                    $qq->where('customer_id', $cid)->whereIn('ticket', array_keys($tickets));
+                                });
+                            }
+                        });
+                    foreach ($initQ->select('customer_id', 'ticket', 'initial_minutes')->get() as $r) {
+                        $key = $r->customer_id . ':' . $r->ticket;
+                        $ticketTotalsMap[$key] = ($ticketTotalsMap[$key] ?? 0) + (int) $r->initial_minutes;
+                    }
                 }
 
                 $items = collect($timesheets->items())->map(function ($ts) use ($hideClientPct, $ticketTotalsMap) {
@@ -2341,16 +2356,29 @@ class TimesheetController extends Controller
             ->orderBy('timesheets.ticket')
             ->get();
 
+        // Saldos iniciais cadastrados pra esse cliente — somam SOMENTE no
+        // lifetime_minutes (histórico), não no period_minutes (saldo é
+        // histórico anterior à entrada do ticket no Minutor).
+        $initialByTicket = \DB::table('ticket_initial_balances')
+            ->whereNull('deleted_at')
+            ->where('customer_id', $customerId)
+            ->whereIn('ticket', $rows->pluck('ticket')->all())
+            ->pluck('initial_minutes', 'ticket');
+
         return response()->json([
-            'tickets' => $rows->map(fn ($r) => [
-                'ticket'           => $r->ticket,
-                'title'            => $r->title,
-                'requester'        => $r->requester,
-                'period_minutes'   => (int) $r->period_minutes,
-                'period_count'     => (int) $r->period_count,
-                'lifetime_minutes' => (int) $r->lifetime_minutes,
-                'lifetime_count'   => (int) $r->lifetime_count,
-            ])->values(),
+            'tickets' => $rows->map(function ($r) use ($initialByTicket) {
+                $initial = (int) ($initialByTicket[$r->ticket] ?? 0);
+                return [
+                    'ticket'           => $r->ticket,
+                    'title'            => $r->title,
+                    'requester'        => $r->requester,
+                    'period_minutes'   => (int) $r->period_minutes,
+                    'period_count'     => (int) $r->period_count,
+                    'lifetime_minutes' => (int) $r->lifetime_minutes + $initial,
+                    'lifetime_count'   => (int) $r->lifetime_count,
+                    'initial_minutes'  => $initial,
+                ];
+            })->values(),
         ]);
     }
 

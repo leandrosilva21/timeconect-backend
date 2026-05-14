@@ -174,6 +174,21 @@ class ApprovalController extends Controller
                 foreach ($totalsQ->groupBy('customer_id', 'ticket')->selectRaw('customer_id, ticket, SUM(effort_minutes) AS total')->get() as $r) {
                     $ticketTotalsMap[$r->customer_id . ':' . $r->ticket] = (int) $r->total;
                 }
+
+                // Soma o saldo inicial cadastrado (ticket_initial_balances).
+                $initQ = DB::table('ticket_initial_balances')
+                    ->whereNull('deleted_at')
+                    ->where(function ($q) use ($ticketsByCustomer) {
+                        foreach ($ticketsByCustomer as $cid => $tickets) {
+                            $q->orWhere(function ($qq) use ($cid, $tickets) {
+                                $qq->where('customer_id', $cid)->whereIn('ticket', array_keys($tickets));
+                            });
+                        }
+                    });
+                foreach ($initQ->select('customer_id', 'ticket', 'initial_minutes')->get() as $r) {
+                    $key = $r->customer_id . ':' . $r->ticket;
+                    $ticketTotalsMap[$key] = ($ticketTotalsMap[$key] ?? 0) + (int) $r->initial_minutes;
+                }
             }
             $items = collect($timesheets->items())->map(function ($ts) use ($ticketTotalsMap) {
                 $arr = $ts->toArray();

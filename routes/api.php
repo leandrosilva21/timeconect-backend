@@ -452,6 +452,15 @@ Route::prefix('v1')->group(function () {
         Route::put('/timesheets/bulk-update-project-customer', [TimesheetController::class, 'bulkUpdateProjectCustomer'])->name('timesheets.bulk-update-project-customer');
         Route::post('/timesheets/reprocess-movidesk', [TimesheetController::class, 'reprocessMovidesk'])->name('timesheets.reprocess-movidesk');
         Route::get('/timesheets/summary-by-ticket', [TimesheetController::class, 'summaryByTicket'])->name('timesheets.summary-by-ticket');
+
+        // Saldo inicial de ticket (admin/coord) — soma no histórico do ticket
+        Route::get   ('/ticket-initial-balances/lookup', [\App\Http\Controllers\TicketInitialBalanceController::class, 'lookup'])->name('ticket-initial-balances.lookup');
+        Route::get   ('/ticket-initial-balances',        [\App\Http\Controllers\TicketInitialBalanceController::class, 'index'])->name('ticket-initial-balances.index');
+        Route::get   ('/ticket-initial-balances/{id}',   [\App\Http\Controllers\TicketInitialBalanceController::class, 'show'])->name('ticket-initial-balances.show');
+        Route::post  ('/ticket-initial-balances',        [\App\Http\Controllers\TicketInitialBalanceController::class, 'store'])->name('ticket-initial-balances.store');
+        Route::put   ('/ticket-initial-balances/{id}',   [\App\Http\Controllers\TicketInitialBalanceController::class, 'update'])->name('ticket-initial-balances.update');
+        Route::delete('/ticket-initial-balances/{id}',   [\App\Http\Controllers\TicketInitialBalanceController::class, 'destroy'])->name('ticket-initial-balances.destroy');
+
         Route::get('/timesheets/{timesheet}', [TimesheetController::class, 'show'])->name('timesheets.show');
 
         // Histórico de alterações de um apontamento específico (admin/coord)

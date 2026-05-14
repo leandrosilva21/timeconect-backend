@@ -4934,11 +4934,13 @@ class BankHoursFixedController extends Controller
         }
 
         $ts = Timesheet::with(['user', 'project.contractType', 'project.customer'])
-            ->whereIn('project_id', $projectIds)
-            ->where('status', '!=', 'rejected');
-        if ($dateFrom) $ts->where('date', '>=', $dateFrom);
-        if ($dateTo)   $ts->where('date', '<=', $dateTo);
-        $ts = $ts->orderByDesc('date')->orderByDesc('id')->limit(500)->get();
+            ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject', 'movidesk_tickets.solicitante as ticket_solicitante')
+            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+            ->whereIn('timesheets.project_id', $projectIds)
+            ->where('timesheets.status', '!=', 'rejected');
+        if ($dateFrom) $ts->where('timesheets.date', '>=', $dateFrom);
+        if ($dateTo)   $ts->where('timesheets.date', '<=', $dateTo);
+        $ts = $ts->orderByDesc('timesheets.date')->orderByDesc('timesheets.id')->limit(500)->get();
 
         $fmtTime = fn ($v) => $v instanceof \DateTimeInterface ? $v->format('H:i') : (is_string($v) && strlen($v) >= 5 ? substr($v, -8, 5) : null);
         $parseRequester = function ($req) {
@@ -5005,11 +5007,13 @@ class BankHoursFixedController extends Controller
         }
 
         $ts = Timesheet::with(['user', 'project.contractType', 'project.customer'])
-            ->whereIn('project_id', $projectIds)
-            ->where('status', '!=', 'rejected')
-            ->when($dateFrom, fn ($q) => $q->where('date', '>=', $dateFrom))
-            ->when($dateTo,   fn ($q) => $q->where('date', '<=', $dateTo))
-            ->orderByDesc('date')->orderByDesc('id')
+            ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject', 'movidesk_tickets.solicitante as ticket_solicitante')
+            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+            ->whereIn('timesheets.project_id', $projectIds)
+            ->where('timesheets.status', '!=', 'rejected')
+            ->when($dateFrom, fn ($q) => $q->where('timesheets.date', '>=', $dateFrom))
+            ->when($dateTo,   fn ($q) => $q->where('timesheets.date', '<=', $dateTo))
+            ->orderByDesc('timesheets.date')->orderByDesc('timesheets.id')
             ->limit(1000)
             ->get();
 

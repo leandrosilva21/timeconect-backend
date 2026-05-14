@@ -573,75 +573,75 @@ class MovideskService
 
         $target = $target ?? $clients[0];
 
-        $org         = $target['organization'] ?? null;
-        $orgName     = is_array($org) ? ($org['businessName'] ?? null) : null;
-        $orgName     = $orgName ?? ($target['businessName'] ?? null);
+        $org           = $target['organization'] ?? null;
+        $orgName       = is_array($org) ? ($org['businessName'] ?? null) : null;
+        $orgName       = $orgName ?? ($target['businessName'] ?? null);
         $orgPersonType = is_array($org) ? ($org['personType'] ?? null) : null;
-        $orgId       = is_array($org) ? ($org['id'] ?? null) : null;
+        $orgId         = is_array($org) ? ($org['id'] ?? null) : null;
 
         // Movidesk personType: 1=pessoa, 2=empresa, 4=departamento.
-        // Quando solicitante pertence a um departamento (ex: PROMAX » Fiscal),
+        // Quando o solicitante pertence a um departamento (ex: PROMAX » Fiscal),
         // a API entrega só o nome do departamento. Resolvemos a empresa-mãe
         // via /persons/{id}.relationships, que aponta pra organização raiz.
         if ($orgPersonType === 4 && $orgId) {
             $parentMovideskId = $this->resolveDepartmentParentMovideskId((string) $orgId);
             if ($parentMovideskId) {
-                $parentOrg = MovideskOrganization::where('movidesk_id', (string) $parentMovideskId)
-                    ->whereNotNull('customer_id')
-                    ->first();
-                if ($parentOrg) {
-                    Log::info('✅ [MOVIDESK] Cliente resolvido via parent do departamento', [
-                        'department'        => $orgName,
-                        'department_id'     => $orgId,
-                        'parent_movidesk_id'=> $parentMovideskId,
-                        'customer_id'       => $parentOrg->customer_id,
-                    ]);
-                    return $parentOrg->customer_id;
-                }
+                $orgId = $parentMovideskId;
             }
         }
 
-        if (!$orgName) {
-            Log::warning('⚠️ [MOVIDESK] businessName não encontrado', ['client' => $target]);
+        // Chave única OBRIGATÓRIA: CNPJ.
+        // sync-orgs vincula movidesk_organizations.cnpj <-> customers.cgc (dígitos);
+        // aqui resolvemos cliente a partir do movidesk_id (ID estável da org no
+        // Movidesk). Nome do solicitante/empresa NÃO é usado pra rotear — o
+        // payload do Movidesk varia (trailing space, accents, casing) e isso já
+        // causou ticket da EUREKA cair em ERPSERV (default).
+        if (!$orgId) {
+            Log::warning('⚠️ [MOVIDESK] Organization id ausente no ticket — usando default', [
+                'business_name'   => $orgName,
+                'org_person_type' => $orgPersonType,
+                'ticket_id'       => $ticket['id'] ?? null,
+            ]);
             return $this->getDefaultCustomerId();
         }
 
-        // 1. Busca via movidesk_organizations (vinculada por CNPJ pelo sync-orgs)
-        $orgRecord = MovideskOrganization::where('name', $orgName)
-            ->whereNotNull('customer_id')
-            ->first();
+        $orgRecord = MovideskOrganization::where('movidesk_id', (string) $orgId)->first();
 
-        if ($orgRecord) {
+        if ($orgRecord && $orgRecord->customer_id) {
             Log::info('✅ [MOVIDESK] Cliente resolvido via movidesk_organizations (CNPJ)', [
-                'organization' => $orgName,
-                'customer_id'  => $orgRecord->customer_id,
+                'movidesk_org_id' => $orgId,
+                'cnpj'            => $orgRecord->cnpj,
+                'customer_id'     => $orgRecord->customer_id,
             ]);
             return $orgRecord->customer_id;
         }
 
-        // 2. Fallback: busca direta por nome no customers (case-insensitive)
-        $nameLower = strtolower(trim($orgName));
-        $customer  = Customer::where('active', true)
-            ->where(function ($q) use ($nameLower) {
-                $q->whereRaw('LOWER(TRIM(name)) = ?', [$nameLower])
-                  ->orWhereRaw('LOWER(TRIM(company_name)) = ?', [$nameLower]);
-            })->first();
-
-        if (!$customer) {
-            Log::warning('⚠️ [MOVIDESK] Cliente não encontrado no sistema', [
-                'organization'    => $orgName,
-                'org_person_type' => $orgPersonType,
-                'org_id'          => $orgId,
-            ]);
-            return $this->getDefaultCustomerId();
+        // Fallback: org cacheada mas sem link, tenta match direto por CGC do
+        // customers (mesma normalização do sync-orgs: só dígitos).
+        if ($orgRecord && $orgRecord->cnpj) {
+            $cgcDigits = preg_replace('/\D/', '', $orgRecord->cnpj);
+            if ($cgcDigits) {
+                $customer = Customer::where('active', true)
+                    ->whereRaw("regexp_replace(coalesce(cgc, ''), '\\D', '', 'g') = ?", [$cgcDigits])
+                    ->first();
+                if ($customer) {
+                    Log::info('✅ [MOVIDESK] Cliente resolvido via CGC (movidesk_org sem customer_id linkado)', [
+                        'movidesk_org_id' => $orgId,
+                        'cnpj'            => $orgRecord->cnpj,
+                        'customer_id'     => $customer->id,
+                    ]);
+                    return $customer->id;
+                }
+            }
         }
 
-        Log::info('✅ [MOVIDESK] Cliente resolvido via nome direto', [
-            'organization' => $orgName,
-            'customer_id'  => $customer->id,
+        Log::warning('⚠️ [MOVIDESK] Cliente não resolvido por CNPJ — rode movidesk:sync-orgs ou cadastre o CGC do cliente', [
+            'movidesk_org_id' => $orgId,
+            'business_name'   => $orgName,
+            'org_person_type' => $orgPersonType,
+            'cnpj_cached'     => $orgRecord?->cnpj,
         ]);
-
-        return $customer->id;
+        return $this->getDefaultCustomerId();
     }
 
     /**

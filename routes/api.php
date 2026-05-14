@@ -833,6 +833,12 @@ Route::prefix('v1')->group(function () {
         Route::get('/contract-requests/{contractRequest}/mentionable-users', [\App\Http\Controllers\ContractRequestMessageController::class, 'mentionableUsers'])->name('contract-request-messages.mentionable-users');
         Route::get('/req-messages/{message}/attachments/{attachment}/download', [\App\Http\Controllers\ContractRequestMessageController::class, 'downloadAttachment'])->name('contract-request-messages.attachment-download');
 
+        // 👥 ENVOLVIDOS DO CARD (requisições + projetos compartilham endpoint genérico)
+        Route::get('/{cardType}/{cardId}/envolvidos',          [\App\Http\Controllers\CardEnvolvidoController::class, 'index'])->whereIn('cardType', ['contract-requests','projects'])->whereNumber('cardId')->name('card-envolvidos.index');
+        Route::post('/{cardType}/{cardId}/envolvidos',         [\App\Http\Controllers\CardEnvolvidoController::class, 'store'])->whereIn('cardType', ['contract-requests','projects'])->whereNumber('cardId')->name('card-envolvidos.store');
+        Route::delete('/{cardType}/{cardId}/envolvidos/{id}',  [\App\Http\Controllers\CardEnvolvidoController::class, 'destroy'])->whereIn('cardType', ['contract-requests','projects'])->whereNumber('cardId')->whereNumber('id')->name('card-envolvidos.destroy');
+        Route::get('/{cardType}/{cardId}/mention-candidates',  [\App\Http\Controllers\CardEnvolvidoController::class, 'mentionCandidates'])->whereIn('cardType', ['contract-requests','projects'])->whereNumber('cardId')->name('card-envolvidos.mention-candidates');
+
         // 💬 CHAT DE CONTRATOS
         Route::get('/contracts/{contract}/messages',              [\App\Http\Controllers\ContractMessageController::class, 'index'])->name('contract-messages.index');
         Route::post('/contracts/{contract}/messages',             [\App\Http\Controllers\ContractMessageController::class, 'store'])->name('contract-messages.store');

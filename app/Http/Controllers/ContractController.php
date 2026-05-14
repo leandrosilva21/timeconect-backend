@@ -1035,7 +1035,43 @@ class ContractController extends Controller
             'moved_by_id'         => auth()->id(),
         ]);
 
+        // Notifica envolvidos da movimentação (cliente recebe enquanto for requisição).
+        app(\App\Services\CardPhaseMovementDispatcher::class)->dispatch(
+            cardType:   \App\Models\CardEnvolvido::TYPE_REQUEST,
+            cardId:     $contractRequest->id,
+            fromColumn: $this->prettyColumnName($fromColumn),
+            toColumn:   $this->prettyColumnName($toColumn),
+            movedBy:    auth()->user(),
+            note:       $request->input('note'),
+        );
+
         return response()->json(['ok' => true]);
+    }
+
+    /**
+     * Converte slug interno do kanban em label legível para emails.
+     */
+    private function prettyColumnName(string $col): string
+    {
+        return match ($col) {
+            'backlog'                 => 'Backlog',
+            'em_planejamento'         => 'Em planejamento',
+            'inicio_autorizado'       => 'Início autorizado',
+            'req_inicio_autorizado'   => 'Início autorizado',
+            'em_execucao'             => 'Em execução',
+            'em_entrega'              => 'Em entrega',
+            'em_homologacao'          => 'Em homologação',
+            'concluido'               => 'Concluído',
+            'cancelado'               => 'Cancelado',
+            'pausado'                 => 'Pausado',
+            'alocado'                 => 'Alocado',
+            'sust_bh_fixo'            => 'Sustentação · Banco de Horas Fixo',
+            'sust_bh_mensal'          => 'Sustentação · Banco de Horas Mensal',
+            'sust_on_demand'          => 'Sustentação · On Demand',
+            'sust_cloud'              => 'Sustentação · Cloud',
+            'sust_bizify'             => 'Sustentação · Bizify',
+            default => ucfirst(str_replace('_', ' ', $col)),
+        };
     }
 
     private const SUST_COLUMN_CONTRACT_TYPE = [

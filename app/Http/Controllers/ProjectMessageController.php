@@ -2,12 +2,17 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\CardEnvolvido;
 use App\Models\Project;
 use App\Models\ProjectMessage;
 use App\Models\ProjectMessageAttachment;
 use App\Models\ProjectMessageMention;
 use App\Models\ProjectMessageRead;
 use App\Models\User;
+use App\Notifications\CardChatMessageNotification;
+use App\Services\CardEnvolvidoService;
+use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Str;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -106,7 +111,42 @@ class ProjectMessageController extends Controller
         $msg->load(['author:id,name,profile_photo', 'attachments']);
         $msg->is_mentioned = false;
 
+        $this->dispatchChatNotification($project, $msg, $user);
+
         return response()->json($msg, 201);
+    }
+
+    private function dispatchChatNotification(Project $project, ProjectMessage $msg, User $author): void
+    {
+        $recipients = app(CardEnvolvidoService::class)
+            ->recipientsForChat(CardEnvolvido::TYPE_PROJECT, $project->id, $author->id);
+
+        if ($recipients->isEmpty()) return;
+
+        $base = config('app.url');
+        $cardUrl = rtrim($base, '/') . '/contratos/pipeline?project=' . $project->id;
+        $openUrl = $cardUrl . '#chat';
+        $code = $project->code ?? ('PRJ-' . str_pad((string) $project->id, 6, '0', STR_PAD_LEFT));
+        $title = $project->name ?? 'Projeto';
+        $excerpt = Str::limit($msg->message ?? '', 280);
+
+        foreach ($recipients as $r) {
+            Notification::route('mail', $r['email'])->notify(new CardChatMessageNotification(
+                cardType:       CardEnvolvido::TYPE_PROJECT,
+                cardCode:       $code,
+                cardTitle:      $title,
+                authorName:     $author->name,
+                authorRole:     match ($author->type) {
+                    'admin' => 'Admin', 'coordenador' => 'Coordenador', 'consultor' => 'Consultor',
+                    'cliente' => 'Cliente', 'parceiro_admin' => 'Parceiro', 'administrativo' => 'Administrativo',
+                    default => 'Equipe',
+                },
+                messageExcerpt: $excerpt,
+                openUrl:        $openUrl,
+                cardUrl:        $cardUrl,
+                recipientName:  $r['display_name'],
+            ));
+        }
     }
 
     public function downloadAttachment(Request $request, ProjectMessage $message, ProjectMessageAttachment $attachment): mixed

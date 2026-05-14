@@ -2,13 +2,18 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\CardEnvolvido;
 use App\Models\ContractRequest;
 use App\Models\ContractRequestMessage;
 use App\Models\ContractRequestMessageAttachment;
 use App\Models\User;
+use App\Notifications\CardChatMessageNotification;
+use App\Services\CardEnvolvidoService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class ContractRequestMessageController extends Controller
 {
@@ -82,7 +87,52 @@ class ContractRequestMessageController extends Controller
 
         $msg->load(['author:id,name', 'attachments']);
 
+        // Notifica envolvidos (exceto o autor). Cliente sai automaticamente se req_decided_at preenchido.
+        $this->dispatchChatNotification($contractRequest, $msg, $user);
+
         return response()->json($msg, 201);
+    }
+
+    private function dispatchChatNotification(ContractRequest $req, ContractRequestMessage $msg, User $author): void
+    {
+        $recipients = app(CardEnvolvidoService::class)
+            ->recipientsForChat(CardEnvolvido::TYPE_REQUEST, $req->id, $author->id);
+
+        if ($recipients->isEmpty()) return;
+
+        $base = config('app.url');
+        $cardUrl = rtrim($base, '/') . '/contratos/pipeline?req=' . $req->id;
+        $openUrl = $cardUrl . '#chat';
+        $code = $req->code ?? ('REQ-' . str_pad((string) $req->id, 6, '0', STR_PAD_LEFT));
+        $title = $req->title ?? ($req->subject ?? 'Requisição');
+        $excerpt = Str::limit($msg->message ?? '', 280);
+
+        foreach ($recipients as $r) {
+            Notification::route('mail', $r['email'])->notify(new CardChatMessageNotification(
+                cardType:       CardEnvolvido::TYPE_REQUEST,
+                cardCode:       $code,
+                cardTitle:      $title,
+                authorName:     $author->name,
+                authorRole:     $this->userRoleLabel($author),
+                messageExcerpt: $excerpt,
+                openUrl:        $openUrl,
+                cardUrl:        $cardUrl,
+                recipientName:  $r['display_name'],
+            ));
+        }
+    }
+
+    private function userRoleLabel(User $u): string
+    {
+        return match ($u->type) {
+            'admin'           => 'Admin',
+            'coordenador'     => 'Coordenador',
+            'consultor'       => 'Consultor',
+            'cliente'         => 'Cliente',
+            'parceiro_admin'  => 'Parceiro',
+            'administrativo'  => 'Administrativo',
+            default           => 'Equipe',
+        };
     }
 
     public function downloadAttachment(Request $request, ContractRequestMessage $message, ContractRequestMessageAttachment $attachment): mixed
@@ -104,12 +154,19 @@ class ContractRequestMessageController extends Controller
             return response()->json([], 403);
         }
 
-        $users = User::whereIn('type', ['admin', 'coordenador'])
-            ->where('enabled', true)
-            ->select('id', 'name')
-            ->orderBy('name')
-            ->get();
+        // Agora vem da lista de envolvidos do card, respeitando bloqueio do cliente após decisão.
+        $q = CardEnvolvido::forCard(CardEnvolvido::TYPE_REQUEST, $contractRequest->id)
+            ->with('user:id,name,email,type');
 
-        return response()->json($users);
+        if (!empty($contractRequest->req_decided_at)) {
+            $q->internal();
+        }
+
+        $list = $q->get()
+            ->filter(fn($e) => $e->user_id !== null)  // @menção exige user real (não email externo)
+            ->map(fn($e) => ['id' => $e->user_id, 'name' => $e->user?->name])
+            ->values();
+
+        return response()->json($list);
     }
 }

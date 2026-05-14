@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Project;
+use App\Models\StageActivityEvent;
 use App\Models\StageDelivery;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -98,6 +99,59 @@ class MeController extends Controller
                 'in_progress'    => count($sections['in_progress']),
                 'backlog'        => count($sections['backlog']),
             ],
+        ]);
+    }
+
+    /**
+     * Comentários onde o usuário corrente foi mencionado via `@[id:Name]`.
+     *
+     * Read tracking é client-side (localStorage `minutor.mentions_last_seen`).
+     * Endpoint retorna últimas 50 mentions ordenadas decrescente.
+     */
+    public function mentions(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        // payload->mentioned_user_ids é jsonb array. @> consulta containment.
+        $events = StageActivityEvent::query()
+            ->where('type', StageActivityEvent::TYPE_COMMENT)
+            ->whereRaw("payload->'mentioned_user_ids' @> ?::jsonb", [json_encode([$user->id])])
+            ->with([
+                'actor:id,name,email',
+                'delivery:id,title,stage_id',
+                'delivery.stage:id,name,project_id',
+                'delivery.stage.project:id,name,customer_id',
+            ])
+            ->orderByDesc('created_at')
+            ->limit(50)
+            ->get();
+
+        $items = $events->map(function ($ev) {
+            $delivery = $ev->delivery;
+            $stage    = $delivery?->stage;
+            $project  = $stage?->project;
+            $payload  = $ev->payload ?? [];
+
+            return [
+                'id'           => $ev->id,
+                'created_at'   => $ev->created_at?->toIso8601String(),
+                'actor'        => $ev->actor ? [
+                    'id'   => $ev->actor->id,
+                    'name' => $ev->actor->name,
+                ] : null,
+                'text'         => $payload['text'] ?? null,
+                'delivery_id'  => $delivery?->id,
+                'delivery'     => $delivery?->title,
+                'stage_id'     => $stage?->id,
+                'stage'        => $stage?->name,
+                'project_id'   => $project?->id,
+                'project'      => $project?->name,
+            ];
+        });
+
+        return response()->json([
+            'items' => $items,
+            'count' => $items->count(),
         ]);
     }
 }

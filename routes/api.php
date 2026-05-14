@@ -129,6 +129,8 @@ Route::prefix('v1')->group(function () {
 
         // Cards atribuídos ao usuário corrente (visão consultor — Bloco F)
         Route::get('/me/cards', [MeController::class, 'cards'])->middleware('block.cliente')->name('me.cards');
+        // Comentários onde o usuário foi mencionado (refactor 2026-05-15)
+        Route::get('/me/mentions', [MeController::class, 'mentions'])->middleware('block.cliente')->name('me.mentions');
 
         // Autenticação
         Route::post('/auth/logout', [AuthController::class, 'logout'])->name('auth.logout');

@@ -11,11 +11,19 @@ use Illuminate\Validation\Rule;
 
 class StageDeliveryController extends Controller
 {
-    public function index(ProjectStage $stage): JsonResponse
+    public function index(ProjectStage $stage, Request $request): JsonResponse
     {
-        $deliveries = $stage->deliveries()
+        $query = $stage->deliveries()
             ->with('responsible:id,name,email')
-            ->withSum('timesheets as effort_minutes_sum', 'effort_minutes')
+            ->withSum('timesheets as effort_minutes_sum', 'effort_minutes');
+
+        // Visão consultor: vê só entregas atribuídas a ele. ADR 0004.
+        $user = $request->user();
+        if ($user && method_exists($user, 'isConsultor') && $user->isConsultor()) {
+            $query->where('responsible_user_id', $user->id);
+        }
+
+        $deliveries = $query
             ->orderBy('status')
             ->orderBy('order_index')
             ->get();

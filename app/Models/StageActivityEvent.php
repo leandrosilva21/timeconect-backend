@@ -30,6 +30,10 @@ class StageActivityEvent extends Model
         'actor_user_id',
         'type',
         'payload',
+        'attachment_path',
+        'attachment_original_name',
+        'attachment_mime',
+        'attachment_size',
     ];
 
     protected $casts = [

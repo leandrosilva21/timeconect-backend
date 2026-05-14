@@ -11,9 +11,19 @@ use Illuminate\Validation\Rule;
 
 class ProjectStageController extends Controller
 {
-    public function index(Project $project): JsonResponse
+    public function index(Project $project, Request $request): JsonResponse
     {
+        $user = $request->user();
+        $isConsultor = $user && method_exists($user, 'isConsultor') && $user->isConsultor();
+
         $stages = $project->stages()
+            ->when($isConsultor, function ($q) use ($user) {
+                // Consultor só vê etapas onde tem alocação OU é responsável por entrega (ADR 0004)
+                $q->where(function ($w) use ($user) {
+                    $w->whereHas('allocations', fn ($a) => $a->where('user_id', $user->id))
+                      ->orWhereHas('deliveries', fn ($d) => $d->where('responsible_user_id', $user->id));
+                });
+            })
             ->with('responsible:id,name,email')
             ->withCount([
                 'deliveries',

@@ -13,11 +13,16 @@ class StageAllocationController extends Controller
 {
     /**
      * Lista alocações da etapa + actual/remaining calculados.
+     * Visão consultor: vê só sua própria alocação (ADR 0004).
      */
-    public function index(ProjectStage $stage): JsonResponse
+    public function index(ProjectStage $stage, Request $request): JsonResponse
     {
+        $user = $request->user();
+        $isConsultor = $user && method_exists($user, 'isConsultor') && $user->isConsultor();
+
         $items = StageAllocation::query()
             ->where('stage_allocations.stage_id', $stage->id)
+            ->when($isConsultor, fn ($q) => $q->where('stage_allocations.user_id', $user->id))
             ->with('user:id,name,email')
             ->leftJoinSub(
                 Timesheet::query()

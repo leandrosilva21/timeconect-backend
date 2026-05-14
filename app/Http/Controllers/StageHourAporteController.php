@@ -33,8 +33,22 @@ class StageHourAporteController extends Controller
         ]);
     }
 
+    /**
+     * @deprecated 2026-05-15 — aporte stage-level virou legado. ADR 0007 moveu
+     * a unidade de execução pra atividade (stage_delivery). Use o novo endpoint
+     * POST /activities/{delivery}/aportes (storeForActivity).
+     *
+     * Continuamos aceitando aqui pra compat de chamadas antigas, mas a UI nova
+     * (side panel da atividade) já usa o endpoint da atividade.
+     */
     public function store(Request $request, ProjectStage $stage): JsonResponse
     {
+        \Log::warning('[deprecated] POST /stages/{id}/aportes — use POST /activities/{id}/aportes (ADR 0007)', [
+            'stage_id' => $stage->id,
+            'user_id'  => Auth::id(),
+            'route'    => $request->path(),
+        ]);
+
         $data = $request->validate([
             'hours'  => 'required|numeric|not_in:0',
             'reason' => 'required|string|min:5|max:500',

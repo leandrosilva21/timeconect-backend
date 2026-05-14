@@ -204,17 +204,23 @@ class ProjectStageController extends Controller
     /**
      * Comentário operacional na etapa (Pilar 3 — chat contextual).
      *
+     * @deprecated 2026-05-15 — chat stage-level virou legado. ADR 0007 moveu
+     * comunicação pra atividade. Use POST /activities/{delivery}/comments
+     * (StageDeliveryController::storeComment). Comentários antigos ficam
+     * visíveis na timeline agregada da etapa (delivery_id=null).
+     *
      * Cria evento append-only `type=comment` em `stage_activity_events`.
      * Aceita texto livre, anexo (file 20MB max) e mentions `@[id:Name]`.
      * Mantém ADR 0005 — sem tabela paralela.
-     *
-     * Visibilidade de escrita: qualquer usuário com acesso ao projeto
-     * (route já gate por permission.or.admin:projects.view + block.cliente).
-     * Consultor adicionalmente precisa estar alocado na etapa OU ser responsável
-     * por alguma entrega — mesma regra de leitura.
      */
     public function storeComment(Request $request, ProjectStage $stage): JsonResponse
     {
+        \Log::warning('[deprecated] POST /stages/{id}/comments — use POST /activities/{id}/comments (ADR 0007)', [
+            'stage_id' => $stage->id,
+            'user_id'  => $request->user()?->id,
+            'route'    => $request->path(),
+        ]);
+
         $user = $request->user();
 
         // Filtro de escrita: consultor só comenta em etapa que participa

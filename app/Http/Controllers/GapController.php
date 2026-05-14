@@ -705,13 +705,15 @@ class GapController extends Controller
 
     /**
      * Match candidato → projeto.
-     * match_score = skill_score * 0.6 + availability * 0.2 + (triage/100) * 0.2
+     * match_score = skill_score * 0.7 + availability * 0.2 + (triage/100) * 0.1
+     *   skill_score = média per-skill de min(1, actual_weight/required_weight) — contínuo, sem bucket
      * Penalizações:
      *  - falta de critical_skill global → -0.3
      *  - availability < 0.5 → -0.2
      * Filtros:
      *  - status=approved OU (status in new/screening AND triage >= 80)
      *  - exclui triage < 50
+     * Tiebreakers (em ordem): status approved → protheus_years → avg_skill_weight → availability → name
      */
     public function candidateMatch(int $projectId): JsonResponse
     {

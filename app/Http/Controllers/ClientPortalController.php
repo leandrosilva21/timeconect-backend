@@ -552,16 +552,56 @@ class ClientPortalController extends Controller
             }
         }
 
-        // Tickets abertos no Movidesk — mesma regra de SustentacaoController.
-        $openTickets = MovideskTicket::where('customer_id', $customerId)
+        // Tickets em aberto agora (estado atual, qualquer data) — mesma regra de SustentacaoController.
+        $openTicketsBaseQuery = MovideskTicket::where('customer_id', $customerId)
             ->where(function ($q) {
                 $q->whereIn('base_status', ['New', 'InAttendance'])
                   ->orWhere(function ($qq) {
                       $qq->where('base_status', 'Stopped')
                          ->whereIn('status', ['Pendente Terceiros', 'Pendente TOTVS', 'Agendado']);
                   });
-            })
+            });
+        $openTicketsTotal = (clone $openTicketsBaseQuery)->count();
+
+        // Tickets abertos NO MÊS atual (qualquer status) — pra o card "TICKETS ABERTOS EM <mês>".
+        $startMonth = now()->startOfMonth();
+        $endMonth   = now()->endOfMonth();
+        $openTicketsCurrentMonth = MovideskTicket::where('customer_id', $customerId)
+            ->whereBetween('created_at', [$startMonth, $endMonth])
             ->count();
+
+        // Série mensal — últimos 12 meses fechados (inclui o mês atual).
+        $monthsBack = 11;
+        $start12     = now()->startOfMonth()->subMonths($monthsBack);
+        // tickets criados por mês
+        $rawTickets = MovideskTicket::where('customer_id', $customerId)
+            ->where('created_at', '>=', $start12)
+            ->selectRaw("TO_CHAR(created_at, 'YYYY-MM') as ym, COUNT(*) as c")
+            ->groupByRaw("TO_CHAR(created_at, 'YYYY-MM')")
+            ->pluck('c', 'ym')->toArray();
+        // horas vendidas = projetos cujo start_date está no mês (soma de sold_hours).
+        $rawSold = DB::table('projects')
+            ->where('customer_id', $customerId)
+            ->where('is_investimento_comercial', false)
+            ->whereNull('parent_project_id')
+            ->whereNull('deleted_at')
+            ->whereNotNull('start_date')
+            ->where('start_date', '>=', $start12)
+            ->selectRaw("TO_CHAR(start_date, 'YYYY-MM') as ym, COALESCE(SUM(sold_hours), 0) as h")
+            ->groupByRaw("TO_CHAR(start_date, 'YYYY-MM')")
+            ->pluck('h', 'ym')->toArray();
+
+        $monthly = [];
+        for ($i = $monthsBack; $i >= 0; $i--) {
+            $d  = now()->startOfMonth()->subMonths($i);
+            $ym = $d->format('Y-m');
+            $monthly[] = [
+                'month'         => $ym,
+                'label'         => $d->translatedFormat('M/y'),
+                'tickets'       => (int) ($rawTickets[$ym] ?? 0),
+                'sold_hours'    => (float) ($rawSold[$ym] ?? 0),
+            ];
+        }
 
         // Projetos do cliente (apenas raiz; excluem-se manuais de Investimento Interno)
         $projects = Project::with(['contractType'])
@@ -616,10 +656,13 @@ class ClientPortalController extends Controller
                 'id'   => $customer->id,
                 'name' => $customer->name,
             ],
-            'open_tickets'      => $openTickets,
-            'total_projects'    => $totalProjects,
-            'total_sold_hours'  => $totalSoldHours,
-            'projects_health'   => $health,
+            'open_tickets'                  => $openTicketsTotal,
+            'open_tickets_current_month'    => $openTicketsCurrentMonth,
+            'current_month_label'           => now()->translatedFormat('M/y'),
+            'total_projects'                => $totalProjects,
+            'total_sold_hours'              => $totalSoldHours,
+            'projects_health'               => $health,
+            'monthly_series'                => $monthly,
         ]);
     }
 }

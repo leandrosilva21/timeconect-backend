@@ -627,11 +627,12 @@ class ClientPortalController extends Controller
             ->whereNull('parent_project_id')
             ->get();
 
-        // Card "Projetos": contagem TOTAL (raiz + filhos, qualquer tipo,
-        // qualquer data, incluindo Investimento Interno). Árvore abaixo
-        // continua só com raízes — divergência é intencional.
+        // Card "Projetos": contagem de projetos visíveis ao cliente
+        // (raiz + filhos, qualquer tipo, qualquer data). Exclui Investimento
+        // Interno (IC/IS/IP-*) — são controles da casa, não do cliente.
         $totalProjects  = (int) DB::table('projects')
             ->where('customer_id', $customerId)
+            ->where('is_investimento_comercial', false)
             ->whereNull('deleted_at')
             ->count();
         // Horas contratadas: soma apenas das raízes pra evitar duplicidade pai+filho.

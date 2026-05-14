@@ -578,10 +578,11 @@ class ClientPortalController extends Controller
         // iniciados no mês e quantas horas eles totalizam.
         $monthsBack = 11;
         $start12     = now()->startOfMonth()->subMonths($monthsBack);
+        // Inclui subprojetos: cada filho com start_date no mês conta como
+        // um novo projeto contratado (novo ticket / release / serviço).
         $rawProjects = DB::table('projects')
             ->where('customer_id', $customerId)
             ->where('is_investimento_comercial', false)
-            ->whereNull('parent_project_id')
             ->whereNull('deleted_at')
             ->whereNotNull('start_date')
             ->where('start_date', '>=', $start12)

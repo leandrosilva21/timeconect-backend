@@ -552,6 +552,8 @@ class TimesheetController extends Controller
             'observation' => 'nullable|string|max:5000',
             'ticket' => 'nullable',
             'attachment' => 'nullable|file|mimes:pdf,jpg,jpeg,png,doc,docx|max:5120',
+            'stage_id' => 'nullable|integer|exists:project_stages,id',
+            'stage_delivery_id' => 'nullable|integer|exists:stage_deliveries,id',
         ];
 
         // Se é administrador ou coordenador, pode especificar user_id

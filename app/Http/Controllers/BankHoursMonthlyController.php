@@ -207,14 +207,9 @@ class BankHoursMonthlyController extends Controller
         $hoursBalanceExcludingCurrentMonth = 0;
 
         foreach ($parentProjects as $parentProject) {
-            // getGeneralHoursBalance já exclui filhos frozen; subtrair initial_hours_consumed (histórico pré-importação)
-            $projectBalance = $parentProject->getGeneralHoursBalance()
-                - (float) ($parentProject->initial_hours_consumed ?? 0);
-            $hoursBalance += $projectBalance;
-
-            $projectBalanceExcludingCurrentMonth = $parentProject->getGeneralHoursBalanceExcludingCurrentMonth()
-                - (float) ($parentProject->initial_hours_consumed ?? 0);
-            $hoursBalanceExcludingCurrentMonth += $projectBalanceExcludingCurrentMonth;
+            // getGeneralHoursBalance(Excluding...) já subtrai initial_hours_consumed do pai (fix f727001)
+            $hoursBalance += $parentProject->getGeneralHoursBalance();
+            $hoursBalanceExcludingCurrentMonth += $parentProject->getGeneralHoursBalanceExcludingCurrentMonth();
         }
 
         // Arredondar para 2 casas decimais

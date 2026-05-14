@@ -187,10 +187,8 @@ class BankHoursFixedController extends Controller
         $parentProjects = $query->get();
 
         foreach ($parentProjects as $parentProject) {
-            // getGeneralHoursBalance já exclui filhos frozen; subtrair initial_hours_consumed (histórico pré-importação)
-            $projectBalance = $parentProject->getGeneralHoursBalance()
-                - (float) ($parentProject->initial_hours_consumed ?? 0);
-            $hoursBalance += $projectBalance;
+            // getGeneralHoursBalance já subtrai initial_hours_consumed do pai (fix f727001) e exclui filhos frozen
+            $hoursBalance += $parentProject->getGeneralHoursBalance();
         }
 
         // Arredondar para 2 casas decimais

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Project;
 use App\Models\Skill;
+use App\Models\SkillAlias;
 use App\Models\User;
 use App\Models\ConsultantSkill;
 use Illuminate\Http\JsonResponse;
@@ -28,14 +29,52 @@ class SearchController extends Controller
         }
 
         $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
+        $needle = mb_strtolower($q);
 
-        // Skills que batem por nome (case-insensitive)
-        $matchingSkills = Skill::where('name', 'ILIKE', $like)
-            ->orderBy('name')
-            ->limit(8)
-            ->get(['id', 'name', 'category']);
+        // Skills que batem por NOME, ALIAS (skill_aliases) ou CATEGORIA — case-insensitive.
+        // Estratégia: 1ª query pega ids matched; 2ª carrega com aliases pra ranking em PHP.
+        $matchedSkillIds = \Illuminate\Support\Facades\DB::table('skills as s')
+            ->leftJoin('skill_aliases as sa', 'sa.skill_id', '=', 's.id')
+            ->where(function ($w) use ($like) {
+                $w->where('s.name', 'ILIKE', $like)
+                  ->orWhere('sa.alias', 'ILIKE', $like)
+                  ->orWhere('s.category', 'ILIKE', $like);
+            })
+            ->distinct()
+            ->pluck('s.id');
 
-        // Pessoas com skill-match (têm pelo menos uma das skills que bateu)
+        $skillsWithAliases = $matchedSkillIds->isNotEmpty()
+            ? Skill::with('aliases:id,skill_id,alias')
+                ->whereIn('id', $matchedSkillIds)
+                ->get(['id', 'name', 'category'])
+            : collect();
+
+        // Ranking: nome=1, alias=2, categoria=3 (mesma lógica da spec)
+        $matchingSkills = $skillsWithAliases->map(function ($s) use ($needle) {
+            $matchedAlias = null;
+            $rank = 3;
+            if (mb_stripos($s->name, $needle) !== false) {
+                $rank = 1;
+            } else {
+                $alias = $s->aliases->first(fn($a) => mb_stripos($a->alias, $needle) !== false);
+                if ($alias) {
+                    $rank = 2;
+                    $matchedAlias = $alias->alias;
+                }
+            }
+            return (object) [
+                'id'             => $s->id,
+                'name'           => $s->name,
+                'category'       => $s->category,
+                'matched_alias'  => $matchedAlias,
+                '_rank'          => $rank,
+            ];
+        })
+        ->sortBy(['_rank', 'name'])
+        ->take(10)
+        ->values();
+
+        // Pessoas com skill-match (têm pelo menos uma das skills matched)
         $skillMatchUserIds = $matchingSkills->isNotEmpty()
             ? ConsultantSkill::whereIn('skill_id', $matchingSkills->pluck('id'))
                 ->distinct('consultant_id')
@@ -62,15 +101,26 @@ class SearchController extends Controller
 
         $people = $skillMatchPeople->concat($nameMatchPeople);
 
-        // Pra cada pessoa, achar a skill principal (maior weight)
+        // Pra cada pessoa: prioriza a skill MATCHED (pra dar contexto à busca)
+        // Fallback: skill com maior weight overall
         $peopleIds = $people->pluck('id');
-        $topSkillByUser = $peopleIds->isNotEmpty()
+        $matchedSkillIdSet = $matchingSkills->pluck('id');
+        $allUserSkills = $peopleIds->isNotEmpty()
             ? ConsultantSkill::with('skill:id,name', 'level:id,name,weight')
                 ->whereIn('consultant_id', $peopleIds)
                 ->get()
                 ->groupBy('consultant_id')
-                ->map(fn($coll) => $coll->sortByDesc(fn($cs) => optional($cs->level)->weight ?? 0)->first())
             : collect();
+
+        $topSkillByUser = $allUserSkills->map(function ($coll) use ($matchedSkillIdSet) {
+            // Preferir uma skill que esteja entre as matched
+            $matched = $coll->filter(fn($cs) => $matchedSkillIdSet->contains($cs->skill_id))
+                ->sortByDesc(fn($cs) => optional($cs->level)->weight ?? 0)
+                ->first();
+            if ($matched) return $matched;
+            // Fallback: overall top
+            return $coll->sortByDesc(fn($cs) => optional($cs->level)->weight ?? 0)->first();
+        });
 
         // Projetos: por code ou name
         $projects = Project::where(function ($q2) use ($like) {

@@ -21,6 +21,7 @@ class Project extends Model
      */
     public const STATUS_AWAITING_START       = 'awaiting_start';
     public const STATUS_BACKLOG              = 'backlog';
+    public const STATUS_PLANNING             = 'planning';
     public const STATUS_STARTED              = 'started';
     public const STATUS_LIBERADO_PARA_TESTES = 'liberado_para_testes';
     public const STATUS_PAUSED               = 'paused';

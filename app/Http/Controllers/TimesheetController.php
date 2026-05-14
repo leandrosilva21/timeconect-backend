@@ -859,7 +859,7 @@ class TimesheetController extends Controller
             // Auto-transição: apontar hora real significa execução começou. Sai de
             // awaiting_start (sem coord) ou backlog (com coord, aguardando início) e vai
             // direto pra started. Ver ADR 0002.
-            if (in_array($project->status, [Project::STATUS_AWAITING_START, Project::STATUS_BACKLOG], true)) {
+            if (in_array($project->status, [Project::STATUS_AWAITING_START, Project::STATUS_BACKLOG, Project::STATUS_PLANNING], true)) {
                 $project->status = Project::STATUS_STARTED;
                 $project->save();
                 $this->invalidateListCache('projects');

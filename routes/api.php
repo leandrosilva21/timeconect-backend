@@ -440,6 +440,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/stages/{stage}/aportes', [StageHourAporteController::class, 'index'])->name('stages.aportes.index');
             // Comentário operacional (Pilar 3) — write permitido para qualquer um que possa ver (consultor alocado, coord, admin)
             Route::post('/stages/{stage}/comments', [ProjectStageController::class, 'storeComment'])->name('stages.comments.store');
+
+            // Atividade como unidade de execução (Pilar A do refactor 2026-05-15)
+            Route::get('/activities/{delivery}/activity', [StageDeliveryController::class, 'activity'])->name('activities.activity');
+            Route::post('/activities/{delivery}/comments', [StageDeliveryController::class, 'storeComment'])->name('activities.comments.store');
         });
         Route::middleware(['permission.or.admin:projects.update', 'block.cliente'])->group(function () {
             Route::post('/projects/{project}/stages', [ProjectStageController::class, 'store'])->name('stages.store');

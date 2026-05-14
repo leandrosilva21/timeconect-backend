@@ -27,6 +27,7 @@ class StageActivityEvent extends Model
 
     protected $fillable = [
         'stage_id',
+        'delivery_id',
         'actor_user_id',
         'type',
         'payload',
@@ -44,6 +45,11 @@ class StageActivityEvent extends Model
     public function stage(): BelongsTo
     {
         return $this->belongsTo(ProjectStage::class, 'stage_id');
+    }
+
+    public function delivery(): BelongsTo
+    {
+        return $this->belongsTo(StageDelivery::class, 'delivery_id');
     }
 
     public function actor(): BelongsTo

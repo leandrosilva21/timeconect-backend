@@ -63,6 +63,11 @@ class ProjectStage extends Model
         return $this->hasMany(StageHourAporte::class, 'stage_id')->orderByDesc('created_at');
     }
 
+    public function activityEvents(): HasMany
+    {
+        return $this->hasMany(StageActivityEvent::class, 'stage_id')->orderByDesc('created_at');
+    }
+
     public function timesheets(): HasMany
     {
         return $this->hasMany(Timesheet::class, 'stage_id');

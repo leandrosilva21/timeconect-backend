@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\MeController;
+use App\Http\Controllers\UserCapacityController;
 use App\Http\Controllers\ContractTypeController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\PasswordResetController;
@@ -628,6 +629,12 @@ Route::prefix('v1')->group(function () {
 
         // Histórico de alterações de valor hora
         Route::get('/users/{user}/hourly-rate-history', [UserController::class, 'getHourlyRateHistory'])->name('users.hourly-rate-history');
+
+        // Capacidade global do consultor (Bloco E)
+        Route::middleware('block.cliente')->group(function () {
+            Route::get('/users/capacity', [UserCapacityController::class, 'index'])->name('users.capacity.index');
+            Route::get('/users/{user}/capacity', [UserCapacityController::class, 'show'])->name('users.capacity.show');
+        });
 
         // 🎯 APROVAÇÕES - Endpoints para gerenciar aprovações pendentes
         Route::middleware('permission.or.admin:timesheets.approve,expenses.approve')->group(function () {

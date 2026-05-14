@@ -112,7 +112,7 @@ class Project extends Model
     /**
      * Atributos calculados incluídos automaticamente no JSON.
      */
-    protected $appends = ['status_display', 'contract_type_display'];
+    protected $appends = ['status_display', 'contract_type_display', 'is_operational'];
 
     /**
      * The attributes that should be cast.
@@ -194,6 +194,14 @@ class Project extends Model
         }
 
         return self::getStatuses()[$this->status] ?? $this->status;
+    }
+
+    /**
+     * Espelha isOperational() pro JSON — frontend usa pra decidir UI dual.
+     */
+    public function getIsOperationalAttribute(): bool
+    {
+        return $this->isOperational();
     }
 
     /**

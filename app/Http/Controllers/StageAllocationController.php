@@ -17,7 +17,7 @@ class StageAllocationController extends Controller
     public function index(ProjectStage $stage): JsonResponse
     {
         $items = StageAllocation::query()
-            ->where('stage_id', $stage->id)
+            ->where('stage_allocations.stage_id', $stage->id)
             ->with('user:id,name,email,profile_photo_path')
             ->leftJoinSub(
                 Timesheet::query()

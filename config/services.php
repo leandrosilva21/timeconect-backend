@@ -41,4 +41,20 @@ return [
         'webhook_validate' => filter_var(env('MOVIDESK_WEBHOOK_VALIDATE', false), FILTER_VALIDATE_BOOLEAN),
     ],
 
+    'anthropic' => [
+        'api_key'  => env('ANTHROPIC_API_KEY'),
+        'model'    => env('ANTHROPIC_MODEL', 'claude-sonnet-4-6'),
+        'base_url' => env('ANTHROPIC_BASE_URL', 'https://api.anthropic.com/v1'),
+    ],
+
+    'openai' => [
+        'api_key'  => env('OPENAI_API_KEY'),
+        'model'    => env('OPENAI_MODEL', 'gpt-4o-mini'),
+        'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+    ],
+
+    'ai' => [
+        'default_provider' => env('AI_DEFAULT_PROVIDER', 'anthropic'),
+    ],
+
 ];

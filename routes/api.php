@@ -885,5 +885,13 @@ Route::prefix('v1')->group(function () {
         Route::post('/projects/{id}/allocate',        [GapController::class, 'allocate'])->name('projects.allocate');
         Route::get('/projects/{id}/team-recommendation', [GapController::class, 'teamRecommendation'])->name('projects.team-recommendation');
         Route::post('/projects/{id}/allocate-team',    [GapController::class, 'allocateTeam'])->name('projects.allocate-team');
+
+        // 📡 OPERATIONAL FEED — Timeline operacional (eventos, IA, alertas, riscos)
+        Route::prefix('operational-feed')->group(function () {
+            Route::get('/',      [\App\Http\Controllers\OperationalFeedController::class, 'index'])->name('operational-feed.index');
+            Route::get('/{id}',  [\App\Http\Controllers\OperationalFeedController::class, 'show'])->name('operational-feed.show');
+            Route::post('/',     [\App\Http\Controllers\OperationalFeedController::class, 'store'])->name('operational-feed.store');
+            Route::delete('/{id}', [\App\Http\Controllers\OperationalFeedController::class, 'destroy'])->name('operational-feed.destroy');
+        });
     });
 });

@@ -23,6 +23,7 @@ class StageHourAporte extends Model
 
     protected $fillable = [
         'stage_id',
+        'delivery_id',
         'user_id',
         'hours',
         'reason',
@@ -36,6 +37,11 @@ class StageHourAporte extends Model
     public function stage(): BelongsTo
     {
         return $this->belongsTo(ProjectStage::class, 'stage_id');
+    }
+
+    public function delivery(): BelongsTo
+    {
+        return $this->belongsTo(StageDelivery::class, 'delivery_id');
     }
 
     public function user(): BelongsTo

@@ -1712,6 +1712,59 @@ class TimesheetController extends Controller
      *     )
      * )
      */
+    /**
+     * Bulk update de cliente/projeto em vários apontamentos. Marca manual_project_edit=true
+     * em cada um pra que o reprocess do Movidesk não reverta a alteração manual.
+     */
+    public function bulkUpdateProjectCustomer(\Illuminate\Http\Request $request): \Illuminate\Http\JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Não autorizado'], 403);
+        }
+        $data = $request->validate([
+            'ids'         => 'required|array|min:1',
+            'ids.*'       => 'integer|exists:timesheets,id',
+            'customer_id' => 'nullable|integer|exists:customers,id',
+            'project_id'  => 'nullable|integer|exists:projects,id',
+        ]);
+        if (empty($data['customer_id']) && empty($data['project_id'])) {
+            return response()->json(['message' => 'Informe customer_id e/ou project_id'], 422);
+        }
+
+        // Se projeto for fornecido, descobrir o customer dele e validar coerência
+        $projectCustomerId = null;
+        if (!empty($data['project_id'])) {
+            $project = \App\Models\Project::find($data['project_id']);
+            if (!$project) {
+                return response()->json(['message' => 'Projeto não encontrado'], 422);
+            }
+            $projectCustomerId = (int) $project->customer_id;
+            if (!empty($data['customer_id']) && (int) $data['customer_id'] !== $projectCustomerId) {
+                return response()->json([
+                    'message' => 'Projeto não pertence ao cliente informado',
+                ], 422);
+            }
+        }
+
+        $finalCustomerId = $data['customer_id'] ?? $projectCustomerId;
+        $finalProjectId  = $data['project_id'] ?? null;
+
+        $updated = 0;
+        foreach (Timesheet::whereIn('id', $data['ids'])->get() as $ts) {
+            if ($finalCustomerId !== null) $ts->customer_id = $finalCustomerId;
+            if ($finalProjectId  !== null) $ts->project_id  = $finalProjectId;
+            // Trava manual: sync do Movidesk não sobrescreve mais cliente/projeto.
+            $ts->manual_project_edit = true;
+            if ($ts->isDirty()) {
+                $ts->save(); // dispara observer pra log de auditoria
+                $updated++;
+            }
+        }
+
+        return response()->json(['success' => true, 'updated' => $updated]);
+    }
+
     public function bulkExtraPct(\Illuminate\Http\Request $request): \Illuminate\Http\JsonResponse
     {
         $user = Auth::user();

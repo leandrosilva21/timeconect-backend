@@ -449,6 +449,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/timesheets', [TimesheetController::class, 'index'])->name('timesheets.index');
         Route::get('/timesheets/export', [TimesheetController::class, 'export'])->name('timesheets.export');
         Route::put('/timesheets/bulk-extra-pct', [TimesheetController::class, 'bulkExtraPct'])->name('timesheets.bulk-extra-pct');
+        Route::put('/timesheets/bulk-update-project-customer', [TimesheetController::class, 'bulkUpdateProjectCustomer'])->name('timesheets.bulk-update-project-customer');
         Route::post('/timesheets/reprocess-movidesk', [TimesheetController::class, 'reprocessMovidesk'])->name('timesheets.reprocess-movidesk');
         Route::get('/timesheets/summary-by-ticket', [TimesheetController::class, 'summaryByTicket'])->name('timesheets.summary-by-ticket');
         Route::get('/timesheets/{timesheet}', [TimesheetController::class, 'show'])->name('timesheets.show');

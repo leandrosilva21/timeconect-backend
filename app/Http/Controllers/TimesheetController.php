@@ -830,6 +830,22 @@ class TimesheetController extends Controller
             $timesheet = new Timesheet($validatedData);
             $timesheet->user_id = $timesheetUserId;
             $timesheet->customer_id = $project->customer_id;
+
+            // Inferência de stage_id quando não veio no request e não há delivery (que já popularia
+            // via mutator). 1 alocação → auto; N → mantém NULL (frontend mostra dropdown); 0 → NULL.
+            // Persiste a escolha final em project_consultants.last_stage_id pra pré-selecionar.
+            if (empty($timesheet->stage_id) && empty($timesheet->stage_delivery_id)) {
+                $allocations = \App\Models\StageAllocation::query()
+                    ->whereHas('stage', fn ($q) => $q->where('project_id', $project->id))
+                    ->where('user_id', $timesheetUserId)
+                    ->get(['stage_id']);
+
+                if ($allocations->count() === 1) {
+                    $timesheet->stage_id = $allocations->first()->stage_id;
+                }
+                // N alocações: deixa frontend escolher via dropdown (não preenche)
+                // 0 alocações: stage_id fica NULL (apontamento "geral do projeto")
+            }
             $timesheet->status = $hasConflict ? Timesheet::STATUS_CONFLICTED : Timesheet::STATUS_PENDING;
             $timesheet->origin = 'web'; // Origem: criação manual via webapp
             $timesheet->is_billable_only = $user->isAdmin()
@@ -855,6 +871,15 @@ class TimesheetController extends Controller
             }
 
             $timesheet->save();
+
+            // Persiste "última etapa usada" pra pré-selecionar no próximo apontamento.
+            // Só atualiza quando stage_id ficou definido (auto-inferido ou veio do request).
+            if ($timesheet->stage_id) {
+                DB::table('project_consultants')
+                    ->where('project_id', $project->id)
+                    ->where('user_id', $timesheetUserId)
+                    ->update(['last_stage_id' => $timesheet->stage_id]);
+            }
 
             // Auto-transição: apontar hora real significa execução começou. Sai de
             // awaiting_start (sem coord) ou backlog (com coord, aguardando início) e vai

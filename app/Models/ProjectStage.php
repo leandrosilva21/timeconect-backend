@@ -53,6 +53,11 @@ class ProjectStage extends Model
         return $this->hasMany(StageDelivery::class, 'stage_id');
     }
 
+    public function allocations(): HasMany
+    {
+        return $this->hasMany(StageAllocation::class, 'stage_id');
+    }
+
     public function timesheets(): HasMany
     {
         return $this->hasMany(Timesheet::class, 'stage_id');

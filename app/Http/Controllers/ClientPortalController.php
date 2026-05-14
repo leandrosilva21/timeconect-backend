@@ -603,52 +603,75 @@ class ClientPortalController extends Controller
             ];
         }
 
-        // Projetos do cliente (apenas raiz; excluem-se manuais de Investimento Interno)
-        $projects = Project::with(['contractType'])
+        // Projetos do cliente — raiz com filhos eager loaded (multi-contratual).
+        $projects = Project::with(['contractType', 'childProjects.contractType'])
             ->where('customer_id', $customerId)
             ->where('is_investimento_comercial', false)
             ->whereNull('parent_project_id')
             ->get();
 
-        $totalProjects     = $projects->count();
-        $totalSoldHours    = round((float) $projects->sum('sold_hours'), 2);
+        $totalProjects  = $projects->count();
+        $totalSoldHours = round((float) $projects->sum('sold_hours'), 2);
 
-        // Saúde só pra não-Fechado. Para cada um, calcular % de uso (consumed/sold).
-        $health = $projects->filter(function ($p) {
-            $ctName = strtolower(trim(optional($p->contractType)->name ?? ''));
-            $ctCode = optional($p->contractType)->code ?? '';
-            return $ctName !== 'fechado' && $ctCode !== 'closed';
-        })->map(function ($p) {
+        $mapProject = function ($p) {
+            $ctName  = strtolower(trim(optional($p->contractType)->name ?? ''));
+            $ctCode  = optional($p->contractType)->code ?? '';
+            $isClosed = $ctName === 'fechado' || $ctCode === 'closed';
+
+            // Saldo / % uso apenas pra projetos NÃO-Fechado. Fechado: só sold_hours.
+            $sold = (float) ($p->sold_hours ?? 0);
+            if ($isClosed) {
+                return [
+                    'id'             => $p->id,
+                    'code'           => $p->code,
+                    'name'           => $p->name,
+                    'contract_type'  => optional($p->contractType)->name,
+                    'is_closed'      => true,
+                    'sold_hours'     => $sold,
+                    'consumed_hours' => null,
+                    'balance_hours'  => null,
+                    'percentage'     => null,
+                    'status'         => 'closed',
+                ];
+            }
+
             try {
                 $balance = $p->getGeneralHoursBalance(false);
             } catch (\Throwable $e) {
                 $balance = null;
             }
-            $sold = (float) ($p->sold_hours ?? 0);
             $available = $sold > 0 ? $sold : null;
-            $consumed = $available !== null && $balance !== null
+            $consumed  = $available !== null && $balance !== null
                 ? max(0, $available - $balance)
                 : null;
             $pct = ($available && $available > 0 && $consumed !== null)
                 ? round(($consumed / $available) * 100, 1)
                 : null;
             $status = match (true) {
-                $pct === null    => 'unknown',
-                $pct >= 90       => 'critical',
-                $pct >= 70       => 'warning',
-                default          => 'ok',
+                $pct === null => 'unknown',
+                $pct >= 90    => 'critical',
+                $pct >= 70    => 'warning',
+                default       => 'ok',
             };
             return [
                 'id'             => $p->id,
                 'code'           => $p->code,
                 'name'           => $p->name,
                 'contract_type'  => optional($p->contractType)->name,
+                'is_closed'      => false,
                 'sold_hours'     => $sold,
                 'consumed_hours' => $consumed,
                 'balance_hours'  => $balance,
                 'percentage'     => $pct,
                 'status'         => $status,
             ];
+        };
+
+        // Cada projeto raiz vira um nó; childProjects mapeados recursivamente.
+        $health = $projects->map(function ($p) use ($mapProject) {
+            $node = $mapProject($p);
+            $node['children'] = $p->childProjects->map($mapProject)->values();
+            return $node;
         })->values();
 
         return response()->json([

@@ -846,6 +846,43 @@ class TimesheetController extends Controller
                 // N alocações: deixa frontend escolher via dropdown (não preenche)
                 // 0 alocações: stage_id fica NULL (apontamento "geral do projeto")
             }
+
+            // Guard de saldo: se há stage_id e projeto operacional, bloqueia se o
+            // apontamento estourar a alocação do consultor naquela etapa.
+            // Ver ADR 0004.
+            if (
+                $timesheet->stage_id
+                && $project->isOperational()
+            ) {
+                $allocation = \App\Models\StageAllocation::where('stage_id', $timesheet->stage_id)
+                    ->where('user_id', $timesheetUserId)
+                    ->first();
+
+                if ($allocation) {
+                    $consumedMinutes = (int) Timesheet::where('stage_id', $timesheet->stage_id)
+                        ->where('user_id', $timesheetUserId)
+                        ->whereNull('deleted_at')
+                        ->whereIn('status', [Timesheet::STATUS_APPROVED, Timesheet::STATUS_RELEASED, Timesheet::STATUS_PENDING])
+                        ->sum('effort_minutes');
+
+                    $plannedMinutes = (int) round(((float) $allocation->planned_hours) * 60);
+                    $afterMinutes = $consumedMinutes + (int) $timesheet->effort_minutes;
+
+                    if ($plannedMinutes > 0 && $afterMinutes > $plannedMinutes) {
+                        DB::rollBack();
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Sem saldo disponível. Verifique com o coordenador.',
+                            'detail'  => sprintf(
+                                'Esta etapa tem %.1fh planejadas pra você; já consumiu/pendentes %.1fh; este apontamento somaria %.1fh.',
+                                $plannedMinutes / 60,
+                                $consumedMinutes / 60,
+                                $afterMinutes / 60
+                            ),
+                        ], 422);
+                    }
+                }
+            }
             $timesheet->status = $hasConflict ? Timesheet::STATUS_CONFLICTED : Timesheet::STATUS_PENDING;
             $timesheet->origin = 'web'; // Origem: criação manual via webapp
             $timesheet->is_billable_only = $user->isAdmin()

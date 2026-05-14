@@ -87,6 +87,9 @@ class StageAllocationController extends Controller
             ], 422);
         }
 
+        $err = $this->guardStageCapacity($stage, (float) $data['planned_hours']);
+        if ($err !== null) return $err;
+
         $allocation = StageAllocation::create([
             'stage_id'      => $stage->id,
             'user_id'       => $data['user_id'],
@@ -102,6 +105,15 @@ class StageAllocationController extends Controller
             'planned_hours' => 'required|numeric|min:0.5',
         ]);
 
+        $delta = (float) $data['planned_hours'] - (float) $allocation->planned_hours;
+        if ($delta > 0) {
+            $allocation->loadMissing('stage');
+            if ($allocation->stage) {
+                $err = $this->guardStageCapacity($allocation->stage, $delta);
+                if ($err !== null) return $err;
+            }
+        }
+
         $allocation->update($data);
 
         return response()->json($allocation->fresh()->load('user:id,name,email'));
@@ -116,6 +128,29 @@ class StageAllocationController extends Controller
         $allocation->delete();
 
         return response()->json(['deleted' => true]);
+    }
+
+    /**
+     * Bloqueia se SUM(allocations.planned_hours) + $delta > stage.planned_hours.
+     */
+    private function guardStageCapacity(ProjectStage $stage, float $delta): ?JsonResponse
+    {
+        $stagePlanned = (float) ($stage->hours_planned ?? 0);
+        if ($stagePlanned <= 0) return null;
+
+        $allocated = (float) StageAllocation::where('stage_id', $stage->id)->sum('planned_hours');
+        $available = $stagePlanned - $allocated;
+
+        if ($delta > $available + 0.001) {
+            return response()->json([
+                'message' => 'Sem saldo disponível. Verifique com o coordenador.',
+                'detail'  => sprintf(
+                    'Tentativa de alocar %.1fh na etapa. Saldo da etapa: %.1fh (planejadas %.1fh, alocadas %.1fh).',
+                    $delta, $available, $stagePlanned, $allocated
+                ),
+            ], 422);
+        }
+        return null;
     }
 
     /**

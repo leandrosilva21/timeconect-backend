@@ -52,10 +52,12 @@ class ProjectStageController extends Controller
             ->orderBy('order_index')
             ->get();
 
-        // Pré-busca overrun por etapa em 1 query agregada (evita N+1)
-        $overrunByStage = $this->computeTeamOverrunByStage($stages->pluck('id')->all());
+        // Pré-busca agregados por etapa em 1 query (evita N+1)
+        $stageIds = $stages->pluck('id')->all();
+        $overrunByStage  = $this->computeTeamOverrunByStage($stageIds);
+        $consumedByStage = $this->computeConsumedHoursByStage($stageIds);
 
-        $stages->each(function ($s) use ($overrunByStage) {
+        $stages->each(function ($s) use ($overrunByStage, $consumedByStage) {
             // Earned value (ADR 0002)
             $totalHours = (float) ($s->deliveries_hours_planned_sum ?? 0);
             $doneHours  = (float) ($s->deliveries_hours_planned_done_sum ?? 0);
@@ -101,9 +103,45 @@ class ProjectStageController extends Controller
             $s->days_since_activity = $s->last_activity_at
                 ? \Carbon\Carbon::parse($s->last_activity_at)->diffInDays(now())
                 : null;
+
+            // Consumo real de horas da etapa (timesheets approved + released)
+            $s->actual_hours = (float) ($consumedByStage[$s->id] ?? 0);
+
+            // Risco operacional derivado (ADR 0006)
+            $risk = \App\Services\ProjectStageRiskService::compute([
+                'derived_status'       => $s->derived_status,
+                'expected_end_date'    => $s->expected_end_date?->toDateString(),
+                'days_since_activity'  => $s->days_since_activity,
+                'planned_hours'        => (float) $s->hours_planned,
+                'actual_hours'         => $s->actual_hours,
+                'team_overrun_count'   => $s->team_overrun_count,
+            ]);
+            $s->risk_level   = $risk['level'];
+            $s->risk_reasons = $risk['reasons'];
         });
 
         return response()->json(['items' => $stages]);
+    }
+
+    /**
+     * Soma de horas consumidas por etapa (timesheets approved + released).
+     * Retorna map [stage_id => actual_hours].
+     */
+    private function computeConsumedHoursByStage(array $stageIds): array
+    {
+        if (empty($stageIds)) return [];
+
+        $rows = DB::table('timesheets')
+            ->whereIn('stage_id', $stageIds)
+            ->whereNull('deleted_at')
+            ->whereIn('status', [\App\Models\Timesheet::STATUS_APPROVED, \App\Models\Timesheet::STATUS_RELEASED])
+            ->groupBy('stage_id')
+            ->selectRaw('stage_id, COALESCE(SUM(effort_minutes), 0) / 60.0 AS actual_hours')
+            ->get();
+
+        return $rows->pluck('actual_hours', 'stage_id')
+            ->mapWithKeys(fn ($v, $k) => [(int) $k => (float) $v])
+            ->toArray();
     }
 
     /**

@@ -40,15 +40,16 @@ class StageDeliveryController extends Controller
 
     public function store(Request $request, ProjectStage $stage): JsonResponse
     {
-
         $data = $request->validate([
-            'title'               => 'required|string|max:200',
-            'description'         => 'nullable|string',
-            'responsible_user_id' => 'nullable|exists:users,id',
-            'hours_planned'       => 'nullable|numeric|min:0',
-            'priority'            => ['nullable', Rule::in(StageDelivery::PRIORITIES)],
-            'status'              => ['nullable', Rule::in(StageDelivery::STATUSES)],
-            'due_date'            => 'nullable|date',
+            'title'                  => 'required|string|max:200',
+            'description'            => 'nullable|string',
+            'responsible_user_id'    => 'nullable|exists:users,id',
+            'hours_planned'          => 'nullable|numeric|min:0',
+            'priority'               => ['nullable', Rule::in(StageDelivery::PRIORITIES)],
+            'status'                 => ['nullable', Rule::in(StageDelivery::STATUSES)],
+            'due_date'               => 'nullable|date',
+            'planned_start_at'       => 'nullable|date',
+            'depends_on_delivery_id' => 'nullable|integer|exists:stage_deliveries,id',
         ]);
 
         $data['stage_id'] = $stage->id;
@@ -63,16 +64,26 @@ class StageDeliveryController extends Controller
 
     public function update(Request $request, StageDelivery $delivery): JsonResponse
     {
-
         $data = $request->validate([
-            'title'               => 'sometimes|string|max:200',
-            'description'         => 'nullable|string',
-            'responsible_user_id' => 'nullable|exists:users,id',
-            'hours_planned'       => 'sometimes|numeric|min:0',
-            'priority'            => ['sometimes', Rule::in(StageDelivery::PRIORITIES)],
-            'status'              => ['sometimes', Rule::in(StageDelivery::STATUSES)],
-            'due_date'            => 'nullable|date',
+            'title'                  => 'sometimes|string|max:200',
+            'description'            => 'nullable|string',
+            'responsible_user_id'    => 'nullable|exists:users,id',
+            'hours_planned'          => 'sometimes|numeric|min:0',
+            'priority'               => ['sometimes', Rule::in(StageDelivery::PRIORITIES)],
+            'status'                 => ['sometimes', Rule::in(StageDelivery::STATUSES)],
+            'due_date'               => 'nullable|date',
+            'planned_start_at'       => 'nullable|date',
+            'depends_on_delivery_id' => 'nullable|integer|exists:stage_deliveries,id',
         ]);
+
+        // Guard contra ciclo: atividade não pode depender de si mesma
+        if (array_key_exists('depends_on_delivery_id', $data)
+            && $data['depends_on_delivery_id'] !== null
+            && (int) $data['depends_on_delivery_id'] === (int) $delivery->id) {
+            return response()->json([
+                'message' => 'Atividade não pode depender de si mesma.',
+            ], 422);
+        }
 
         $delivery->update($data);
 

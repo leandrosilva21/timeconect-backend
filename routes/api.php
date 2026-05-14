@@ -433,6 +433,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/{project}/stages', [ProjectStageController::class, 'index'])->name('stages.index');
             Route::get('/projects/{project}/delay-risk', [ProjectStageController::class, 'delayRisk'])->name('projects.delay-risk');
             Route::get('/projects/{project}/consolidated-team', [ProjectController::class, 'consolidatedTeam'])->name('projects.consolidated-team');
+            Route::get('/projects/{project}/schedule', [ProjectController::class, 'schedule'])->name('projects.schedule');
             Route::get('/stages/{stage}', [ProjectStageController::class, 'show'])->name('stages.show');
             Route::get('/stages/{stage}/activity', [ProjectStageController::class, 'activity'])->name('stages.activity');
             Route::get('/stages/{stage}/deliveries', [StageDeliveryController::class, 'index'])->name('deliveries.index');

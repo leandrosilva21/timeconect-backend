@@ -1839,6 +1839,71 @@ class ProjectController extends Controller
     }
 
     /**
+     * Cronograma operacional do projeto (ADR 0009).
+     *
+     * Retorna estrutura para o cronograma em 1 query (eager load): stages
+     * + deliveries com campos planejados (start, end, hours) e reais
+     * (actual_start_at, completed_at, depends_on_delivery_id).
+     *
+     * Cronograma e Board são duas views da mesma entidade — sem dual store.
+     */
+    public function schedule(Project $project): JsonResponse
+    {
+        $project->loadMissing('serviceType');
+
+        if (!$project->isOperational()) {
+            return response()->json([
+                'is_operational' => false,
+                'stages'         => [],
+                'project_window' => null,
+            ]);
+        }
+
+        $stages = $project->stages()
+            ->with([
+                'responsible:id,name,email',
+                'deliveries:id,stage_id,title,responsible_user_id,hours_planned,priority,status,due_date,order_index,planned_start_at,actual_start_at,completed_at,depends_on_delivery_id',
+                'deliveries.responsible:id,name,email',
+            ])
+            ->orderBy('order_index')
+            ->get();
+
+        // Calcula a janela do cronograma (min start, max end) — usado pelo Gantt
+        $minDate = null;
+        $maxDate = null;
+        foreach ($stages as $st) {
+            foreach ([$st->stage_start_at, $st->expected_end_date] as $d) {
+                if (!$d) continue;
+                $minDate = $minDate === null || $d->lt($minDate) ? $d : $minDate;
+                $maxDate = $maxDate === null || $d->gt($maxDate) ? $d : $maxDate;
+            }
+            foreach ($st->deliveries as $del) {
+                foreach ([$del->planned_start_at, $del->due_date] as $d) {
+                    if (!$d) continue;
+                    $minDate = $minDate === null || $d->lt($minDate) ? $d : $minDate;
+                    $maxDate = $maxDate === null || $d->gt($maxDate) ? $d : $maxDate;
+                }
+            }
+        }
+
+        return response()->json([
+            'is_operational' => true,
+            'project_window' => [
+                'start' => $minDate?->toDateString(),
+                'end'   => $maxDate?->toDateString(),
+            ],
+            'project' => [
+                'id'                  => $project->id,
+                'name'                => $project->name,
+                'sold_hours'          => (float) ($project->sold_hours ?? 0),
+                'start_date'          => $project->start_date?->toDateString(),
+                'expected_end_date'   => $project->expected_end_date?->toDateString(),
+            ],
+            'stages' => $stages,
+        ]);
+    }
+
+    /**
      * Equipe consolidada do projeto operacional (Pilar 1).
      *
      * Agrega `stage_allocations` por usuário, somando planejado/consumido entre

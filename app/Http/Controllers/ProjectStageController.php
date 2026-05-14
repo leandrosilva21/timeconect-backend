@@ -47,6 +47,7 @@ class ProjectStageController extends Controller
             ->withSum(['deliveries as deliveries_hours_planned_done_sum' => function ($q) {
                 $q->where('status', \App\Models\StageDelivery::STATUS_DONE);
             }], 'hours_planned')
+            ->withMax('activityEvents as last_activity_at', 'created_at')
             ->orderBy('order_index')
             ->get();
 
@@ -94,6 +95,11 @@ class ProjectStageController extends Controller
 
             // 4º dot: equipe (red se ≥1 alocação estourada).
             $s->team_overrun_count = (int) ($overrunByStage[$s->id] ?? 0);
+
+            // Dias desde a última atividade (timeline). Null se nunca houve atividade.
+            $s->days_since_activity = $s->last_activity_at
+                ? \Carbon\Carbon::parse($s->last_activity_at)->diffInDays(now())
+                : null;
         });
 
         return response()->json(['items' => $stages]);
@@ -138,6 +144,22 @@ class ProjectStageController extends Controller
         $stage->load(['responsible:id,name,email', 'deliveries']);
 
         return response()->json($stage);
+    }
+
+    /**
+     * Timeline operacional da etapa (append-only). Ver ADR 0005.
+     * Eventos mais recentes primeiro. Paginação simples via ?limit (default 50, max 200).
+     */
+    public function activity(ProjectStage $stage, Request $request): JsonResponse
+    {
+        $limit = min((int) $request->get('limit', 50), 200);
+
+        $events = $stage->activityEvents()
+            ->with('actor:id,name,email')
+            ->limit($limit)
+            ->get();
+
+        return response()->json(['items' => $events]);
     }
 
     public function store(Request $request, Project $project): JsonResponse

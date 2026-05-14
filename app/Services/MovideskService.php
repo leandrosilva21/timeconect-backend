@@ -398,6 +398,23 @@ class MovideskService
             return false;
         }
 
+        // Regra global de < 5 min APLICADA ANTES da lógica de dedup/edit. Sem isso,
+        // um apontamento <5min pode "roubar" o appointment_id de um timesheet
+        // recém-criado no MESMO loop processTicket via findEditedCandidate Nível 2
+        // (ticket+user+date sem start_time): o sync criava o legítimo de 45min,
+        // depois processava o de 1min, findEditedCandidate retornava o de 45min
+        // como candidato, reprocessTimesheet aplicava o guard <5min e soft-deletava.
+        // Resultado: nenhum timesheet sobrevivia. (Caso William Campana ticket 48125)
+        $effortHours   = $this->extractEffortHours($appointment);
+        $effortMinutes = $effortHours ? $this->calculateEffortMinutes($effortHours) : 0;
+        if ($effortMinutes < 5) {
+            Log::info('⏭️ [MOVIDESK] Apontamento ignorado (duração < 5 min)', [
+                'effort_minutes'          => $effortMinutes,
+                'movidesk_appointment_id' => $appointmentId,
+            ]);
+            return false;
+        }
+
         // Apontamento já existe → reprocess pra refletir edições no Movidesk
         // (data, descrição, horários, effort). Trava manual de projeto/cliente
         // permanece ativa via $timesheet->manual_project_edit.
@@ -444,17 +461,6 @@ class MovideskService
         }
 
         try {
-            $effortHours   = $this->extractEffortHours($appointment);
-            $effortMinutes = $effortHours ? $this->calculateEffortMinutes($effortHours) : 0;
-
-            if ($effortMinutes < 5) {
-                Log::info('⏭️ [MOVIDESK] Apontamento ignorado (duração < 5 min)', [
-                    'effort_minutes'          => $effortMinutes,
-                    'movidesk_appointment_id' => $appointmentId,
-                ]);
-                return false;
-            }
-
             // Filtro por data mínima de apontamento (configurável no admin)
             $importStartDate = SystemSetting::get('movidesk_import_start_date');
             if ($importStartDate) {

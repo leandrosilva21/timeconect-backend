@@ -30,6 +30,9 @@ class ProjectStageController extends Controller
                 'deliveries as deliveries_done_count' => function ($q) {
                     $q->where('status', \App\Models\StageDelivery::STATUS_DONE);
                 },
+                'deliveries as deliveries_backlog_count' => function ($q) {
+                    $q->where('status', \App\Models\StageDelivery::STATUS_BACKLOG);
+                },
                 'deliveries as deliveries_in_progress_count' => function ($q) {
                     $q->where('status', \App\Models\StageDelivery::STATUS_IN_PROGRESS);
                 },
@@ -62,24 +65,30 @@ class ProjectStageController extends Controller
                 $s->progress_pct = 0.0;
             }
 
-            // Status macro derivado das entregas. Briefing:
-            // tudo concluído → concluida; ≥1 aguardando cliente → bloqueada;
-            // ≥1 em homologação → homologacao; ≥1 em execução → execucao;
-            // resto → planejamento.
-            $total = (int) ($s->deliveries_count ?? 0);
-            $done  = (int) ($s->deliveries_done_count ?? 0);
+            // Status macro derivado das entregas. Regra: etapa SÓ avança quando
+            // 100% das entregas atingem o estado seguinte. Bloqueada é override
+            // imediato quando ≥1 entrega está aguardando cliente.
+            $total       = (int) ($s->deliveries_count ?? 0);
+            $done        = (int) ($s->deliveries_done_count ?? 0);
+            $review      = (int) ($s->deliveries_review_count ?? 0);
+            $waiting     = (int) ($s->deliveries_waiting_client_count ?? 0);
+            $backlog     = (int) ($s->deliveries_backlog_count ?? 0);
 
             if ($total === 0) {
                 $s->derived_status = 'planejamento';
-            } elseif ($total === $done) {
-                $s->derived_status = 'concluida';
-            } elseif (($s->deliveries_waiting_client_count ?? 0) > 0) {
+            } elseif ($waiting > 0) {
+                // Override: qualquer entrega aguardando cliente trava a etapa
                 $s->derived_status = 'bloqueada';
-            } elseif (($s->deliveries_review_count ?? 0) > 0) {
+            } elseif ($done === $total) {
+                $s->derived_status = 'concluida';
+            } elseif (($review + $done) === $total) {
+                // 100% das entregas em homologação ou já concluídas
                 $s->derived_status = 'homologacao';
-            } elseif (($s->deliveries_in_progress_count ?? 0) > 0) {
+            } elseif ($backlog === 0) {
+                // 100% das entregas saíram de backlog (alguma em in_progress, review, done)
                 $s->derived_status = 'execucao';
             } else {
+                // Alguma entrega ainda em backlog
                 $s->derived_status = 'planejamento';
             }
 

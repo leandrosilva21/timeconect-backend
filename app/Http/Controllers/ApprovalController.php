@@ -706,6 +706,11 @@ class ApprovalController extends Controller
             $query->where('project_id', $request->get('project_id'));
         }
 
+        // Filtro por ticket (Movidesk)
+        if ($request->filled('ticket')) {
+            $query->where('ticket', trim((string) $request->get('ticket')));
+        }
+
         // Filtro por usuário (colaborador)
         if ($request->filled('user_id')) {
             $query->where('user_id', $request->get('user_id'));

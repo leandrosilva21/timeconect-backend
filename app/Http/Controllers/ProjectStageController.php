@@ -48,6 +48,7 @@ class ProjectStageController extends Controller
                 $q->where('status', \App\Models\StageDelivery::STATUS_DONE);
             }], 'hours_planned')
             ->withMax('activityEvents as last_activity_at', 'created_at')
+            ->withSum('aportes as aportes_hours_sum', 'hours')
             ->orderBy('order_index')
             ->get();
 
@@ -194,6 +195,7 @@ class ProjectStageController extends Controller
             'responsible_user_id' => 'nullable|exists:users,id',
             'hours_planned'       => 'sometimes|numeric|min:0',
             'status'              => ['sometimes', Rule::in(ProjectStage::STATUSES)],
+            'blocked_reason'      => 'nullable|string|max:500',
             'expected_end_date'   => 'nullable|date',
         ]);
 
@@ -209,7 +211,31 @@ class ProjectStageController extends Controller
             if ($err !== null) return $err;
         }
 
+        // Detecta transição de bloqueio pra registrar timeline (ADR 0005)
+        $previousReason = $stage->blocked_reason;
+
         $stage->update($data);
+
+        if (array_key_exists('blocked_reason', $data)) {
+            $newReason = trim((string) ($data['blocked_reason'] ?? ''));
+            $oldReason = trim((string) ($previousReason ?? ''));
+
+            if ($newReason !== $oldReason) {
+                $type = $newReason !== ''
+                    ? \App\Models\StageActivityEvent::TYPE_BLOCK_SET
+                    : \App\Models\StageActivityEvent::TYPE_BLOCK_CLEARED;
+
+                \App\Models\StageActivityEvent::create([
+                    'stage_id'      => $stage->id,
+                    'actor_user_id' => $request->user()?->id,
+                    'type'          => $type,
+                    'payload'       => array_filter([
+                        'reason'      => $newReason !== '' ? $newReason : null,
+                        'prev_reason' => $oldReason !== '' ? $oldReason : null,
+                    ]),
+                ]);
+            }
+        }
 
         return response()->json($stage->fresh()->load('responsible:id,name,email'));
     }

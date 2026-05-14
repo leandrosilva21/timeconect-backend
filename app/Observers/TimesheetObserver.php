@@ -58,10 +58,27 @@ class TimesheetObserver
                 ]);
             }
         }
+
+        // Quando data/horário muda, apontamentos conflitados do mesmo user/data
+        // podem ter deixado de ter sobreposição — reverte pra pending automaticamente.
+        // Inclui também o original (se a data anterior mudou).
+        $resolveFields = ['date', 'start_time', 'end_time', 'customer_id'];
+        if (!empty(array_intersect($resolveFields, array_keys($changes)))) {
+            $oldDate = $timesheet->getOriginal('date');
+            $newDate = $timesheet->date;
+            $this->resolveConflictsForDate($timesheet->user_id, $newDate);
+            if ($oldDate && $oldDate !== $newDate) {
+                $this->resolveConflictsForDate($timesheet->user_id, $oldDate);
+            }
+        }
     }
 
     public function deleted(Timesheet $timesheet): void
     {
+        // Reavalia conflitos do user/data — o apontamento deletado pode ter
+        // sido a fonte do conflito; outros marcados conflicted voltam pra pending.
+        $this->resolveConflictsForDate($timesheet->user_id, $timesheet->date);
+
         $this->createLog($timesheet, 'deleted', [
             'deleted_at' => ['old' => null, 'new' => optional($timesheet->deleted_at)->toIso8601String() ?? now()->toIso8601String()],
         ], $this->detectSource($timesheet));
@@ -72,6 +89,32 @@ class TimesheetObserver
         $this->createLog($timesheet, 'restored', [
             'deleted_at' => ['old' => optional($timesheet->getOriginal('deleted_at'))->toString() ?? 'unknown', 'new' => null],
         ], $this->detectSource($timesheet));
+    }
+
+    /**
+     * Re-checa conflitos do user/data e marca como pending os que não têm
+     * mais sobreposição. Idempotente — se o status já é pending, no-op.
+     * Não dispara recursão infinita porque Timesheet::resolveStaleConflicts
+     * só processa status=conflicted; depois do save vira pending e a próxima
+     * passagem do observer não vê nada pra processar.
+     */
+    private function resolveConflictsForDate(?int $userId, $date): void
+    {
+        if (!$userId || !$date) return;
+        $dateStr = $date instanceof \Carbon\Carbon
+            ? $date->format('Y-m-d')
+            : (is_string($date) ? substr($date, 0, 10) : (string) $date);
+        if (!$dateStr) return;
+        try {
+            Timesheet::resolveStaleConflicts($userId, $dateStr);
+        } catch (\Throwable $e) {
+            // Não bloqueia o salvamento principal por causa do resolve
+            \Illuminate\Support\Facades\Log::warning('[TimesheetObserver] resolveStaleConflicts falhou', [
+                'user_id' => $userId,
+                'date'    => $dateStr,
+                'error'   => $e->getMessage(),
+            ]);
+        }
     }
 
     private function buildDiff(Timesheet $timesheet): array

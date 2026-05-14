@@ -15,9 +15,21 @@ class ProjectStageController extends Controller
     {
         $stages = $project->stages()
             ->with('responsible:id,name,email')
-            ->withCount(['deliveries', 'deliveries as deliveries_done_count' => function ($q) {
-                $q->where('status', \App\Models\StageDelivery::STATUS_DONE);
-            }])
+            ->withCount([
+                'deliveries',
+                'deliveries as deliveries_done_count' => function ($q) {
+                    $q->where('status', \App\Models\StageDelivery::STATUS_DONE);
+                },
+                'deliveries as deliveries_in_progress_count' => function ($q) {
+                    $q->where('status', \App\Models\StageDelivery::STATUS_IN_PROGRESS);
+                },
+                'deliveries as deliveries_waiting_client_count' => function ($q) {
+                    $q->where('status', \App\Models\StageDelivery::STATUS_WAITING_CLIENT);
+                },
+                'deliveries as deliveries_review_count' => function ($q) {
+                    $q->where('status', \App\Models\StageDelivery::STATUS_REVIEW);
+                },
+            ])
             ->withSum('deliveries as deliveries_hours_planned_sum', 'hours_planned')
             ->withSum(['deliveries as deliveries_hours_planned_done_sum' => function ($q) {
                 $q->where('status', \App\Models\StageDelivery::STATUS_DONE);
@@ -25,10 +37,11 @@ class ProjectStageController extends Controller
             ->orderBy('order_index')
             ->get();
 
-        // Progresso ponderado (earned value): Σ horas planejadas de entregas DONE / Σ horas planejadas TOTAL.
-        // Fallback para deliveries_done / deliveries_count quando nenhuma entrega tem hours_planned.
-        // Ver ADR 0002.
-        $stages->each(function ($s) {
+        // Pré-busca overrun por etapa em 1 query agregada (evita N+1)
+        $overrunByStage = $this->computeTeamOverrunByStage($stages->pluck('id')->all());
+
+        $stages->each(function ($s) use ($overrunByStage) {
+            // Earned value (ADR 0002)
             $totalHours = (float) ($s->deliveries_hours_planned_sum ?? 0);
             $doneHours  = (float) ($s->deliveries_hours_planned_done_sum ?? 0);
             if ($totalHours > 0) {
@@ -38,9 +51,67 @@ class ProjectStageController extends Controller
             } else {
                 $s->progress_pct = 0.0;
             }
+
+            // Status macro derivado das entregas. Briefing:
+            // tudo concluído → concluida; ≥1 aguardando cliente → bloqueada;
+            // ≥1 em homologação → homologacao; ≥1 em execução → execucao;
+            // resto → planejamento.
+            $total = (int) ($s->deliveries_count ?? 0);
+            $done  = (int) ($s->deliveries_done_count ?? 0);
+
+            if ($total === 0) {
+                $s->derived_status = 'planejamento';
+            } elseif ($total === $done) {
+                $s->derived_status = 'concluida';
+            } elseif (($s->deliveries_waiting_client_count ?? 0) > 0) {
+                $s->derived_status = 'bloqueada';
+            } elseif (($s->deliveries_review_count ?? 0) > 0) {
+                $s->derived_status = 'homologacao';
+            } elseif (($s->deliveries_in_progress_count ?? 0) > 0) {
+                $s->derived_status = 'execucao';
+            } else {
+                $s->derived_status = 'planejamento';
+            }
+
+            // 4º dot: equipe (red se ≥1 alocação estourada).
+            $s->team_overrun_count = (int) ($overrunByStage[$s->id] ?? 0);
         });
 
         return response()->json(['items' => $stages]);
+    }
+
+    /**
+     * Conta quantas alocações têm actual > planned por etapa.
+     * Conta apenas timesheets approved + released (consistente com ADR 0003).
+     * Retorna map [stage_id => overrun_count].
+     */
+    private function computeTeamOverrunByStage(array $stageIds): array
+    {
+        if (empty($stageIds)) return [];
+
+        // Subquery: actual por (stage_id, user_id) — apenas approved/released, não soft-deletado
+        $tsSum = DB::table('timesheets')
+            ->whereIn('stage_id', $stageIds)
+            ->whereNull('deleted_at')
+            ->whereIn('status', [\App\Models\Timesheet::STATUS_APPROVED, \App\Models\Timesheet::STATUS_RELEASED])
+            ->groupBy('user_id', 'stage_id')
+            ->selectRaw('user_id, stage_id, COALESCE(SUM(effort_minutes), 0) / 60.0 AS actual_hours');
+
+        // Join allocations com a soma, filtra estouradas, agrupa por etapa
+        $rows = DB::table('stage_allocations as a')
+            ->leftJoinSub($tsSum, 'ts', function ($join) {
+                $join->on('ts.user_id', '=', 'a.user_id')
+                    ->on('ts.stage_id', '=', 'a.stage_id');
+            })
+            ->whereIn('a.stage_id', $stageIds)
+            ->whereRaw('COALESCE(ts.actual_hours, 0) > a.planned_hours')
+            ->groupBy('a.stage_id')
+            ->selectRaw('a.stage_id, COUNT(*) AS overrun_count')
+            ->get();
+
+        return $rows->pluck('overrun_count', 'stage_id')
+            ->mapWithKeys(fn ($v, $k) => [(int) $k => (int) $v])
+            ->toArray();
     }
 
     public function show(ProjectStage $stage): JsonResponse

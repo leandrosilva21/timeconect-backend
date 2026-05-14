@@ -44,6 +44,7 @@ use App\Http\Controllers\SkillController;
 use App\Http\Controllers\ConsultantSkillController;
 use App\Http\Controllers\GapController;
 use App\Http\Controllers\CandidateController;
+use App\Http\Controllers\SearchController;
 
 /*
 |--------------------------------------------------------------------------
@@ -905,6 +906,9 @@ Route::prefix('v1')->group(function () {
         // 📋 KANBAN DE CANDIDATOS
         Route::get('/candidates',                      [CandidateController::class, 'index'])->name('candidates.index');
         Route::get('/candidates/triage-queue',         [CandidateController::class, 'triageQueue'])->name('candidates.triage-queue');
+
+        // 🔍 BUSCA GLOBAL
+        Route::get('/search',                          [SearchController::class, 'search'])->name('search.global');
         Route::patch('/candidates/{id}',               [CandidateController::class, 'update'])->name('candidates.update');
         Route::patch('/candidates/{id}/status',        [CandidateController::class, 'updateStatus'])->name('candidates.status.update');
 

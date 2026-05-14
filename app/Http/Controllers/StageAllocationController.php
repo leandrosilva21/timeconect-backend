@@ -17,12 +17,12 @@ class StageAllocationController extends Controller
     public function index(ProjectStage $stage): JsonResponse
     {
         $items = StageAllocation::query()
-            ->where('stage_id', $stage->id)
+            ->where('stage_allocations.stage_id', $stage->id)
             ->with('user:id,name,email,profile_photo_path')
             ->leftJoinSub(
                 Timesheet::query()
                     ->selectRaw('user_id, stage_id, COALESCE(SUM(effort_minutes), 0) AS minutes_sum')
-                    ->where('stage_id', $stage->id)
+                    ->where('stage_allocations.stage_id', $stage->id)
                     ->whereNull('deleted_at')
                     ->whereIn('status', [Timesheet::STATUS_APPROVED, Timesheet::STATUS_RELEASED])
                     ->groupBy('user_id', 'stage_id'),

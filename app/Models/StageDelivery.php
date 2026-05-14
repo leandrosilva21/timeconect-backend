@@ -50,13 +50,18 @@ class StageDelivery extends Model
         'due_date',
         'order_index',
         'completed_at',
+        'planned_start_at',
+        'actual_start_at',
+        'depends_on_delivery_id',
     ];
 
     protected $casts = [
-        'hours_planned'  => 'decimal:2',
-        'order_index'    => 'integer',
-        'due_date'       => 'date:Y-m-d',
-        'completed_at'   => 'datetime',
+        'hours_planned'    => 'decimal:2',
+        'order_index'      => 'integer',
+        'due_date'         => 'date:Y-m-d',
+        'completed_at'     => 'datetime',
+        'planned_start_at' => 'date:Y-m-d',
+        'actual_start_at'  => 'datetime',
     ];
 
     public function stage(): BelongsTo
@@ -77,5 +82,16 @@ class StageDelivery extends Model
     public function events(): HasMany
     {
         return $this->hasMany(DeliveryEvent::class, 'delivery_id')->orderByDesc('created_at');
+    }
+
+    /** Dependência leve (1 atividade depende de no máximo 1 outra). ADR 0009. */
+    public function dependsOn(): BelongsTo
+    {
+        return $this->belongsTo(StageDelivery::class, 'depends_on_delivery_id');
+    }
+
+    public function dependents(): HasMany
+    {
+        return $this->hasMany(StageDelivery::class, 'depends_on_delivery_id');
     }
 }

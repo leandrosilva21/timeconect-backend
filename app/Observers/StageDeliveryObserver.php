@@ -41,6 +41,13 @@ class StageDeliveryObserver
                 'to'          => $delivery->status,
             ]);
 
+            // Auto-set actual_start_at: primeiro move out of backlog (ADR 0009)
+            $movedOutOfBacklog = ($original['status'] ?? null) === StageDelivery::STATUS_BACKLOG
+                && $delivery->status !== StageDelivery::STATUS_BACKLOG;
+            if ($movedOutOfBacklog && empty($original['actual_start_at'])) {
+                $delivery->forceFill(['actual_start_at' => now()])->saveQuietly();
+            }
+
             if ($delivery->status === StageDelivery::STATUS_DONE && empty($original['completed_at'])) {
                 $delivery->forceFill(['completed_at' => now()])->saveQuietly();
                 $this->log($delivery, DeliveryEvent::TYPE_COMPLETED, [
@@ -77,6 +84,7 @@ class StageDeliveryObserver
     {
         StageActivityEvent::create([
             'stage_id'      => $delivery->stage_id,
+            'delivery_id'   => $delivery->id, // ADR 0008 — eventos da atividade carregam delivery_id
             'actor_user_id' => Auth::id(),
             'type'          => $type,
             'payload'       => $payload,

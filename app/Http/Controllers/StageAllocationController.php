@@ -22,7 +22,7 @@ class StageAllocationController extends Controller
             ->leftJoinSub(
                 Timesheet::query()
                     ->selectRaw('user_id, stage_id, COALESCE(SUM(effort_minutes), 0) AS minutes_sum')
-                    ->where('stage_allocations.stage_id', $stage->id)
+                    ->where('stage_id', $stage->id)
                     ->whereNull('deleted_at')
                     ->whereIn('status', [Timesheet::STATUS_APPROVED, Timesheet::STATUS_RELEASED])
                     ->groupBy('user_id', 'stage_id'),

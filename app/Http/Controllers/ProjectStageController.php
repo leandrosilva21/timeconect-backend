@@ -202,6 +202,75 @@ class ProjectStageController extends Controller
     }
 
     /**
+     * Comentário operacional na etapa (Pilar 3 — chat contextual).
+     *
+     * Cria evento append-only `type=comment` em `stage_activity_events`.
+     * Aceita texto livre, anexo (file 20MB max) e mentions `@[id:Name]`.
+     * Mantém ADR 0005 — sem tabela paralela.
+     *
+     * Visibilidade de escrita: qualquer usuário com acesso ao projeto
+     * (route já gate por permission.or.admin:projects.view + block.cliente).
+     * Consultor adicionalmente precisa estar alocado na etapa OU ser responsável
+     * por alguma entrega — mesma regra de leitura.
+     */
+    public function storeComment(Request $request, ProjectStage $stage): JsonResponse
+    {
+        $user = $request->user();
+
+        // Filtro de escrita: consultor só comenta em etapa que participa
+        if ($user && method_exists($user, 'isConsultor') && $user->isConsultor()) {
+            $allowed = $stage->allocations()->where('user_id', $user->id)->exists()
+                || $stage->deliveries()->where('responsible_user_id', $user->id)->exists();
+            if (!$allowed) {
+                return response()->json([
+                    'message' => 'Você não está alocado nesta etapa.',
+                ], 403);
+            }
+        }
+
+        $data = $request->validate([
+            'text'                 => 'nullable|string|max:5000',
+            'attachment'           => 'nullable|file|max:20480|mimes:jpg,jpeg,png,gif,webp,pdf,doc,docx,xls,xlsx,ppt,pptx,txt,csv,zip',
+            'mentioned_user_ids'   => 'nullable|array',
+            'mentioned_user_ids.*' => 'integer|exists:users,id',
+        ]);
+
+        $text       = trim((string) ($data['text'] ?? ''));
+        $hasAttach  = $request->hasFile('attachment');
+        $mentioned  = array_map('intval', $data['mentioned_user_ids'] ?? []);
+
+        if ($text === '' && !$hasAttach) {
+            return response()->json([
+                'message' => 'Comentário precisa de texto ou anexo.',
+            ], 422);
+        }
+
+        $attachmentData = [];
+        if ($hasAttach) {
+            $file = $request->file('attachment');
+            $path = $file->store("stage-attachments/{$stage->id}", 'public');
+            $attachmentData = [
+                'attachment_path'          => $path,
+                'attachment_original_name' => $file->getClientOriginalName(),
+                'attachment_mime'          => $file->getMimeType(),
+                'attachment_size'          => $file->getSize(),
+            ];
+        }
+
+        $event = \App\Models\StageActivityEvent::create(array_merge([
+            'stage_id'      => $stage->id,
+            'actor_user_id' => $user?->id,
+            'type'          => \App\Models\StageActivityEvent::TYPE_COMMENT,
+            'payload'       => array_filter([
+                'text'                => $text !== '' ? $text : null,
+                'mentioned_user_ids'  => !empty($mentioned) ? $mentioned : null,
+            ]),
+        ], $attachmentData));
+
+        return response()->json($event->load('actor:id,name,email'), 201);
+    }
+
+    /**
      * Risco de atraso do projeto (Pilar 2).
      *
      * Compara o prazo macro do projeto (`projects.expected_end_date`) com o

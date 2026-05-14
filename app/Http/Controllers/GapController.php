@@ -753,7 +753,8 @@ class GapController extends Controller
 
         $users = User::whereIn('id', $candidateIds)
             ->where('consultant_type', 'candidate')
-            ->select('id', 'name', 'email', 'capacity_hours', 'allocated_hours', 'created_at')
+            ->select('id', 'name', 'email', 'capacity_hours', 'allocated_hours', 'created_at',
+                     'protheus_years_experience')
             ->get();
 
         // Pré-carrega skills relevantes (required + critical) de uma só vez
@@ -798,13 +799,20 @@ class GapController extends Controller
             $scoreNorm = min(1.0, max(0.0, (float) ($profile->score_initial ?? 0)));
             $triage = round(($scoreNorm * 50.0) + ($avail * 20.0) + ($recency * 15.0) + ($fitCritico * 15.0), 1);
 
-            // Skill score baseado em cobertura das required_skills
+            // Skill score CONTÍNUO: média de min(1, actual/required) por skill exigida.
+            // Dá crédito parcial e cria desempate natural (um cara com Avançado pesa diferente de Básico).
             $totalReq = $reqByWeight->count();
             $coveredReq = 0;
+            $perSkillScores = [];
+            $avgSkillWeight = 0.0;   // soma de actual weights / total — tiebreaker
+            $sumActualWeight = 0;
             $gaps = [];
             foreach ($reqByWeight as $sid => $w) {
                 $cs = $userSkills->get($sid);
                 $actualW = $cs && $cs->level ? (int) $cs->level->weight : 0;
+                $sumActualWeight += $actualW;
+                $perSkill = $w > 0 ? min(1.0, $actualW / $w) : 1.0;
+                $perSkillScores[] = $perSkill;
                 if ($actualW >= $w) {
                     $coveredReq++;
                 } else {
@@ -817,14 +825,11 @@ class GapController extends Controller
                 }
             }
             $coverageRatio = $totalReq > 0 ? $coveredReq / $totalReq : 0;
-            // Bucket: 1.0/0.7/0.3/0
-            if      ($coverageRatio >= 1.0) $skillScore = 1.0;
-            elseif  ($coverageRatio >= 0.5) $skillScore = 0.7;
-            elseif  ($coverageRatio >  0.0) $skillScore = 0.3;
-            else                            $skillScore = 0.0;
+            $skillScore = $totalReq > 0 ? array_sum($perSkillScores) / $totalReq : 0.0;
+            $avgSkillWeight = $totalReq > 0 ? $sumActualWeight / $totalReq : 0.0;
 
-            // Match score
-            $rawMatch = ($skillScore * 0.6) + ($avail * 0.2) + (($triage / 100.0) * 0.2);
+            // Match: skill(0.7) + avail(0.2) + triage(0.1) — reduz peso da triagem
+            $rawMatch = ($skillScore * 0.7) + ($avail * 0.2) + (($triage / 100.0) * 0.1);
 
             // Penalizações
             $penalties = [];
@@ -854,6 +859,8 @@ class GapController extends Controller
                     'ratio'   => round($coverageRatio, 3),
                 ],
                 'skill_score'   => round($skillScore, 3),
+                'avg_skill_weight'           => round($avgSkillWeight, 3),
+                'protheus_years_experience'  => $u->protheus_years_experience,
                 'penalties'     => $penalties,
                 'missing_critical' => $missingCritical,
                 'gaps'          => $gaps,
@@ -870,10 +877,20 @@ class GapController extends Controller
             return true;
         });
 
-        // Sort: match_score DESC, status_priority ASC (approved=0 first), availability DESC, name ASC
+        // Sort com tiebreakers (ordem de prioridade):
+        //   1. match_score DESC
+        //   2. status approved antes de pending (priority ASC)
+        //   3. protheus_years_experience DESC (mais experiente vence empate de match)
+        //   4. avg_skill_weight DESC (cobertura mais profunda — diferencia mesmo coverage)
+        //   5. availability DESC
+        //   6. name ASC (último critério estável)
         $sorted = $filtered->sort(function ($a, $b) {
             if ($a['match_score'] !== $b['match_score']) return $b['match_score'] <=> $a['match_score'];
             if ($a['status_priority'] !== $b['status_priority']) return $a['status_priority'] <=> $b['status_priority'];
+            $aY = (int) ($a['protheus_years_experience'] ?? 0);
+            $bY = (int) ($b['protheus_years_experience'] ?? 0);
+            if ($aY !== $bY) return $bY <=> $aY;
+            if ($a['avg_skill_weight'] !== $b['avg_skill_weight']) return $b['avg_skill_weight'] <=> $a['avg_skill_weight'];
             if ($a['availability'] !== $b['availability']) return $b['availability'] <=> $a['availability'];
             return strcmp($a['name'], $b['name']);
         })->take(15)->values();

@@ -31,12 +31,14 @@ class ProjectStage extends Model
         'blocked_reason',
         'order_index',
         'expected_end_date',
+        'stage_start_at',
     ];
 
     protected $casts = [
         'hours_planned'      => 'decimal:2',
         'order_index'        => 'integer',
         'expected_end_date'  => 'date:Y-m-d',
+        'stage_start_at'     => 'date:Y-m-d',
     ];
 
     public function project(): BelongsTo

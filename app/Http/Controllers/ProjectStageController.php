@@ -201,6 +201,41 @@ class ProjectStageController extends Controller
         return response()->json(['items' => $events]);
     }
 
+    /**
+     * Risco de atraso do projeto (Pilar 2).
+     *
+     * Compara o prazo macro do projeto (`projects.expected_end_date`) com o
+     * fim previsto da última etapa (`max(project_stages.expected_end_date)`).
+     * Retorna delay_days > 0 quando alguma etapa termina depois do prazo macro.
+     *
+     * NÃO deriva prazo do projeto pelas etapas — apenas expõe o diff visual.
+     * Etapas concluídas (status=done) saem do cálculo (não pesam mais).
+     */
+    public function delayRisk(Project $project): JsonResponse
+    {
+        $projectEnd = $project->expected_end_date
+            ? \Carbon\Carbon::parse($project->expected_end_date)->startOfDay()
+            : null;
+
+        $latest = $project->stages()
+            ->whereNotNull('expected_end_date')
+            ->where('status', '!=', ProjectStage::STATUS_DONE)
+            ->max('expected_end_date');
+
+        $latestStageEnd = $latest ? \Carbon\Carbon::parse($latest)->startOfDay() : null;
+
+        $delayDays = ($projectEnd && $latestStageEnd && $latestStageEnd->gt($projectEnd))
+            ? (int) $projectEnd->diffInDays($latestStageEnd)
+            : 0;
+
+        return response()->json([
+            'project_end'      => $projectEnd?->toDateString(),
+            'latest_stage_end' => $latestStageEnd?->toDateString(),
+            'delay_days'       => $delayDays,
+            'has_risk'         => $delayDays > 0,
+        ]);
+    }
+
     public function store(Request $request, Project $project): JsonResponse
     {
         $data = $request->validate([
@@ -209,6 +244,7 @@ class ProjectStageController extends Controller
             'hours_planned'       => 'nullable|numeric|min:0',
             'status'              => ['nullable', Rule::in(ProjectStage::STATUSES)],
             'expected_end_date'   => 'nullable|date',
+            'stage_start_at'      => 'nullable|date',
         ]);
 
         // Bloqueia se a nova etapa fizer SUM(stages.planned) > project.sold_hours
@@ -235,6 +271,7 @@ class ProjectStageController extends Controller
             'status'              => ['sometimes', Rule::in(ProjectStage::STATUSES)],
             'blocked_reason'      => 'nullable|string|max:500',
             'expected_end_date'   => 'nullable|date',
+            'stage_start_at'      => 'nullable|date',
         ]);
 
         // Se está aumentando hours_planned em projeto operacional, valida saldo

@@ -893,5 +893,36 @@ Route::prefix('v1')->group(function () {
             Route::post('/',     [\App\Http\Controllers\OperationalFeedController::class, 'store'])->name('operational-feed.store');
             Route::delete('/{id}', [\App\Http\Controllers\OperationalFeedController::class, 'destroy'])->name('operational-feed.destroy');
         });
+
+        // 📬 INBOX — Conversations + Messages do BOT Minutor
+        Route::prefix('inbox')->group(function () {
+            Route::get('/conversations',                 [\App\Http\Controllers\InboxController::class, 'conversations'])->name('inbox.conversations');
+            Route::get('/conversations/{id}',            [\App\Http\Controllers\InboxController::class, 'show'])->name('inbox.show');
+            Route::get('/conversations/{id}/messages',   [\App\Http\Controllers\InboxController::class, 'messages'])->name('inbox.messages');
+            Route::post('/conversations/{id}/messages',  [\App\Http\Controllers\InboxController::class, 'send'])->name('inbox.send');
+            Route::post('/conversations/{id}/read',      [\App\Http\Controllers\InboxController::class, 'markRead'])->name('inbox.read');
+            Route::patch('/messages/{id}/status',        [\App\Http\Controllers\InboxController::class, 'updateMessageStatus'])->name('inbox.message.status');
+            Route::get('/unread-summary',                [\App\Http\Controllers\InboxController::class, 'unreadSummary'])->name('inbox.unread');
+        });
+
+        // 👤 PRESENCE — status online/away/offline
+        Route::prefix('presence')->group(function () {
+            Route::post('/heartbeat', [\App\Http\Controllers\PresenceController::class, 'heartbeat'])->name('presence.heartbeat');
+            Route::get('/',           [\App\Http\Controllers\PresenceController::class, 'index'])->name('presence.index');
+        });
+
+        // 🤖 BOT MINUTOR CONFIG — providers/agents/skills/rules/general
+        Route::prefix('bot')->group(function () {
+            Route::get('/config',          [\App\Http\Controllers\BotConfigController::class, 'showConfig'])->name('bot.config.show');
+            Route::put('/config',          [\App\Http\Controllers\BotConfigController::class, 'updateConfig'])->name('bot.config.update');
+            Route::get('/providers',       [\App\Http\Controllers\BotConfigController::class, 'providers'])->name('bot.providers');
+            Route::put('/providers/{id}',  [\App\Http\Controllers\BotConfigController::class, 'updateProvider'])->name('bot.providers.update');
+            Route::get('/agents',          [\App\Http\Controllers\BotConfigController::class, 'agents'])->name('bot.agents');
+            Route::put('/agents/{id}',     [\App\Http\Controllers\BotConfigController::class, 'updateAgent'])->name('bot.agents.update');
+            Route::get('/skills',          [\App\Http\Controllers\BotConfigController::class, 'skills'])->name('bot.skills');
+            Route::put('/skills/{id}',     [\App\Http\Controllers\BotConfigController::class, 'updateSkill'])->name('bot.skills.update');
+            Route::get('/rules',           [\App\Http\Controllers\BotConfigController::class, 'rules'])->name('bot.rules');
+            Route::put('/rules/{id}',      [\App\Http\Controllers\BotConfigController::class, 'updateRule'])->name('bot.rules.update');
+        });
     });
 });

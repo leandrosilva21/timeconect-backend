@@ -190,19 +190,28 @@ class SearchController extends Controller
         $skillIds     = array_values(array_filter(array_map('intval', explode(',', (string) $request->input('skill_ids', '')))));
         $segments     = array_values(array_filter(array_map('trim', explode(',', (string) $request->input('segment', '')))));
 
+        // Pré-computa skill_ids que batem em name OR alias — evita LEFT JOIN duplicar rows e DISTINCT
+        $matchedSkillIds = null;
+        if ($q !== '') {
+            $like = '%' . str_replace(['%', '_'], ['\%', '\_'], $q) . '%';
+            $matchedSkillIds = DB::table('skills as s')
+                ->leftJoin('skill_aliases as sa', 'sa.skill_id', '=', 's.id')
+                ->where(function ($w) use ($like) {
+                    $w->where('s.name', 'ILIKE', $like)->orWhere('sa.alias', 'ILIKE', $like);
+                })
+                ->distinct()
+                ->pluck('s.id');
+        }
+
         $query = DB::table('consultant_skills as cs')
             ->join('users as u', 'u.id', '=', 'cs.consultant_id')
             ->join('skills as s', 's.id', '=', 'cs.skill_id')
-            ->leftJoin('skill_aliases as sa', 'sa.skill_id', '=', 's.id')
             ->join('skill_levels as sl', 'sl.id', '=', 'cs.level_id')
             ->leftJoin('candidate_profiles as cp', 'cp.user_id', '=', 'u.id')
             ->whereIn('u.type', ['consultor', 'parceiro_admin']);
 
-        if ($q !== '') {
-            $like = '%' . str_replace(['%', '_'], ['\%', '\_'], $q) . '%';
-            $query->where(function ($w) use ($like) {
-                $w->where('s.name', 'ILIKE', $like)->orWhere('sa.alias', 'ILIKE', $like);
-            });
+        if ($matchedSkillIds !== null) {
+            $query->whereIn('cs.skill_id', $matchedSkillIds);
         }
 
         if (!empty($types)) {
@@ -262,7 +271,6 @@ class SearchController extends Controller
                 'sl.name as level', 'sl.weight as level_weight',
                 'cp.status as candidate_status'
             )
-            ->distinct()
             ->orderByDesc('sl.weight')
             ->orderByRaw("CASE u.availability_status WHEN 'integral' THEN 1 WHEN 'parcial' THEN 2 WHEN 'indisponivel' THEN 3 ELSE 4 END")
             ->orderBy('u.hourly_rate')

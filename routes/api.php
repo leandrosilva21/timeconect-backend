@@ -3,6 +3,7 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\MeController;
 use App\Http\Controllers\ContractTypeController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\PasswordResetController;
@@ -124,6 +125,9 @@ Route::prefix('v1')->group(function () {
         Route::get('/user', [AuthController::class, 'user'])->name('user.profile');
         Route::put('/user/profile', [AuthController::class, 'updateProfile'])->name('user.update');
         Route::put('/user/theme-preference', [AuthController::class, 'updateThemePreference'])->name('user.theme-preference');
+
+        // Cards atribuídos ao usuário corrente (visão consultor — Bloco F)
+        Route::get('/me/cards', [MeController::class, 'cards'])->middleware('block.cliente')->name('me.cards');
 
         // Autenticação
         Route::post('/auth/logout', [AuthController::class, 'logout'])->name('auth.logout');

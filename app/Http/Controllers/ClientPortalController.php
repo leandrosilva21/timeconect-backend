@@ -574,35 +574,32 @@ class ClientPortalController extends Controller
             ->count();
 
         // Série mensal — últimos 12 meses (inclui o mês atual).
+        // Agrupa projetos contratados pela start_date: quantos projetos foram
+        // iniciados no mês e quantas horas eles totalizam.
         $monthsBack = 11;
         $start12     = now()->startOfMonth()->subMonths($monthsBack);
-        $rawTickets = MovideskTicket::where('customer_id', $customerId)
-            ->whereNotNull('created_date')
-            ->where('created_date', '>=', $start12)
-            ->selectRaw("TO_CHAR(created_date, 'YYYY-MM') as ym, COUNT(*) as c")
-            ->groupByRaw("TO_CHAR(created_date, 'YYYY-MM')")
-            ->pluck('c', 'ym')->toArray();
-        // horas vendidas = projetos cujo start_date está no mês (soma de sold_hours).
-        $rawSold = DB::table('projects')
+        $rawProjects = DB::table('projects')
             ->where('customer_id', $customerId)
             ->where('is_investimento_comercial', false)
             ->whereNull('parent_project_id')
             ->whereNull('deleted_at')
             ->whereNotNull('start_date')
             ->where('start_date', '>=', $start12)
-            ->selectRaw("TO_CHAR(start_date, 'YYYY-MM') as ym, COALESCE(SUM(sold_hours), 0) as h")
+            ->selectRaw("TO_CHAR(start_date, 'YYYY-MM') as ym, COUNT(*) as c, COALESCE(SUM(sold_hours), 0) as h")
             ->groupByRaw("TO_CHAR(start_date, 'YYYY-MM')")
-            ->pluck('h', 'ym')->toArray();
+            ->get()
+            ->keyBy('ym');
 
         $monthly = [];
         for ($i = $monthsBack; $i >= 0; $i--) {
             $d  = now()->startOfMonth()->subMonths($i);
             $ym = $d->format('Y-m');
+            $row = $rawProjects->get($ym);
             $monthly[] = [
                 'month'         => $ym,
                 'label'         => $d->translatedFormat('M/y'),
-                'tickets'       => (int) ($rawTickets[$ym] ?? 0),
-                'sold_hours'    => (float) ($rawSold[$ym] ?? 0),
+                'projects'      => (int)   ($row->c ?? 0),
+                'sold_hours'    => (float) ($row->h ?? 0),
             ];
         }
 

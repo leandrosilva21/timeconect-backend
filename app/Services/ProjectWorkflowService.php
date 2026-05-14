@@ -23,6 +23,7 @@ class ProjectWorkflowService
     public const ORDER = [
         Project::STATUS_AWAITING_START,
         Project::STATUS_BACKLOG,
+        Project::STATUS_PLANNING,
         Project::STATUS_STARTED,
         Project::STATUS_LIBERADO_PARA_TESTES,
         Project::STATUS_FINISHED,
@@ -37,6 +38,7 @@ class ProjectWorkflowService
     public const PIPELINE = [
         Project::STATUS_AWAITING_START,
         Project::STATUS_BACKLOG,
+        Project::STATUS_PLANNING,
         Project::STATUS_STARTED,
         Project::STATUS_LIBERADO_PARA_TESTES,
     ];
@@ -66,6 +68,7 @@ class ProjectWorkflowService
      */
     public const OPERATIONAL_COLUMN = [
         Project::STATUS_BACKLOG               => 'backlog',
+        Project::STATUS_PLANNING              => 'planning',
         Project::STATUS_STARTED               => 'execution',
         Project::STATUS_LIBERADO_PARA_TESTES  => 'homologation',
         Project::STATUS_FINISHED              => 'closed',
@@ -78,6 +81,7 @@ class ProjectWorkflowService
      */
     public const STATUS_FOR_OPERATIONAL_COLUMN = [
         'backlog'       => Project::STATUS_BACKLOG,
+        'planning'      => Project::STATUS_PLANNING,
         'execution'     => Project::STATUS_STARTED,
         'homologation'  => Project::STATUS_LIBERADO_PARA_TESTES,
         'closed'        => Project::STATUS_FINISHED,

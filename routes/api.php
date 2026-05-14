@@ -293,6 +293,7 @@ Route::prefix('v1')->group(function () {
         // 🏢 CLIENT PORTAL
         Route::get('/client/portal', [ClientPortalController::class, 'portal'])->name('client.portal');
         Route::get('/client/portal/customers', [ClientPortalController::class, 'customers'])->name('client.portal.customers');
+        Route::get('/client/portal/projects/{projectId}/operational-summary', [ClientPortalController::class, 'operationalSummary'])->name('client.portal.project-operational-summary');
 
         // 👥 CUSTOMERS - Protegido por permissões específicas (Admins sempre têm acesso)
         Route::middleware('permission.or.admin:customers.view')->group(function () {
@@ -418,14 +419,14 @@ Route::prefix('v1')->group(function () {
         // 🧱 PROJECT STAGES + STAGE DELIVERIES + DELIVERY EVENTS
         // Etapas (frentes paralelas) e entregas (cards do kanban operacional).
         // Autorização granular via Policy do Project (read/update do Project).
-        Route::middleware('permission.or.admin:projects.view')->group(function () {
+        Route::middleware(['permission.or.admin:projects.view', 'block.cliente'])->group(function () {
             Route::get('/projects/{project}/stages', [ProjectStageController::class, 'index'])->name('stages.index');
             Route::get('/stages/{stage}', [ProjectStageController::class, 'show'])->name('stages.show');
             Route::get('/stages/{stage}/deliveries', [StageDeliveryController::class, 'index'])->name('deliveries.index');
             Route::get('/deliveries/{delivery}', [StageDeliveryController::class, 'show'])->name('deliveries.show');
             Route::get('/deliveries/{delivery}/events', [DeliveryEventController::class, 'index'])->name('deliveries.events');
         });
-        Route::middleware('permission.or.admin:projects.update')->group(function () {
+        Route::middleware(['permission.or.admin:projects.update', 'block.cliente'])->group(function () {
             Route::post('/projects/{project}/stages', [ProjectStageController::class, 'store'])->name('stages.store');
             Route::patch('/stages/{stage}', [ProjectStageController::class, 'update'])->name('stages.update');
             Route::delete('/stages/{stage}', [ProjectStageController::class, 'destroy'])->name('stages.destroy');

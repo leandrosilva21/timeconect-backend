@@ -563,21 +563,24 @@ class ClientPortalController extends Controller
             });
         $openTicketsTotal = (clone $openTicketsBaseQuery)->count();
 
-        // Tickets abertos NO MÊS atual (qualquer status) — pra o card "TICKETS ABERTOS EM <mês>".
+        // Tickets abertos NO MÊS atual — usa created_date (abertura real no
+        // Movidesk). created_at é só a hora do sync e ficava inflado porque
+        // todo ticket sincronizado recentemente tinha created_at no mês corrente,
+        // mesmo sendo de outro cliente que voltou a aparecer no sync.
         $startMonth = now()->startOfMonth();
         $endMonth   = now()->endOfMonth();
         $openTicketsCurrentMonth = MovideskTicket::where('customer_id', $customerId)
-            ->whereBetween('created_at', [$startMonth, $endMonth])
+            ->whereBetween('created_date', [$startMonth, $endMonth])
             ->count();
 
-        // Série mensal — últimos 12 meses fechados (inclui o mês atual).
+        // Série mensal — últimos 12 meses (inclui o mês atual).
         $monthsBack = 11;
         $start12     = now()->startOfMonth()->subMonths($monthsBack);
-        // tickets criados por mês
         $rawTickets = MovideskTicket::where('customer_id', $customerId)
-            ->where('created_at', '>=', $start12)
-            ->selectRaw("TO_CHAR(created_at, 'YYYY-MM') as ym, COUNT(*) as c")
-            ->groupByRaw("TO_CHAR(created_at, 'YYYY-MM')")
+            ->whereNotNull('created_date')
+            ->where('created_date', '>=', $start12)
+            ->selectRaw("TO_CHAR(created_date, 'YYYY-MM') as ym, COUNT(*) as c")
+            ->groupByRaw("TO_CHAR(created_date, 'YYYY-MM')")
             ->pluck('c', 'ym')->toArray();
         // horas vendidas = projetos cujo start_date está no mês (soma de sold_hours).
         $rawSold = DB::table('projects')

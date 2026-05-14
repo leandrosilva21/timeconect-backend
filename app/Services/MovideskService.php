@@ -223,6 +223,26 @@ class MovideskService
             $newEffortMinutes = $newEffortHours ? $this->calculateEffortMinutes($newEffortHours) : null;
             $newObservation   = $this->buildObservation($ticket, $targetAction);
 
+            // Regra global: apontamentos do Movidesk com duração < 5 min não devem
+            // existir no Minutor. Se o reprocess detecta que o Movidesk agora
+            // reporta < 5 min, soft-deleta o timesheet em vez de atualizar pra
+            // um valor proibido (mesma política aplicada na criação em processAppointment).
+            if ($newEffortMinutes !== null && $newEffortMinutes < 5) {
+                $timesheet->_logSource = 'movidesk_sync';
+                $timesheet->delete();
+                Log::info('🗑️ [MOVIDESK] Timesheet soft-deletado no reprocess (duração < 5 min no Movidesk)', [
+                    'timesheet_id'            => $timesheet->id,
+                    'ticket'                  => $timesheet->ticket,
+                    'movidesk_appointment_id' => $timesheet->movidesk_appointment_id,
+                    'previous_effort_minutes' => (int) $timesheet->effort_minutes,
+                    'new_effort_minutes'      => $newEffortMinutes,
+                ]);
+                return [
+                    'updated' => true,
+                    'changes' => ['soft_deleted' => 'movidesk_effort_below_5min'],
+                ];
+            }
+
             if ($newDate) {
                 $currentDate = $timesheet->date
                     ? (is_string($timesheet->date) ? $timesheet->date : $timesheet->date->format('Y-m-d'))

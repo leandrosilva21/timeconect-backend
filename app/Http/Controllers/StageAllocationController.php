@@ -76,8 +76,19 @@ class StageAllocationController extends Controller
         ]);
     }
 
+    /**
+     * @deprecated 2026-05-15 — alocação stage-level virou legado. ADR 0007 moveu
+     * a unidade de execução pra atividade (stage_delivery). Use o novo endpoint
+     * POST /activities/{delivery}/allocations (storeForActivity).
+     */
     public function store(Request $request, ProjectStage $stage): JsonResponse
     {
+        \Log::warning('[deprecated] POST /stages/{id}/allocations — use POST /activities/{id}/allocations (ADR 0007)', [
+            'stage_id' => $stage->id,
+            'user_id'  => $request->user()?->id,
+            'route'    => $request->path(),
+        ]);
+
         $data = $request->validate([
             'user_id'       => 'required|integer|exists:users,id',
             'planned_hours' => 'required|numeric|min:0.5',

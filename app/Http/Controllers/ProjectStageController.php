@@ -13,14 +13,32 @@ class ProjectStageController extends Controller
 {
     public function index(Project $project): JsonResponse
     {
-$stages = $project->stages()
+        $stages = $project->stages()
             ->with('responsible:id,name,email')
             ->withCount(['deliveries', 'deliveries as deliveries_done_count' => function ($q) {
                 $q->where('status', \App\Models\StageDelivery::STATUS_DONE);
             }])
             ->withSum('deliveries as deliveries_hours_planned_sum', 'hours_planned')
+            ->withSum(['deliveries as deliveries_hours_planned_done_sum' => function ($q) {
+                $q->where('status', \App\Models\StageDelivery::STATUS_DONE);
+            }], 'hours_planned')
             ->orderBy('order_index')
             ->get();
+
+        // Progresso ponderado (earned value): Σ horas planejadas de entregas DONE / Σ horas planejadas TOTAL.
+        // Fallback para deliveries_done / deliveries_count quando nenhuma entrega tem hours_planned.
+        // Ver ADR 0002.
+        $stages->each(function ($s) {
+            $totalHours = (float) ($s->deliveries_hours_planned_sum ?? 0);
+            $doneHours  = (float) ($s->deliveries_hours_planned_done_sum ?? 0);
+            if ($totalHours > 0) {
+                $s->progress_pct = round(($doneHours / $totalHours) * 100, 2);
+            } elseif (($s->deliveries_count ?? 0) > 0) {
+                $s->progress_pct = round((($s->deliveries_done_count ?? 0) / $s->deliveries_count) * 100, 2);
+            } else {
+                $s->progress_pct = 0.0;
+            }
+        });
 
         return response()->json(['items' => $stages]);
     }

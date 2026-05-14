@@ -16,9 +16,11 @@ class Project extends Model
     // Contract type constants removidos - agora vem da tabela contract_types
 
     /**
-     * Status constants
+     * Status constants — lifecycle real (single source of truth).
+     * Derivações de coluna/visão usam App\Services\ProjectWorkflowService. Ver ADR 0002.
      */
     public const STATUS_AWAITING_START       = 'awaiting_start';
+    public const STATUS_BACKLOG              = 'backlog';
     public const STATUS_STARTED              = 'started';
     public const STATUS_LIBERADO_PARA_TESTES = 'liberado_para_testes';
     public const STATUS_PAUSED               = 'paused';
@@ -389,6 +391,16 @@ class Project extends Model
     public function scopeOpen($query)
     {
         return $query->whereNotIn('status', [self::STATUS_CANCELLED, self::STATUS_FINISHED]);
+    }
+
+    /**
+     * Scope para projetos em execução REAL — produtividade, SLA, consumo operacional.
+     * Exclui backlog (autorizado mas ainda não executando) e awaiting_start (sem coord).
+     * Ver ProjectWorkflowService::IN_EXECUTION e ADR 0002.
+     */
+    public function scopeInExecution($query)
+    {
+        return $query->whereIn('status', \App\Services\ProjectWorkflowService::IN_EXECUTION);
     }
 
     /**

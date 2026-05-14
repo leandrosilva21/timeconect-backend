@@ -856,8 +856,10 @@ class TimesheetController extends Controller
 
             $timesheet->save();
 
-            // Auto-transição: se o projeto está "Aguardando início", marcar como "Iniciado"
-            if ($project->status === Project::STATUS_AWAITING_START) {
+            // Auto-transição: apontar hora real significa execução começou. Sai de
+            // awaiting_start (sem coord) ou backlog (com coord, aguardando início) e vai
+            // direto pra started. Ver ADR 0002.
+            if (in_array($project->status, [Project::STATUS_AWAITING_START, Project::STATUS_BACKLOG], true)) {
                 $project->status = Project::STATUS_STARTED;
                 $project->save();
                 $this->invalidateListCache('projects');

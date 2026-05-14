@@ -573,16 +573,28 @@ class MovideskService
 
         $target = $target ?? $clients[0];
 
-        $org           = $target['organization'] ?? null;
-        $orgName       = is_array($org) ? ($org['businessName'] ?? null) : null;
-        $orgName       = $orgName ?? ($target['businessName'] ?? null);
-        $orgPersonType = is_array($org) ? ($org['personType'] ?? null) : null;
-        $orgId         = is_array($org) ? ($org['id'] ?? null) : null;
-
         // Movidesk personType: 1=pessoa, 2=empresa, 4=departamento.
-        // Quando o solicitante pertence a um departamento (ex: PROMAX » Fiscal),
-        // a API entrega só o nome do departamento. Resolvemos a empresa-mãe
-        // via /persons/{id}.relationships, que aponta pra organização raiz.
+        // O client do ticket pode ser:
+        //   - personType=2 (empresa) → o próprio client.id É o id da organização;
+        //     organization vem null nesse caso (ticket aberto pela empresa direto).
+        //   - personType=1 (pessoa) ou 4 (departamento) → tem organization aninhada
+        //     com o id da empresa (caso GRUPO EUREKA tinha pessoa + org aninhada).
+        $clientPersonType = $target['personType'] ?? null;
+        $org              = $target['organization'] ?? null;
+        $orgName          = is_array($org) ? ($org['businessName'] ?? null) : null;
+        $orgName          = $orgName ?? ($target['businessName'] ?? null);
+
+        if ($clientPersonType === 2) {
+            // Client é uma empresa
+            $orgId         = $target['id'] ?? null;
+            $orgPersonType = 2;
+        } else {
+            // Client é pessoa/departamento — pega org aninhada
+            $orgId         = is_array($org) ? ($org['id'] ?? null) : null;
+            $orgPersonType = is_array($org) ? ($org['personType'] ?? null) : null;
+        }
+
+        // Departamento → resolve empresa-mãe via /persons/{id}.relationships.
         if ($orgPersonType === 4 && $orgId) {
             $parentMovideskId = $this->resolveDepartmentParentMovideskId((string) $orgId);
             if ($parentMovideskId) {

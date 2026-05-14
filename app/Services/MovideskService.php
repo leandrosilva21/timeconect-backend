@@ -719,7 +719,28 @@ class MovideskService
     private function extractProjectId(?int $customerId): ?int
     {
         if ($customerId) {
-            // 1. Prioridade: projeto configurado manualmente na org Movidesk
+            // 1. Prioridade absoluta: projeto com flag movidesk_integration_enabled.
+            // Garante no máximo 1 por cliente (regra aplicada em ProjectController).
+            $flagged = Project::where('customer_id', $customerId)
+                ->where('movidesk_integration_enabled', true)
+                ->first();
+            if ($flagged) {
+                if ($flagged->isActive()) {
+                    Log::info('✅ [MOVIDESK] Projeto resolvido via movidesk_integration_enabled', [
+                        'customer_id' => $customerId,
+                        'project_id'  => $flagged->id,
+                        'project_name'=> $flagged->name,
+                    ]);
+                    return $flagged->id;
+                }
+                Log::warning('⚠️ [MOVIDESK] Projeto flagged inativo — caindo nos próximos fallbacks', [
+                    'customer_id' => $customerId,
+                    'project_id'  => $flagged->id,
+                    'status'      => $flagged->status,
+                ]);
+            }
+
+            // 2. Legado: projeto configurado manualmente na org Movidesk
             $org = MovideskOrganization::where('customer_id', $customerId)
                 ->whereNotNull('project_id')
                 ->first();

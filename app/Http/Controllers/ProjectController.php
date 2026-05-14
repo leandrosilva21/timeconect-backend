@@ -748,6 +748,8 @@ class ProjectController extends Controller
             'vendedor_id'           => 'nullable|exists:users,id',
             'architect_id'          => 'nullable|exists:users,id',
             'executivo_conta_id'    => 'nullable|exists:users,id',
+            'movidesk_integration_enabled' => 'nullable|boolean',
+            'confirm_movidesk_swap'        => 'nullable|boolean',
         ], [
             'name.required' => 'O nome é obrigatório',
             'name.max' => 'O nome não pode ter mais de 255 caracteres',
@@ -816,7 +818,35 @@ class ProjectController extends Controller
 
         $validated = array_merge($validated, $codeData);
 
-        $project = Project::create($validated);
+        // Movidesk integration flag: garante no máximo 1 projeto por cliente
+        // com a integração ativa. Se conflito sem confirmação, devolve 409.
+        $wantsMovidesk = !empty($validated['movidesk_integration_enabled']);
+        $confirmSwap   = !empty($validated['confirm_movidesk_swap']);
+        unset($validated['confirm_movidesk_swap']);
+        if ($wantsMovidesk) {
+            $existing = Project::where('customer_id', $validated['customer_id'])
+                ->where('movidesk_integration_enabled', true)
+                ->first();
+            if ($existing && !$confirmSwap) {
+                return response()->json([
+                    'code'    => 'MOVIDESK_INTEGRATION_CONFLICT',
+                    'type'    => 'conflict',
+                    'message' => "Cliente já tem integração Movidesk ativa em outro projeto",
+                    'current_project' => ['id' => $existing->id, 'name' => $existing->name, 'code' => $existing->code],
+                ], 409);
+            }
+        }
+
+        $project = \DB::transaction(function () use ($validated, $wantsMovidesk) {
+            $p = Project::create($validated);
+            if ($wantsMovidesk) {
+                Project::where('customer_id', $p->customer_id)
+                    ->where('id', '!=', $p->id)
+                    ->where('movidesk_integration_enabled', true)
+                    ->update(['movidesk_integration_enabled' => false]);
+            }
+            return $p;
+        });
 
         // Vincular consultores
         if (!empty($consultantIds)) {
@@ -1045,6 +1075,8 @@ class ProjectController extends Controller
             'executivo_conta_id'    => 'nullable|exists:users,id',
             'kanban_coordinator_override_id' => 'nullable|exists:users,id',
             'categoria_interna' => 'nullable|in:Sustentação,Projeto,Suporte,Comercial',
+            'movidesk_integration_enabled' => 'nullable|boolean',
+            'confirm_movidesk_swap'        => 'nullable|boolean',
         ], [
             'name.max' => 'O nome não pode ter mais de 255 caracteres',
             'name.min' => 'O nome deve ter pelo menos 2 caracteres',
@@ -1247,7 +1279,36 @@ class ProjectController extends Controller
             }
         }
 
-        $project->update($validated);
+        // Movidesk integration flag (mesma regra do store): no máximo 1 por cliente.
+        // Conflito sem confirm_movidesk_swap → 409.
+        $confirmSwap = !empty($validated['confirm_movidesk_swap']);
+        unset($validated['confirm_movidesk_swap']);
+        if (array_key_exists('movidesk_integration_enabled', $validated)
+            && $validated['movidesk_integration_enabled'] === true
+            && (bool) $project->movidesk_integration_enabled !== true) {
+            $existing = Project::where('customer_id', $validated['customer_id'] ?? $project->customer_id)
+                ->where('id', '!=', $project->id)
+                ->where('movidesk_integration_enabled', true)
+                ->first();
+            if ($existing && !$confirmSwap) {
+                return response()->json([
+                    'code'    => 'MOVIDESK_INTEGRATION_CONFLICT',
+                    'type'    => 'conflict',
+                    'message' => "Cliente já tem integração Movidesk ativa em outro projeto",
+                    'current_project' => ['id' => $existing->id, 'name' => $existing->name, 'code' => $existing->code],
+                ], 409);
+            }
+        }
+
+        \DB::transaction(function () use ($project, $validated) {
+            $project->update($validated);
+            if (!empty($validated['movidesk_integration_enabled'])) {
+                Project::where('customer_id', $project->customer_id)
+                    ->where('id', '!=', $project->id)
+                    ->where('movidesk_integration_enabled', true)
+                    ->update(['movidesk_integration_enabled' => false]);
+            }
+        });
 
         // Idempotente: garante consistência do contract no Kanban sempre que admin envia
         // o campo num projeto de sustentação, mesmo que o valor não tenha mudado.
@@ -2407,6 +2468,25 @@ class ProjectController extends Controller
         }
 
         return round($balance, 2);
+    }
+
+    /**
+     * Frontend pré-check: dado um customer_id (e opcionalmente exclude_id),
+     * devolve o projeto que está atualmente com movidesk_integration_enabled=true
+     * (ou null). Permite mostrar modal "X já está ativo, trocar pra este?".
+     */
+    public function movideskIntegrationConflict(Request $request): JsonResponse
+    {
+        $customerId = $request->query('customer_id');
+        $excludeId  = $request->query('exclude_id');
+        if (!$customerId) {
+            return response()->json(['current_project' => null]);
+        }
+        $q = Project::where('customer_id', $customerId)
+            ->where('movidesk_integration_enabled', true);
+        if ($excludeId) $q->where('id', '!=', $excludeId);
+        $existing = $q->first(['id', 'name', 'code']);
+        return response()->json(['current_project' => $existing]);
     }
 
     public function updateStatus(Request $request, Project $project): JsonResponse

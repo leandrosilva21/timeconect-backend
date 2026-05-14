@@ -93,6 +93,7 @@ class Project extends Model
         'is_investimento_comercial',
         'categoria_interna',
         'kanban_coordinator_override_id',
+        'movidesk_integration_enabled',
     ];
 
     /**
@@ -129,6 +130,7 @@ class Project extends Model
         'allow_manual_timesheets' => 'boolean',
         'allow_negative_balance' => 'boolean',
         'is_investimento_comercial' => 'boolean',
+        'movidesk_integration_enabled' => 'boolean',
         'save_erpserv' => 'decimal:2',
         'start_date' => 'date:Y-m-d',
         'expected_end_date' => 'date:Y-m-d',

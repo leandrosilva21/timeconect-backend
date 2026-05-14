@@ -186,6 +186,7 @@ class SearchController extends Controller
         $q            = trim((string) $request->input('q', ''));
         $types        = array_values(array_filter(array_map('trim', explode(',', (string) $request->input('type', '')))));
         $minLevel     = (int) $request->input('min_level', 0);
+        $levels       = array_values(array_filter(array_map('intval', explode(',', (string) $request->input('levels', '')))));
         $availability = array_values(array_filter(array_map('trim', explode(',', (string) $request->input('availability', '')))));
         $skillIds     = array_values(array_filter(array_map('intval', explode(',', (string) $request->input('skill_ids', '')))));
         $segments     = array_values(array_filter(array_map('trim', explode(',', (string) $request->input('segment', '')))));
@@ -236,7 +237,14 @@ class SearchController extends Controller
             });
         }
 
-        if ($minLevel >= 1 && $minLevel <= 4) {
+        // levels (multi-select): pega EXATAMENTE os pesos selecionados (1=Básico..4=Especialista)
+        // min_level (legacy): pega TODOS os pesos >= valor (mantido pra compatibilidade)
+        if (!empty($levels)) {
+            $valid = array_values(array_filter($levels, fn($l) => $l >= 1 && $l <= 4));
+            if (!empty($valid)) {
+                $query->whereIn('sl.weight', $valid);
+            }
+        } elseif ($minLevel >= 1 && $minLevel <= 4) {
             $query->where('sl.weight', '>=', $minLevel);
         }
 
@@ -315,6 +323,7 @@ class SearchController extends Controller
                 'q'            => $q,
                 'type'         => $types,
                 'min_level'    => $minLevel,
+                'levels'       => $levels,
                 'availability' => $availability,
                 'skill_ids'    => $skillIds,
                 'segment'      => $segments,

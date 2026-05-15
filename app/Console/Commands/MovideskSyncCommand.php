@@ -46,32 +46,45 @@ class MovideskSyncCommand extends Command
         }
 
         $totalCreated = 0;
+        $totalFailed  = 0;
 
         foreach ($tickets as $ticketData) {
             $ticketId = $ticketData['id'] ?? '?';
 
-            // Listing retorna só id+lastUpdate ($select obrigatório no Movidesk).
-            // Busca ticket completo individualmente para ter clients, owner e timeAppointments.
-            $ticketData = $service->fetchTicket((int) $ticketId);
-            if (!$ticketData) {
-                $this->warn("  ⚠️  Ticket #{$ticketId}: falhou ao buscar detalhes");
-                continue;
-            }
+            try {
+                // Listing retorna só id+lastUpdate ($select obrigatório no Movidesk).
+                // Busca ticket completo individualmente para ter clients, owner e timeAppointments.
+                $ticketData = $service->fetchTicket((int) $ticketId);
+                if (!$ticketData) {
+                    $this->warn("  ⚠️  Ticket #{$ticketId}: falhou ao buscar detalhes");
+                    $totalFailed++;
+                    continue;
+                }
 
-            $created       = $service->processTicket($ticketData);
-            $totalCreated += $created;
+                $created       = $service->processTicket($ticketData);
+                $totalCreated += $created;
 
-            if ($created > 0) {
-                $this->line("  ✅ Ticket #{$ticketId}: {$created} apontamento(s) importado(s)");
+                if ($created > 0) {
+                    $this->line("  ✅ Ticket #{$ticketId}: {$created} apontamento(s) importado(s)");
+                }
+            } catch (\Throwable $e) {
+                // Isolamento por ticket: um erro não pode abortar o batch inteiro.
+                $totalFailed++;
+                $this->warn("  ⚠️  Ticket #{$ticketId}: erro ao processar — {$e->getMessage()}");
+                Log::error('📦 [MOVIDESK SYNC] Erro processando ticket', [
+                    'ticket_id' => $ticketId,
+                    'error'     => $e->getMessage(),
+                ]);
             }
         }
 
         $this->updateLastSync();
 
-        $this->info("✅ Sync concluído. Timesheets criados: {$totalCreated}");
+        $this->info("✅ Sync concluído. Timesheets criados: {$totalCreated}" . ($totalFailed > 0 ? " (tickets com falha: {$totalFailed})" : ''));
         Log::info('✅ [MOVIDESK SYNC] Concluído', [
             'tickets'    => $count,
             'created'    => $totalCreated,
+            'failed'     => $totalFailed,
         ]);
 
         return Command::SUCCESS;

@@ -272,11 +272,24 @@ class TimesheetController extends Controller
             });
         }
 
+        // date_field: 'date' (data do apontamento, padrão) ou 'created_at' (data de inclusão).
+        // O relatório de cliente usa 'created_at' pra reconciliar com o que foi LANÇADO no
+        // período de cobrança (independe de quando o consultor diz que trabalhou).
+        $useCreatedAt = $request->input('date_field') === 'created_at';
+
         if ($request->filled('start_date')) {
             $endDate = $request->filled('end_date') ? $request->end_date : now()->toDateString();
-            $query->inPeriod($request->start_date, $endDate);
+            if ($useCreatedAt) {
+                $query->whereRaw('timesheets.created_at::date BETWEEN ? AND ?', [$request->start_date, $endDate]);
+            } else {
+                $query->inPeriod($request->start_date, $endDate);
+            }
         } elseif ($request->filled('end_date')) {
-            $query->where('timesheets.date', '<=', $request->end_date);
+            if ($useCreatedAt) {
+                $query->whereRaw('timesheets.created_at::date <= ?', [$request->end_date]);
+            } else {
+                $query->where('timesheets.date', '<=', $request->end_date);
+            }
         }
 
         if ($request->boolean('only_investimento_comercial')) {
@@ -2377,6 +2390,12 @@ class TimesheetController extends Controller
             $base->whereIn('timesheets.project_id', $projectIds);
         }
 
+        // Filtro por tipo de serviço (alinha com /timesheets index)
+        $serviceTypeIds = array_values(array_filter((array) $request->input('service_type_id', [])));
+        if (!empty($serviceTypeIds)) {
+            $base->whereHas('project', fn($q) => $q->whereIn('service_type_id', $serviceTypeIds));
+        }
+
         // Visibilidade por perfil — replica regras do index()
         if ($user->isCliente()) {
             $base->where('timesheets.customer_id', $user->customer_id)
@@ -2395,9 +2414,13 @@ class TimesheetController extends Controller
             }
         }
 
+        // date_field: 'date' (padrão) ou 'created_at' (data de inclusão).
+        $useCreatedAt = $request->input('date_field') === 'created_at';
+        $periodCol = $useCreatedAt ? 'timesheets.created_at::date' : 'timesheets.date';
+
         // 1) Tickets que tiveram apontamento no período
         $ticketsInPeriod = (clone $base)
-            ->whereBetween('timesheets.date', [$startDate, $endDate])
+            ->whereRaw("$periodCol BETWEEN ? AND ?", [$startDate, $endDate])
             ->select('timesheets.ticket')
             ->distinct()
             ->pluck('ticket')
@@ -2416,8 +2439,8 @@ class TimesheetController extends Controller
             ->selectRaw("MAX(movidesk_tickets.solicitante::jsonb->>'name') as requester")
             ->selectRaw('SUM(timesheets.effort_minutes) as lifetime_minutes')
             ->selectRaw('COUNT(*) as lifetime_count')
-            ->selectRaw('SUM(CASE WHEN timesheets.date BETWEEN ? AND ? THEN timesheets.effort_minutes ELSE 0 END) as period_minutes', [$startDate, $endDate])
-            ->selectRaw('SUM(CASE WHEN timesheets.date BETWEEN ? AND ? THEN 1 ELSE 0 END) as period_count', [$startDate, $endDate])
+            ->selectRaw("SUM(CASE WHEN $periodCol BETWEEN ? AND ? THEN timesheets.effort_minutes ELSE 0 END) as period_minutes", [$startDate, $endDate])
+            ->selectRaw("SUM(CASE WHEN $periodCol BETWEEN ? AND ? THEN 1 ELSE 0 END) as period_count", [$startDate, $endDate])
             ->groupBy('timesheets.ticket')
             ->orderBy('timesheets.ticket')
             ->get();

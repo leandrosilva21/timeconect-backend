@@ -586,9 +586,19 @@ class Timesheet extends Model
     }
 
     /**
-     * Reavalia todos os timesheets conflitados do usuário na data informada.
-     * Conflito só vale entre apontamentos do mesmo cliente — se não houver
-     * mais sobreposição com outro do mesmo cliente, volta para pending.
+     * Reavalia timesheets conflitados do usuário na data informada.
+     *
+     * Regra: um apontamento só permanece em `conflicted` enquanto houver
+     * OUTRO apontamento do MESMO cliente/data sobreposto que AINDA NÃO
+     * TENHA SIDO TRATADO MANUALMENTE pelo admin/coord.
+     *
+     * "Tratado manualmente" = qualquer status diferente de pending/conflicted
+     * (approved, rejected, adjustment_requested, internal, released). Esses
+     * já passaram por decisão humana — não fazem mais sentido travar o par
+     * como conflicted indefinidamente.
+     *
+     * Se o overlap restante já foi tratado (ou sumiu), volta pra `pending`
+     * pra que o ciclo de aprovação continue.
      */
     public static function resolveStaleConflicts(int $userId, string $date): void
     {
@@ -603,7 +613,10 @@ class Timesheet extends Model
                     ->where('customer_id', $ts->customer_id)
                     ->where('date', $ts->date)
                     ->where('id', '!=', $ts->id)
-                    ->whereNotIn('status', [self::STATUS_REJECTED])
+                    // Considera "em disputa" SOMENTE outro pending ou conflicted.
+                    // Approved/rejected/adjustment_requested/internal/released =
+                    // decisão humana tomada, libera o par.
+                    ->whereIn('status', [self::STATUS_PENDING, self::STATUS_CONFLICTED])
                     ->whereNotNull('start_time')
                     ->whereNotNull('end_time')
                     ->where('start_time', '<', $ts->end_time)

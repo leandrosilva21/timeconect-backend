@@ -5006,10 +5006,11 @@ class BankHoursFixedController extends Controller
 
         $rows = (clone $base)
             ->whereIn('timesheets.ticket', $ticketsInPeriod)
+            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
             ->select(
                 'timesheets.ticket',
-                DB::raw("MAX(timesheets.ticket_subject) AS ticket_subject"),
-                DB::raw("MAX(timesheets.ticket_solicitante::text) AS ticket_solicitante"),
+                DB::raw("MAX(movidesk_tickets.titulo) AS ticket_subject"),
+                DB::raw("MAX(movidesk_tickets.solicitante::text) AS ticket_solicitante"),
                 DB::raw("SUM(timesheets.effort_minutes) AS lifetime_minutes"),
                 DB::raw(
                     "SUM(CASE WHEN timesheets.date BETWEEN " .
@@ -5098,8 +5099,8 @@ class BankHoursFixedController extends Controller
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
             ->select(
                 'timesheets.ticket',
-                DB::raw("MAX(timesheets.ticket_subject) AS ticket_subject"),
-                DB::raw("MAX(timesheets.ticket_solicitante::text) AS ticket_solicitante"),
+                DB::raw("MAX(movidesk_tickets.titulo) AS ticket_subject"),
+                DB::raw("MAX(movidesk_tickets.solicitante::text) AS ticket_solicitante"),
                 DB::raw("SUM(timesheets.effort_minutes) AS lifetime_minutes"),
                 DB::raw(
                     "SUM(CASE WHEN timesheets.date BETWEEN " .

@@ -73,6 +73,26 @@ class StageDeliveryObserver
             ]);
         }
 
+        // Envolvimento opcional do cliente (toggle client_involved)
+        $changes = $delivery->getChanges();
+        if (array_key_exists('client_involved', $changes)) {
+            $wasInvolved = (bool) ($original['client_involved'] ?? false);
+            $nowInvolved = (bool) $delivery->client_involved;
+            if (!$wasInvolved && $nowInvolved) {
+                $this->logStageActivity($delivery, StageActivityEvent::TYPE_CLIENT_INVOLVED, [
+                    'delivery_id'    => $delivery->id,
+                    'title'          => $delivery->title,
+                    'client_user_id' => $delivery->client_user_id,
+                    'client_email'   => $delivery->client_email,
+                ]);
+            } elseif ($wasInvolved && !$nowInvolved) {
+                $this->logStageActivity($delivery, StageActivityEvent::TYPE_CLIENT_REMOVED, [
+                    'delivery_id'  => $delivery->id,
+                    'title'        => $delivery->title,
+                ]);
+            }
+        }
+
         $touchesStageDates = array_intersect(
             array_keys($delivery->getChanges()),
             ['status', 'actual_start_at', 'completed_at', 'stage_id']

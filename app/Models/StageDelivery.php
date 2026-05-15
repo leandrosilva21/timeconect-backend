@@ -54,6 +54,9 @@ class StageDelivery extends Model
         'actual_start_at',
         'depends_on_delivery_id',
         'dependency_type',
+        'client_user_id',
+        'client_email',
+        'client_involved',
     ];
 
     public const DEPENDENCY_TYPES = ['FS'];
@@ -65,6 +68,7 @@ class StageDelivery extends Model
         'completed_at'     => 'datetime',
         'planned_start_at' => 'date:Y-m-d',
         'actual_start_at'  => 'datetime',
+        'client_involved'  => 'boolean',
     ];
 
     public function stage(): BelongsTo
@@ -75,6 +79,12 @@ class StageDelivery extends Model
     public function responsible(): BelongsTo
     {
         return $this->belongsTo(User::class, 'responsible_user_id');
+    }
+
+    /** Cliente envolvido pontualmente na atividade (homologação, validação, etc). */
+    public function client(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'client_user_id');
     }
 
     public function timesheets(): HasMany

@@ -1972,11 +1972,31 @@ class ProjectController extends Controller
         $stages = $project->stages()
             ->with([
                 'responsible:id,name,email',
-                'deliveries:id,stage_id,title,responsible_user_id,hours_planned,priority,status,due_date,order_index,planned_start_at,actual_start_at,completed_at,depends_on_delivery_id',
+                'deliveries:id,stage_id,title,responsible_user_id,hours_planned,priority,status,due_date,order_index,planned_start_at,actual_start_at,completed_at,depends_on_delivery_id,dependency_type',
                 'deliveries.responsible:id,name,email',
             ])
             ->orderBy('order_index')
             ->get();
+
+        // Estado do predecessor (FS) por atividade — usado pelo cronograma e board.
+        // O frontend renderiza 🔒 Aguardando quando state === 'pending'.
+        $predecessorById = [];
+        foreach ($stages as $st) {
+            foreach ($st->deliveries as $d) {
+                $predecessorById[$d->id] = $d->status;
+            }
+        }
+        foreach ($stages as $st) {
+            foreach ($st->deliveries as $d) {
+                if ($d->depends_on_delivery_id && $d->dependency_type === 'FS') {
+                    $predStatus = $predecessorById[$d->depends_on_delivery_id] ?? null;
+                    $state = $predStatus === \App\Models\StageDelivery::STATUS_DONE ? 'done' : 'pending';
+                } else {
+                    $state = 'none';
+                }
+                $d->setAttribute('predecessor_state', $state);
+            }
+        }
 
         // Calcula a janela do cronograma (min start, max end) — usado pelo Gantt
         $minDate = null;
@@ -1996,12 +2016,22 @@ class ProjectController extends Controller
             }
         }
 
+        // Feriados ativos dentro da janela do cronograma — frontend usa pra replicar
+        // BusinessCalendarService::addBusinessHours client-side (sugestão de fim).
+        $holidays = \App\Models\Holiday::active()
+            ->when($minDate, fn ($q) => $q->whereDate('date', '>=', $minDate->copy()->subMonths(1)))
+            ->when($maxDate, fn ($q) => $q->whereDate('date', '<=', $maxDate->copy()->addMonths(6)))
+            ->pluck('date')
+            ->map(fn ($d) => \Carbon\Carbon::parse($d)->toDateString())
+            ->values();
+
         return response()->json([
             'is_operational' => true,
             'project_window' => [
                 'start' => $minDate?->toDateString(),
                 'end'   => $maxDate?->toDateString(),
             ],
+            'holidays' => $holidays,
             'project' => [
                 'id'                  => $project->id,
                 'name'                => $project->name,

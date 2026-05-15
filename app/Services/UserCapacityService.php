@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Timesheet;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -139,6 +140,33 @@ class UserCapacityService
             'overload'         => !empty($reasons),
             'overload_reasons' => $reasons,
         ];
+    }
+
+    /**
+     * Horas disponíveis num dia útil específico para o consultor.
+     *
+     * Default = 8h/dia útil. Subtrai a soma de `hours_planned` das atividades
+     * do user cujo intervalo [planned_start_at, due_date] contém $date.
+     *
+     * Retorna negativo se sobrecarregado. Não checa se $date é dia útil — quem
+     * chamar deve usar BusinessCalendarService::isBusinessDay() antes.
+     */
+    public static function dailyAvailable(int $userId, CarbonInterface $date, float $dailyHours = 8.0): float
+    {
+        $iso = $date->toDateString();
+
+        $planned = (float) DB::table('stage_deliveries')
+            ->whereNull('deleted_at')
+            ->where('responsible_user_id', $userId)
+            ->whereNotNull('planned_start_at')
+            ->whereNotNull('due_date')
+            ->whereDate('planned_start_at', '<=', $iso)
+            ->whereDate('due_date', '>=', $iso)
+            ->sum(DB::raw('COALESCE(hours_planned, 0) / NULLIF(
+                GREATEST(DATE_PART(\'day\', due_date::timestamp - planned_start_at::timestamp) + 1, 1), 0
+            )'));
+
+        return round($dailyHours - $planned, 2);
     }
 
     private static function health(float $planned, float $actual): string

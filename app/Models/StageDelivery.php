@@ -53,7 +53,10 @@ class StageDelivery extends Model
         'planned_start_at',
         'actual_start_at',
         'depends_on_delivery_id',
+        'dependency_type',
     ];
+
+    public const DEPENDENCY_TYPES = ['FS'];
 
     protected $casts = [
         'hours_planned'    => 'decimal:2',

@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\ProjectStage;
 use App\Models\StageDelivery;
+use App\Services\BusinessCalendarService;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -50,6 +52,7 @@ class StageDeliveryController extends Controller
             'due_date'               => 'nullable|date',
             'planned_start_at'       => 'nullable|date',
             'depends_on_delivery_id' => 'nullable|integer|exists:stage_deliveries,id',
+            'dependency_type'        => ['nullable', Rule::in(StageDelivery::DEPENDENCY_TYPES)],
         ]);
 
         $data['stage_id'] = $stage->id;
@@ -59,7 +62,12 @@ class StageDeliveryController extends Controller
 
         $delivery = StageDelivery::create($data);
 
-        return response()->json($delivery->load('responsible:id,name,email'), 201);
+        $payload = $delivery->load('responsible:id,name,email')->toArray();
+        if ($suggested = $this->suggestedDueDate($delivery)) {
+            $payload['suggested_due_date'] = $suggested;
+        }
+
+        return response()->json($payload, 201);
     }
 
     public function update(Request $request, StageDelivery $delivery): JsonResponse
@@ -74,6 +82,7 @@ class StageDeliveryController extends Controller
             'due_date'               => 'nullable|date',
             'planned_start_at'       => 'nullable|date',
             'depends_on_delivery_id' => 'nullable|integer|exists:stage_deliveries,id',
+            'dependency_type'        => ['nullable', Rule::in(StageDelivery::DEPENDENCY_TYPES)],
         ]);
 
         // Guard contra ciclo: atividade não pode depender de si mesma
@@ -85,9 +94,23 @@ class StageDeliveryController extends Controller
             ], 422);
         }
 
+        // Ciclo transitivo: o novo predecessor não pode ter $delivery na sua cadeia
+        if (array_key_exists('depends_on_delivery_id', $data)
+            && $data['depends_on_delivery_id'] !== null
+            && $this->hasCycle((int) $data['depends_on_delivery_id'], (int) $delivery->id)) {
+            return response()->json([
+                'message' => 'Dependência cria ciclo (A depende de B que depende de A).',
+            ], 422);
+        }
+
         $delivery->update($data);
 
-        return response()->json($delivery->fresh()->load('responsible:id,name,email'));
+        $payload = $delivery->fresh()->load('responsible:id,name,email')->toArray();
+        if ($suggested = $this->suggestedDueDate($delivery->fresh())) {
+            $payload['suggested_due_date'] = $suggested;
+        }
+
+        return response()->json($payload);
     }
 
     public function destroy(StageDelivery $delivery): JsonResponse
@@ -112,6 +135,19 @@ class StageDeliveryController extends Controller
             'sibling_ids'   => 'sometimes|array',
             'sibling_ids.*' => 'integer|exists:stage_deliveries,id',
         ]);
+
+        // Bloqueio operacional: predecessor FS pending impede sair de backlog (ADR 0009 appendix)
+        $movingOutOfBacklog = $delivery->status === StageDelivery::STATUS_BACKLOG
+            && $data['status'] !== StageDelivery::STATUS_BACKLOG;
+        if ($movingOutOfBacklog && $delivery->depends_on_delivery_id && $delivery->dependency_type === 'FS') {
+            $predecessor = StageDelivery::find($delivery->depends_on_delivery_id);
+            if ($predecessor && $predecessor->status !== StageDelivery::STATUS_DONE) {
+                return response()->json([
+                    'message' => "Conclua a atividade '{$predecessor->title}' antes de iniciar esta.",
+                    'predecessor_id' => $predecessor->id,
+                ], 422);
+            }
+        }
 
         DB::transaction(function () use ($data, $delivery) {
             $delivery->update([
@@ -223,5 +259,117 @@ class StageDeliveryController extends Controller
         ], $attachmentData));
 
         return response()->json($event->load('actor:id,name,email'), 201);
+    }
+
+    /**
+     * Cascade FS: para cada dependente direto/transitivo,
+     * sugere novo start = nextBusinessDay(predecessor.due_date) e
+     * novo end = addBusinessHours(novo_start, hours, 8).
+     *
+     * Body: { apply: bool }. apply=false retorna preview; apply=true persiste.
+     */
+    public function recalcDependents(Request $request, StageDelivery $delivery): JsonResponse
+    {
+        $apply = (bool) $request->boolean('apply', false);
+        $calendar = app(BusinessCalendarService::class);
+
+        $chain = [];
+        $visited = [];
+
+        $walk = function (StageDelivery $node, ?Carbon $newEnd) use (&$walk, &$chain, &$visited, $calendar) {
+            $deps = StageDelivery::where('depends_on_delivery_id', $node->id)
+                ->where('dependency_type', 'FS')
+                ->get();
+
+            foreach ($deps as $dep) {
+                if (isset($visited[$dep->id])) continue;
+                $visited[$dep->id] = true;
+
+                $hours = (float) ($dep->hours_planned ?? 0);
+                $predEnd = $newEnd ?: ($node->due_date ? Carbon::parse($node->due_date) : null);
+                if (!$predEnd) continue;
+
+                $suggestedStart = $calendar->nextBusinessDay($predEnd->copy()->addDay());
+                $suggestedEnd   = $hours > 0
+                    ? $calendar->addBusinessHours($suggestedStart, $hours, 8.0)
+                    : $suggestedStart;
+
+                $chain[] = [
+                    'id'              => $dep->id,
+                    'title'           => $dep->title,
+                    'current_start'   => $dep->planned_start_at?->toDateString(),
+                    'current_end'     => $dep->due_date?->toDateString(),
+                    'suggested_start' => $suggestedStart->toDateString(),
+                    'suggested_end'   => $suggestedEnd->toDateString(),
+                    'hours_planned'   => $hours,
+                ];
+
+                $walk($dep, $suggestedEnd);
+            }
+        };
+
+        $startEnd = $delivery->due_date ? Carbon::parse($delivery->due_date) : null;
+        $walk($delivery, $startEnd);
+
+        if (!$apply) {
+            return response()->json(['chain' => $chain]);
+        }
+
+        $updatedIds = [];
+        DB::transaction(function () use ($chain, &$updatedIds) {
+            foreach ($chain as $row) {
+                $dep = StageDelivery::find($row['id']);
+                if (!$dep) continue;
+                $dep->update([
+                    'planned_start_at' => $row['suggested_start'],
+                    'due_date'         => $row['suggested_end'],
+                ]);
+                $updatedIds[] = $dep->id;
+            }
+        });
+
+        return response()->json([
+            'chain'   => $chain,
+            'updated' => $updatedIds,
+        ]);
+    }
+
+    private function suggestedDueDate(?StageDelivery $delivery): ?string
+    {
+        if (!$delivery) return null;
+        if (!$delivery->planned_start_at) return null;
+        $hours = (float) ($delivery->hours_planned ?? 0);
+        if ($hours <= 0) return null;
+
+        return app(BusinessCalendarService::class)
+            ->addBusinessHours(Carbon::parse($delivery->planned_start_at), $hours, 8.0)
+            ->toDateString();
+    }
+
+    /**
+     * BFS no grafo de dependências FS a partir de $startId. Retorna true se
+     * encontrar $targetId na cadeia (profundidade máxima 10).
+     */
+    private function hasCycle(int $startId, int $targetId): bool
+    {
+        $queue = [$startId];
+        $seen = [];
+        $depth = 0;
+
+        while (!empty($queue) && $depth < 10) {
+            $next = [];
+            foreach ($queue as $id) {
+                if (isset($seen[$id])) continue;
+                $seen[$id] = true;
+                if ($id === $targetId) return true;
+
+                $parent = StageDelivery::where('id', $id)->value('depends_on_delivery_id');
+                if ($parent) $next[] = (int) $parent;
+            }
+            $queue = $next;
+            $depth++;
+        }
+
+        return false;
     }
 }

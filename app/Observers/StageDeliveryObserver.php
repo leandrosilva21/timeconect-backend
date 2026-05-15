@@ -3,9 +3,11 @@
 namespace App\Observers;
 
 use App\Models\DeliveryEvent;
+use App\Models\ProjectStage;
 use App\Models\StageActivityEvent;
 use App\Models\StageDelivery;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class StageDeliveryObserver
 {
@@ -22,6 +24,8 @@ class StageDeliveryObserver
             'title'       => $delivery->title,
             'status'      => $delivery->status,
         ]);
+
+        $this->recalcStageDates($delivery->stage_id);
     }
 
     public function updated(StageDelivery $delivery): void
@@ -67,6 +71,67 @@ class StageDeliveryObserver
                 'from' => $original['responsible_user_id'] ?? null,
                 'to'   => $delivery->responsible_user_id,
             ]);
+        }
+
+        $touchesStageDates = array_intersect(
+            array_keys($delivery->getChanges()),
+            ['status', 'actual_start_at', 'completed_at', 'stage_id']
+        );
+        if (!empty($touchesStageDates)) {
+            $this->recalcStageDates($delivery->stage_id);
+            if (!empty($original['stage_id']) && $original['stage_id'] !== $delivery->stage_id) {
+                $this->recalcStageDates((int) $original['stage_id']);
+            }
+        }
+    }
+
+    public function deleted(StageDelivery $delivery): void
+    {
+        $this->recalcStageDates($delivery->stage_id);
+    }
+
+    /**
+     * Rollup das datas reais da etapa a partir das atividades.
+     *
+     * - `actual_start_at` = min(deliveries.actual_start_at) — ignora null.
+     * - `actual_end_at`   = max(deliveries.completed_at) APENAS se todas as
+     *   atividades da etapa estão `done`. Se alguma não está done, é null.
+     *
+     * Usa `saveQuietly()` para evitar disparar observers em loop.
+     */
+    private function recalcStageDates(?int $stageId): void
+    {
+        if (!$stageId) return;
+
+        $stage = ProjectStage::find($stageId);
+        if (!$stage) return;
+
+        $row = DB::table('stage_deliveries')
+            ->where('stage_id', $stageId)
+            ->whereNull('deleted_at')
+            ->selectRaw('
+                MIN(actual_start_at) AS min_start,
+                MAX(completed_at) AS max_end,
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS done_count
+            ', [StageDelivery::STATUS_DONE])
+            ->first();
+
+        $actualStart = $row?->min_start ?: null;
+        $allDone = $row && (int) $row->total > 0 && (int) $row->total === (int) $row->done_count;
+        $actualEnd = $allDone ? ($row->max_end ?: null) : null;
+
+        $current = [
+            'actual_start_at' => $stage->actual_start_at?->toDateTimeString(),
+            'actual_end_at'   => $stage->actual_end_at?->toDateTimeString(),
+        ];
+        $next = [
+            'actual_start_at' => $actualStart,
+            'actual_end_at'   => $actualEnd,
+        ];
+
+        if ($current !== $next) {
+            $stage->forceFill($next)->saveQuietly();
         }
     }
 

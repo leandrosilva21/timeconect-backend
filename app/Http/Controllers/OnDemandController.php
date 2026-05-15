@@ -390,68 +390,24 @@ class OnDemandController extends Controller
             }
 
             if ($includeParent) {
-                // Verificar se o projeto pai é do tipo "Fechado"
-                $isParentClosedContract = $parentProject->contractType &&
-                                          strtolower(trim($parentProject->contractType->name)) === 'fechado';
-
-                if ($isParentClosedContract) {
-                    // Para projetos fechados: verificar se start_date está no mês especificado
-                    if ($parentProject->start_date) {
-                        $parentStartDate = \Carbon\Carbon::parse($parentProject->start_date);
-                        $isInTargetMonth = $parentStartDate->year === $targetDate->year &&
-                                           $parentStartDate->month === $targetDate->month;
-
-                        if ($isInTargetMonth) {
-                            // Se o projeto fechado começou no mês especificado, usar horas vendidas
-                            $parentSoldHours = $parentProject->sold_hours ?? 0;
-                            $monthConsumedHours += $parentSoldHours;
-                        }
-                    }
-                } else {
-                        // Para outros tipos: usar horas apontadas do mês especificado (excluindo rejeitados)
-                    $parentMonthLoggedMinutes = $parentProject->timesheets()
-                        ->where('status', '!=', 'rejected')
-                        ->whereBetween('date', [$monthStart, $monthEnd])
-                        ->sum('effort_minutes') ?? 0;
-                    $parentMonthLoggedHours = round($parentMonthLoggedMinutes / 60, 2);
-                    $monthConsumedHours += $parentMonthLoggedHours;
-                }
+                // Consumo do mês = sempre apontamentos do mês (independente do tipo de contrato).
+                $parentMonthLoggedMinutes = $parentProject->timesheets()
+                    ->where('status', '!=', 'rejected')
+                    ->whereBetween('date', [$monthStart, $monthEnd])
+                    ->sum('effort_minutes') ?? 0;
+                $monthConsumedHours += round($parentMonthLoggedMinutes / 60, 2);
             }
 
-            // Processar projetos filhos
             if ($parentProject->hasChildProjects()) {
                 foreach ($parentProject->childProjects as $childProject) {
-                    // Filtrar por tipo de serviço se especificado
                     if ($serviceTypeId && $childProject->service_type_id !== $serviceTypeId) {
                         continue;
                     }
-
-                    // Verificar se o projeto filho é do tipo "Fechado"
-                    $isClosedContract = $childProject->contractType &&
-                                        strtolower(trim($childProject->contractType->name)) === 'fechado';
-
-                    if ($isClosedContract) {
-                        // Para projetos fechados: verificar se start_date está no mês especificado
-                        if ($childProject->start_date) {
-                            $childStartDate = \Carbon\Carbon::parse($childProject->start_date);
-                            $isInTargetMonth = $childStartDate->year === $targetDate->year &&
-                                               $childStartDate->month === $targetDate->month;
-
-                            if ($isInTargetMonth) {
-                                // Se o projeto fechado começou no mês especificado, usar horas vendidas
-                                $childSoldHours = $childProject->sold_hours ?? 0;
-                                $monthConsumedHours += $childSoldHours;
-                            }
-                        }
-                    } else {
-                        // Para outros tipos: usar horas apontadas do mês especificado (excluindo rejeitados)
-                        $childMonthLoggedMinutes = $childProject->timesheets()
-                            ->where('status', '!=', 'rejected')
-                            ->whereBetween('date', [$monthStart, $monthEnd])
-                            ->sum('effort_minutes') ?? 0;
-                        $childMonthLoggedHours = round($childMonthLoggedMinutes / 60, 2);
-                        $monthConsumedHours += $childMonthLoggedHours;
-                    }
+                    $childMonthLoggedMinutes = $childProject->timesheets()
+                        ->where('status', '!=', 'rejected')
+                        ->whereBetween('date', [$monthStart, $monthEnd])
+                        ->sum('effort_minutes') ?? 0;
+                    $monthConsumedHours += round($childMonthLoggedMinutes / 60, 2);
                 }
             }
         }
@@ -4353,62 +4309,20 @@ class OnDemandController extends Controller
             $monthConsumedHours = 0;
 
             foreach ($parentProjects as $parentProject) {
-                // Verificar se o projeto pai é do tipo "Fechado"
-                $isParentClosedContract = $parentProject->contractType &&
-                                          strtolower(trim($parentProject->contractType->name)) === 'fechado';
+                // Consumo do mês = sempre apontamentos do mês (independente do tipo de contrato).
+                $parentMonthLoggedMinutes = $parentProject->timesheets()
+                    ->where('status', '!=', 'rejected')
+                    ->whereBetween('date', [$monthStart, $monthEnd])
+                    ->sum('effort_minutes') ?? 0;
+                $monthConsumedHours += round($parentMonthLoggedMinutes / 60, 2);
 
-                if ($isParentClosedContract) {
-                    // Para projetos fechados: verificar se start_date está no mês alvo
-                    if ($parentProject->start_date) {
-                        $parentStartDate = \Carbon\Carbon::parse($parentProject->start_date);
-                        $isInTargetMonth = $parentStartDate->year === $targetDate->year &&
-                                           $parentStartDate->month === $targetDate->month;
-
-                        if ($isInTargetMonth) {
-                            // Se o projeto fechado começou no mês alvo, usar horas vendidas
-                            $parentSoldHours = $parentProject->sold_hours ?? 0;
-                            $monthConsumedHours += $parentSoldHours;
-                        }
-                    }
-                } else {
-                    // Para outros tipos: usar horas apontadas do mês alvo (excluindo rejeitados)
-                    $parentMonthLoggedMinutes = $parentProject->timesheets()
-                        ->where('status', '!=', 'rejected')
-                        ->whereBetween('date', [$monthStart, $monthEnd])
-                        ->sum('effort_minutes') ?? 0;
-                    $parentMonthLoggedHours = round($parentMonthLoggedMinutes / 60, 2);
-                    $monthConsumedHours += $parentMonthLoggedHours;
-                }
-
-                // Processar projetos filhos
                 if ($parentProject->hasChildProjects()) {
                     foreach ($parentProject->childProjects as $childProject) {
-                        // Verificar se o projeto filho é do tipo "Fechado"
-                        $isClosedContract = $childProject->contractType &&
-                                            strtolower(trim($childProject->contractType->name)) === 'fechado';
-
-                        if ($isClosedContract) {
-                            // Para projetos fechados: verificar se start_date está no mês alvo
-                            if ($childProject->start_date) {
-                                $childStartDate = \Carbon\Carbon::parse($childProject->start_date);
-                                $isInTargetMonth = $childStartDate->year === $targetDate->year &&
-                                                   $childStartDate->month === $targetDate->month;
-
-                                if ($isInTargetMonth) {
-                                    // Se o projeto fechado começou no mês alvo, usar horas vendidas
-                                    $childSoldHours = $childProject->sold_hours ?? 0;
-                                    $monthConsumedHours += $childSoldHours;
-                                }
-                            }
-                        } else {
-                            // Para outros tipos: usar horas apontadas do mês alvo (excluindo rejeitados)
-                            $childMonthLoggedMinutes = $childProject->timesheets()
-                                ->where('status', '!=', 'rejected')
-                                ->whereBetween('date', [$monthStart, $monthEnd])
-                                ->sum('effort_minutes') ?? 0;
-                            $childMonthLoggedHours = round($childMonthLoggedMinutes / 60, 2);
-                            $monthConsumedHours += $childMonthLoggedHours;
-                        }
+                        $childMonthLoggedMinutes = $childProject->timesheets()
+                            ->where('status', '!=', 'rejected')
+                            ->whereBetween('date', [$monthStart, $monthEnd])
+                            ->sum('effort_minutes') ?? 0;
+                        $monthConsumedHours += round($childMonthLoggedMinutes / 60, 2);
                     }
                 }
             }

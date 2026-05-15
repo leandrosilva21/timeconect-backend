@@ -115,36 +115,6 @@ Route::prefix('v1')->group(function () {
         ->name('candidates.store');
 
     Route::middleware('auth:sanctum')->group(function () {
-        // 🔬 Diagnóstico TEMPORÁRIO — admin-only — listar timesheets de um ticket
-        // (incluindo soft-deletados) pra investigar perda reportada pelo cliente.
-        // REMOVER após investigação.
-        Route::get('/admin/diagnose-ticket/{ticket}', function (string $ticket) {
-            $user = auth()->user();
-            if (!$user || !$user->isAdmin()) {
-                return response()->json(['message' => 'Sem permissão'], 403);
-            }
-            $rows = \App\Models\Timesheet::withTrashed()
-                ->with(['user:id,name', 'project:id,name,code', 'customer:id,name'])
-                ->where('ticket', $ticket)
-                ->orderBy('date', 'desc')
-                ->orderBy('start_time', 'desc')
-                ->limit(50)
-                ->get([
-                    'id', 'date', 'start_time', 'end_time', 'effort_minutes',
-                    'status', 'user_id', 'project_id', 'customer_id',
-                    'movidesk_appointment_id', 'origin', 'is_billable_only',
-                    'manual_project_edit', 'observation',
-                    'deleted_at', 'created_at', 'updated_at',
-                ]);
-            return response()->json([
-                'ticket' => $ticket,
-                'count'  => $rows->count(),
-                'count_alive' => $rows->whereNull('deleted_at')->count(),
-                'count_trashed' => $rows->whereNotNull('deleted_at')->count(),
-                'items'  => $rows,
-            ]);
-        });
-
         // Dados do usuário
         Route::get('/user', [AuthController::class, 'user'])->name('user.profile');
         Route::put('/user/profile', [AuthController::class, 'updateProfile'])->name('user.update');

@@ -24,6 +24,8 @@ class StageActivityEvent extends Model
     public const TYPE_BLOCK_SET          = 'block_set';
     public const TYPE_BLOCK_CLEARED      = 'block_cleared';
     public const TYPE_COMMENT            = 'comment';
+    public const TYPE_CLIENT_INVOLVED    = 'client_involved';
+    public const TYPE_CLIENT_REMOVED     = 'client_removed';
 
     protected $fillable = [
         'stage_id',

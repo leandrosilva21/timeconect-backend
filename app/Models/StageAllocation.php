@@ -22,10 +22,16 @@ class StageAllocation extends Model
         'delivery_id',
         'user_id',
         'planned_hours',
+        'allocation_start_at',
+        'allocation_end_at',
+        'is_primary',
     ];
 
     protected $casts = [
-        'planned_hours' => 'decimal:2',
+        'planned_hours'       => 'decimal:2',
+        'allocation_start_at' => 'date:Y-m-d',
+        'allocation_end_at'   => 'date:Y-m-d',
+        'is_primary'          => 'boolean',
     ];
 
     public function stage(): BelongsTo

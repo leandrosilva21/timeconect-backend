@@ -158,11 +158,26 @@ class InboxService
         $last = $c->messages()->orderByDesc('created_at')->first(['id', 'type', 'body', 'metadata', 'created_at']);
         $unreadBy = $this->unreadBySeverity($c);
 
+        $title = $c->title;
+        $other = null;
+        if ($c->type === ConversationType::Direct) {
+            $other = $c->participants->first(fn ($p) => $p->user_id !== $user->id)?->user;
+            $title = $other?->name ?? 'Conversa direta';
+        } elseif ($c->type === ConversationType::Bot) {
+            $title = $title ?? 'BOT Minutor';
+        }
+
         return [
             'id'              => $c->id,
             'type'            => $c->type->value,
-            'title'           => $c->title ?? ($c->type === ConversationType::Bot ? 'BOT Minutor' : 'Conversa'),
+            'title'           => $title,
             'customer'        => $c->customer ? ['id' => $c->customer->id, 'name' => $c->customer->name] : null,
+            'other_user'      => $other ? [
+                'id'            => $other->id,
+                'name'          => $other->name,
+                'profile_photo' => $other->profile_photo,
+            ] : null,
+            'participants_count' => $c->participants->count(),
             'last_message'    => $last ? [
                 'id'         => $last->id,
                 'type'       => $last->type->value,

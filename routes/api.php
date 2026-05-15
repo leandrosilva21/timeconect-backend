@@ -911,6 +911,14 @@ Route::prefix('v1')->group(function () {
             Route::get('/',           [\App\Http\Controllers\PresenceController::class, 'index'])->name('presence.index');
         });
 
+        // 💬 CONVERSATIONS — criar DM/grupo, gerenciar participantes, listar usuários para abrir chat
+        Route::prefix('conversations')->group(function () {
+            Route::get('/users',                                  [\App\Http\Controllers\ConversationController::class, 'usersForChat'])->name('conversations.users');
+            Route::post('/',                                      [\App\Http\Controllers\ConversationController::class, 'store'])->name('conversations.store');
+            Route::post('/{id}/participants',                     [\App\Http\Controllers\ConversationController::class, 'addParticipant'])->name('conversations.participants.add');
+            Route::delete('/{id}/participants/{userId}',          [\App\Http\Controllers\ConversationController::class, 'removeParticipant'])->name('conversations.participants.remove');
+        });
+
         // 🤖 BOT MINUTOR CONFIG — providers/agents/skills/rules/general
         Route::prefix('bot')->group(function () {
             Route::get('/config',          [\App\Http\Controllers\BotConfigController::class, 'showConfig'])->name('bot.config.show');

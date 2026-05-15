@@ -53,6 +53,9 @@ class StageDeliveryController extends Controller
             'planned_start_at'       => 'nullable|date',
             'depends_on_delivery_id' => 'nullable|integer|exists:stage_deliveries,id',
             'dependency_type'        => ['nullable', Rule::in(StageDelivery::DEPENDENCY_TYPES)],
+            'client_user_id'         => 'nullable|integer|exists:users,id',
+            'client_email'           => 'nullable|email|max:180',
+            'client_involved'        => 'nullable|boolean',
         ]);
 
         $data['stage_id'] = $stage->id;
@@ -83,6 +86,9 @@ class StageDeliveryController extends Controller
             'planned_start_at'       => 'nullable|date',
             'depends_on_delivery_id' => 'nullable|integer|exists:stage_deliveries,id',
             'dependency_type'        => ['nullable', Rule::in(StageDelivery::DEPENDENCY_TYPES)],
+            'client_user_id'         => 'nullable|integer|exists:users,id',
+            'client_email'           => 'nullable|email|max:180',
+            'client_involved'        => 'nullable|boolean',
         ]);
 
         // Guard contra ciclo: atividade não pode depender de si mesma

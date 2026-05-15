@@ -119,28 +119,47 @@ class StageAllocationController extends Controller
     public function update(Request $request, StageAllocation $allocation): JsonResponse
     {
         $data = $request->validate([
-            'planned_hours' => 'required|numeric|min:0.5',
+            'planned_hours'       => 'sometimes|numeric|min:0.5',
+            'allocation_start_at' => 'nullable|date',
+            'allocation_end_at'   => 'nullable|date|after_or_equal:allocation_start_at',
+            'is_primary'          => 'nullable|boolean',
         ]);
 
-        $delta = (float) $data['planned_hours'] - (float) $allocation->planned_hours;
-        if ($delta > 0) {
-            // Alocação ligada a atividade → valida contra delivery.hours_planned (Pilar B)
-            if ($allocation->delivery_id) {
-                $allocation->loadMissing('delivery');
-                if ($allocation->delivery) {
-                    $err = $this->guardActivityCapacity($allocation->delivery, $delta);
-                    if ($err !== null) return $err;
-                }
-            } else {
-                $allocation->loadMissing('stage');
-                if ($allocation->stage) {
-                    $err = $this->guardStageCapacity($allocation->stage, $delta);
-                    if ($err !== null) return $err;
+        if (array_key_exists('planned_hours', $data)) {
+            $delta = (float) $data['planned_hours'] - (float) $allocation->planned_hours;
+            if ($delta > 0) {
+                // Alocação ligada a atividade → valida contra delivery.hours_planned (Pilar B)
+                if ($allocation->delivery_id) {
+                    $allocation->loadMissing('delivery');
+                    if ($allocation->delivery) {
+                        $err = $this->guardActivityCapacity($allocation->delivery, $delta);
+                        if ($err !== null) return $err;
+                    }
+                } else {
+                    $allocation->loadMissing('stage');
+                    if ($allocation->stage) {
+                        $err = $this->guardStageCapacity($allocation->stage, $delta);
+                        if ($err !== null) return $err;
+                    }
                 }
             }
         }
 
-        $allocation->update($data);
+        DB::transaction(function () use ($allocation, $data) {
+            // Promove pra primary → desmarca outros + sincroniza responsible_user_id
+            if (!empty($data['is_primary']) && $allocation->delivery_id) {
+                StageAllocation::where('delivery_id', $allocation->delivery_id)
+                    ->where('id', '!=', $allocation->id)
+                    ->where('is_primary', true)
+                    ->update(['is_primary' => false]);
+                $allocation->loadMissing('delivery');
+                if ($allocation->delivery && (int) $allocation->delivery->responsible_user_id !== (int) $allocation->user_id) {
+                    $allocation->delivery->update(['responsible_user_id' => $allocation->user_id]);
+                }
+            }
+
+            $allocation->update($data);
+        });
 
         return response()->json($allocation->fresh()->load('user:id,name,email'));
     }
@@ -234,19 +253,22 @@ class StageAllocationController extends Controller
             $remaining = round($planned - $actual, 2);
 
             return [
-                'id'              => $a->id,
-                'stage_id'        => $a->stage_id,
-                'delivery_id'     => $a->delivery_id,
-                'user_id'         => $a->user_id,
-                'user'            => $a->user ? [
+                'id'                  => $a->id,
+                'stage_id'            => $a->stage_id,
+                'delivery_id'         => $a->delivery_id,
+                'user_id'             => $a->user_id,
+                'user'                => $a->user ? [
                     'id'    => $a->user->id,
                     'name'  => $a->user->name,
                     'email' => $a->user->email,
                 ] : null,
-                'planned_hours'   => $planned,
-                'actual_hours'    => round($actual, 2),
-                'remaining_hours' => $remaining,
-                'health'          => self::computeHealth($planned, $actual),
+                'planned_hours'       => $planned,
+                'actual_hours'        => round($actual, 2),
+                'remaining_hours'     => $remaining,
+                'health'              => self::computeHealth($planned, $actual),
+                'allocation_start_at' => $a->allocation_start_at?->toDateString(),
+                'allocation_end_at'   => $a->allocation_end_at?->toDateString(),
+                'is_primary'          => (bool) $a->is_primary,
             ];
         });
 
@@ -268,8 +290,11 @@ class StageAllocationController extends Controller
     public function storeForActivity(Request $request, StageDelivery $delivery): JsonResponse
     {
         $data = $request->validate([
-            'user_id'       => 'required|integer|exists:users,id',
-            'planned_hours' => 'required|numeric|min:0.5',
+            'user_id'             => 'required|integer|exists:users,id',
+            'planned_hours'       => 'required|numeric|min:0.5',
+            'allocation_start_at' => 'nullable|date',
+            'allocation_end_at'   => 'nullable|date|after_or_equal:allocation_start_at',
+            'is_primary'          => 'nullable|boolean',
         ]);
 
         $existing = StageAllocation::where('delivery_id', $delivery->id)
@@ -285,12 +310,30 @@ class StageAllocationController extends Controller
         $err = $this->guardActivityCapacity($delivery, (float) $data['planned_hours']);
         if ($err !== null) return $err;
 
-        $allocation = StageAllocation::create([
-            'stage_id'      => $delivery->stage_id,
-            'delivery_id'   => $delivery->id,
-            'user_id'       => $data['user_id'],
-            'planned_hours' => $data['planned_hours'],
-        ]);
+        $isPrimary = (bool) ($data['is_primary'] ?? false);
+
+        $allocation = DB::transaction(function () use ($delivery, $data, $isPrimary) {
+            // Apenas 1 primary por delivery — desmarca outros antes de criar primary
+            if ($isPrimary) {
+                StageAllocation::where('delivery_id', $delivery->id)
+                    ->where('is_primary', true)
+                    ->update(['is_primary' => false]);
+                // Sincroniza responsible_user_id na delivery
+                if ((int) $delivery->responsible_user_id !== (int) $data['user_id']) {
+                    $delivery->update(['responsible_user_id' => $data['user_id']]);
+                }
+            }
+
+            return StageAllocation::create([
+                'stage_id'            => $delivery->stage_id,
+                'delivery_id'         => $delivery->id,
+                'user_id'             => $data['user_id'],
+                'planned_hours'       => $data['planned_hours'],
+                'allocation_start_at' => $data['allocation_start_at'] ?? null,
+                'allocation_end_at'   => $data['allocation_end_at'] ?? null,
+                'is_primary'          => $isPrimary,
+            ]);
+        });
 
         return response()->json($allocation->load('user:id,name,email'), 201);
     }

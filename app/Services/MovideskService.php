@@ -35,7 +35,9 @@ class MovideskService
     public function fetchTicket(int $ticketId): ?array
     {
         try {
-            $response = Http::timeout(15)->get("{$this->baseUrl()}/tickets", [
+            // Timeout curto: tickets travados não devem bloquear o lote inteiro
+            // (job roda a cada 5min e processa dezenas de tickets em sequência).
+            $response = Http::timeout(5)->get("{$this->baseUrl()}/tickets", [
                 'token'   => $this->token(),
                 'id'      => $ticketId,
                 '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments;$select=id,type,isPublic,htmlDescription,createdBy,timeAppointments)',

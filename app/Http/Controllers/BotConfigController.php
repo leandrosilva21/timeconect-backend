@@ -8,6 +8,7 @@ use App\Models\BotConfig;
 use App\Models\BotNotificationRule;
 use App\Models\BotSkill;
 use App\Models\OperationalFeed;
+use App\Services\Bot\NotificationEngine;
 use App\Services\Bot\NotificationRoutingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -29,8 +30,10 @@ use Illuminate\Http\Request;
  */
 class BotConfigController extends Controller
 {
-    public function __construct(protected NotificationRoutingService $routing)
-    {
+    public function __construct(
+        protected NotificationRoutingService $routing,
+        protected NotificationEngine $notificationEngine,
+    ) {
     }
 
     // ── GENERAL ──────────────────────────────────────────────────────
@@ -230,5 +233,21 @@ class BotConfigController extends Controller
         }
 
         return response()->json(['data' => $this->routing->previewWithFeed($id, $feed)]);
+    }
+
+    /**
+     * POST /api/v1/bot/rules/{id}/dispatch-test
+     * Envia EFETIVAMENTE uma mensagem teste pela regra (ignora severity/event filters).
+     * O título do feed é prefixado com [TESTE].
+     */
+    public function dispatchTestRule(Request $request, int $id): JsonResponse
+    {
+        try {
+            $result = $this->routing->dispatchTest($id, $this->notificationEngine);
+        } catch (\DomainException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(['data' => $result]);
     }
 }

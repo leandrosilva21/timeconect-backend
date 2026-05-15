@@ -78,7 +78,7 @@ class NotificationEngine
         return true;
     }
 
-    protected function deliverByChannel(BotNotificationRule $rule, OperationalFeed $feed): int
+    public function deliverByChannel(BotNotificationRule $rule, OperationalFeed $feed): int
     {
         $metadata = [
             'feed_id'    => $feed->id,

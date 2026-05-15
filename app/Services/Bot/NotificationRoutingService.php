@@ -53,6 +53,60 @@ class NotificationRoutingService
     }
 
     /**
+     * Envia EFETIVAMENTE uma mensagem teste pela regra. Usa o último feed
+     * disponível como dados (não dispara o feed em si). Útil pro admin
+     * verificar que o roteamento + canal funcionam.
+     *
+     * @return array{rule:array,delivered:int,channel:string,group:?array,recipients_count:int}
+     */
+    public function dispatchTest(int $ruleId, \App\Services\Bot\NotificationEngine $engine): array
+    {
+        $rule = $this->find($ruleId);
+
+        $feed = \App\Models\OperationalFeed::orderByDesc('id')->first();
+        if (! $feed) {
+            throw new \DomainException('Nenhum feed disponível pra usar como base do teste.');
+        }
+
+        // Marca como teste no metadata e usa título prefixado
+        $originalTitle = $feed->title;
+        $feed->title = '[TESTE] ' . $originalTitle;
+
+        // Bypass severity/event_type filters: monta payload direto
+        $delivered = $this->deliverDirectly($rule, $feed, $engine);
+
+        // Restaura título pra não persistir alteração (feed continua no DB original)
+        $feed->title = $originalTitle;
+
+        $recipientsCount = $this->resolveRecipients($rule, $feed)->count();
+        $group = null;
+        if ($rule->channel === 'group' && $rule->target_value) {
+            $g = \App\Models\Conversation::find((int) $rule->target_value);
+            $group = $g ? ['id' => $g->id, 'title' => $g->title] : null;
+        }
+
+        return [
+            'rule'             => $this->serialize($rule),
+            'delivered'        => $delivered,
+            'channel'          => $rule->channel,
+            'group'            => $group,
+            'recipients_count' => $recipientsCount,
+        ];
+    }
+
+    /**
+     * Entrega via canal apropriado, ignorando severity/event filters.
+     * Chamado apenas pelo dispatchTest — em produção sempre passa pelo engine.
+     */
+    private function deliverDirectly(
+        \App\Models\BotNotificationRule $rule,
+        \App\Models\OperationalFeed $feed,
+        \App\Services\Bot\NotificationEngine $engine,
+    ): int {
+        return $engine->deliverByChannel($rule, $feed);
+    }
+
+    /**
      * Retorna o que a regra entregaria para o feed indicado (preview, NÃO envia).
      *
      * @return array{rule:array,severity_match:bool,recipients:array<array{id:int,name:string}>,channel:string,group:?array}

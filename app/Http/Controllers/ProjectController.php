@@ -1849,7 +1849,7 @@ class ProjectController extends Controller
      */
     public function schedule(Project $project): JsonResponse
     {
-        $project->loadMissing('serviceType');
+        $project->loadMissing(['serviceType', 'coordinators:id,name,email']);
 
         if (!$project->isOperational()) {
             return response()->json([
@@ -1898,6 +1898,11 @@ class ProjectController extends Controller
                 'sold_hours'          => (float) ($project->sold_hours ?? 0),
                 'start_date'          => $project->start_date?->toDateString(),
                 'expected_end_date'   => $project->expected_end_date?->toDateString(),
+                'coordinators'        => $project->coordinators->map(fn ($u) => [
+                    'id'    => $u->id,
+                    'name'  => $u->name,
+                    'email' => $u->email,
+                ])->values(),
             ],
             'stages' => $stages,
         ]);

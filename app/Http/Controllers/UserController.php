@@ -133,15 +133,18 @@ class UserController extends Controller
             || $user->hasAccess('users.create')
         );
         if (!$canSeeAll) {
-            $query->where('id', $user->id);
+            $query->where('users.id', $user->id);
         }
 
         // Filtros
+        // Importante: qualificar `users.*` porque o ORDER BY pode adicionar
+        // leftJoin('partners', ...) e ambas as tabelas têm coluna `name` —
+        // sem prefixo gera SQLSTATE[42702] "column reference is ambiguous".
         $search = $request->get('filter') ?? $request->get('search');
         if (!empty($search)) {
             $query->where(function($q) use ($search) {
-                $q->where('name', 'ilike', "%{$search}%")
-                  ->orWhere('email', 'ilike', "%{$search}%");
+                $q->where('users.name', 'ilike', "%{$search}%")
+                  ->orWhere('users.email', 'ilike', "%{$search}%");
             });
         }
 
@@ -209,7 +212,9 @@ class UserController extends Controller
 
                 $allowedFields = ['name', 'email', 'created_at', 'updated_at'];
                 if (in_array($field, $allowedFields)) {
-                    $query->orderBy($field, $direction);
+                    // Qualifica users.* — campo pode ser ambíguo se algum filtro
+                    // anterior adicionou leftJoin com partners (mesma coluna name/email/timestamps).
+                    $query->orderBy("users.{$field}", $direction);
                 } elseif ($field === 'partner_name') {
                     $query->leftJoin('partners', 'partners.id', '=', 'users.partner_id')
                           ->orderBy('partners.name', $direction)

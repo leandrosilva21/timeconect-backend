@@ -902,6 +902,7 @@ Route::prefix('v1')->group(function () {
 
         // 📋 REQUISIÇÕES DE CONTRATO (clientes enviam necessidades)
         Route::get('/contract-requests/options',              [\App\Http\Controllers\ContractRequestController::class, 'options'])->name('contract-requests.options');
+        Route::post('/contract-requests/resolve-emails',      [\App\Http\Controllers\ContractRequestController::class, 'resolveEmails'])->name('contract-requests.resolve-emails');
         Route::get('/contract-requests',                      [\App\Http\Controllers\ContractRequestController::class, 'index'])->name('contract-requests.index');
         Route::post('/contract-requests',                     [\App\Http\Controllers\ContractRequestController::class, 'store'])->name('contract-requests.store');
         Route::get('/contract-requests/{contractRequest}',    [\App\Http\Controllers\ContractRequestController::class, 'show'])->name('contract-requests.show');

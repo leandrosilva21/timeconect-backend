@@ -16,7 +16,7 @@ class ContractRequestMessageController extends Controller
     {
         $user = auth()->user();
 
-        if ($user->isCliente() && $user->customer_id !== $contractRequest->customer_id) {
+        if (!$this->clienteCanAccess($user, $contractRequest)) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
@@ -37,7 +37,7 @@ class ContractRequestMessageController extends Controller
     {
         $user = auth()->user();
 
-        if ($user->isCliente() && $user->customer_id !== $contractRequest->customer_id) {
+        if (!$this->clienteCanAccess($user, $contractRequest)) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
@@ -100,7 +100,7 @@ class ContractRequestMessageController extends Controller
     {
         $user = auth()->user();
 
-        if ($user->isCliente() && $user->customer_id !== $contractRequest->customer_id) {
+        if (!$this->clienteCanAccess($user, $contractRequest)) {
             return response()->json([], 403);
         }
 
@@ -111,5 +111,18 @@ class ContractRequestMessageController extends Controller
             ->get();
 
         return response()->json($users);
+    }
+
+    /**
+     * Cliente acessa a requisição/chat se for do mesmo customer E (criador OU watcher).
+     * Internos (admin/coord/consultor) sempre passam.
+     */
+    private function clienteCanAccess(?User $user, ContractRequest $req): bool
+    {
+        if (!$user) return false;
+        if (!$user->isCliente()) return true;
+        if ($user->customer_id !== $req->customer_id) return false;
+        if ((int) $req->created_by_id === (int) $user->id) return true;
+        return $req->watchers()->where('user_id', $user->id)->exists();
     }
 }

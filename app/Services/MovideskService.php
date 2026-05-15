@@ -655,12 +655,18 @@ class MovideskService
             }
         }
 
-        Log::warning('⚠️ [MOVIDESK] Cliente não resolvido por CNPJ — rode movidesk:sync-orgs ou cadastre o CGC do cliente', [
-            'movidesk_org_id' => $orgId,
-            'business_name'   => $orgName,
-            'org_person_type' => $orgPersonType,
-            'cnpj_cached'     => $orgRecord?->cnpj,
-        ]);
+        // Throttle: org sem CNPJ cadastrado é estado conhecido — não vale logar a
+        // cada sync (a cada 5min). Loga no máximo 1x a cada 6h por org.
+        $throttleKey = "movidesk:warn:unresolved-cnpj:{$orgId}";
+        if (!Cache::has($throttleKey)) {
+            Cache::put($throttleKey, 1, now()->addHours(6));
+            Log::warning('⚠️ [MOVIDESK] Cliente não resolvido por CNPJ — rode movidesk:sync-orgs ou cadastre o CGC do cliente', [
+                'movidesk_org_id' => $orgId,
+                'business_name'   => $orgName,
+                'org_person_type' => $orgPersonType,
+                'cnpj_cached'     => $orgRecord?->cnpj,
+            ]);
+        }
         return $this->getDefaultCustomerId();
     }
 

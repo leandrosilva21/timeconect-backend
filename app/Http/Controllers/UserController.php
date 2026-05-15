@@ -209,7 +209,8 @@ class UserController extends Controller
 
                 $allowedFields = ['name', 'email', 'created_at', 'updated_at'];
                 if (in_array($field, $allowedFields)) {
-                    $query->orderBy($field, $direction);
+                    // Qualifica com users.* — pode ter join em partners (partner_name) no mesmo chain.
+                    $query->orderBy("users.{$field}", $direction);
                 } elseif ($field === 'partner_name') {
                     $query->leftJoin('partners', 'partners.id', '=', 'users.partner_id')
                           ->orderBy('partners.name', $direction)

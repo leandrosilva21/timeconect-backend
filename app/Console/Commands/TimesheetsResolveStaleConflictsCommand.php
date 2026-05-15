@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\DB;
  *
  * O TimesheetObserver já chama resolveStaleConflicts em saved/deleted —
  * mas isso só vale pra mudanças via Eloquent. Esta varredura agendada
- * (cron */10) cobre:
+ * (cron a cada 10 min) cobre:
  *   - Apontamentos legados que ficaram presos em "conflicted" antes do
  *     observer ser plugado.
  *   - Mudanças feitas via SQL bruto (DB::table) que não disparam observer.

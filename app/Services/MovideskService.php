@@ -865,16 +865,23 @@ class MovideskService
     {
         $subject = $ticket['subject'] ?? '';
         $html    = $action['htmlDescription'] ?? '';
-        $plain = trim(html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
-        $plain = preg_replace('/\s+/', ' ', $plain);
+
+        // Preserva HTML rico (tabelas, parágrafos, listas, headers). Frontend
+        // sanitiza via DOMPurify antes de renderizar com dangerouslySetInnerHTML.
+        // O subject prefix do Movidesk aparece como primeiro parágrafo — remove
+        // só ele, sem destruir o resto da formatação.
+        $clean = trim($html);
 
         if ($subject) {
             $escaped = preg_quote(trim($subject), '/');
-            $plain   = preg_replace('/^' . $escaped . '\s*/iu', '', $plain);
-            $plain   = trim($plain);
+            // Remove subject quando vem como texto no início do HTML
+            $clean = preg_replace('/^\s*' . $escaped . '\s*(<br\s*\/?>)?/iu', '', $clean);
+            // Remove subject quando vem dentro do primeiro <p>
+            $clean = preg_replace('/^\s*<p[^>]*>\s*' . $escaped . '\s*<\/p>/iu', '', $clean);
+            $clean = trim($clean);
         }
 
-        return $plain;
+        return $clean;
     }
 
     // ─────────────────────────────────────────────────────────────

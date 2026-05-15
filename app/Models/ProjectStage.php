@@ -32,6 +32,8 @@ class ProjectStage extends Model
         'order_index',
         'expected_end_date',
         'stage_start_at',
+        'actual_start_at',
+        'actual_end_at',
     ];
 
     protected $casts = [
@@ -39,6 +41,8 @@ class ProjectStage extends Model
         'order_index'        => 'integer',
         'expected_end_date'  => 'date:Y-m-d',
         'stage_start_at'     => 'date:Y-m-d',
+        'actual_start_at'    => 'datetime',
+        'actual_end_at'      => 'datetime',
     ];
 
     public function project(): BelongsTo

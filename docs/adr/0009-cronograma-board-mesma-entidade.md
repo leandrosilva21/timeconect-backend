@@ -73,3 +73,32 @@ PR é rejeitada (sem novo ADR) se:
 
 - Estende ADR 0004 (board operacional único): agora a tela `/planejamento` é uma view adicional sobre as mesmas entidades.
 - Estende ADR 0007 (atividade unidade de execução): cronograma confirma que a atividade carrega responsável, horas, prazo, dependência.
+
+---
+
+## Appendix — 2026-05-15
+
+Após o cronograma rodar em DEV1 com coords ativos, três lacunas concretas apareceram. O appendix consolida o que mudou sem reabrir as decisões principais.
+
+### Adições de schema
+- `stage_deliveries.dependency_type` varchar(8) default `'FS'` — coluna existe para evolução futura (SS/FF/SF) sem nova migration. **Whitelist atual = `['FS']`**: backend rejeita outros valores com 422.
+- `project_stages.actual_start_at` / `actual_end_at` (dateTime nullable) — rollup das datas reais das atividades, mantido pelo `StageDeliveryObserver`. `actual_end_at` só preenche quando todas as atividades da etapa estão `done`.
+
+### Calendário útil canônico
+- Novo `App\Services\BusinessCalendarService`. Único caminho para aritmética de datas planejadas. Consome `holidays` (tabela já existente) e considera sábados/domingos.
+- `HourBankService::calculateWorkingDays` continua existindo, **restrito a contagem mensal de banco de horas**. Não usar para somar dias úteis em prazos de cronograma — usar `BusinessCalendarService`.
+
+### Cálculo automático com confirmação
+A regra de revisão #5 original ("UX deve ser manual") permanece para datas de _operação_, mas é refinada para _planejamento_:
+
+- O sistema **sugere** `due_date` quando o coord preenche `planned_start_at + hours_planned` deixando o fim vazio (`addBusinessHours(start, hours, 8)`). A sugestão é aplicada na criação se o usuário não a sobrescrever.
+- Após editar `planned_start_at` / `due_date` / `hours_planned` de uma atividade com dependentes diretos, o frontend abre **modal de confirmação** `Recalcular dependentes? [Manter] [Recalcular cascata]`. Default = **Manter**. Cascade só roda via apply explícito.
+- Predecessor `FS` com `status != 'done'` **bloqueia operacionalmente** o move `backlog → *` da dependente (HTTP 422 no backend, toast no frontend). **Planejamento (edit de datas/horas) nunca é bloqueado**.
+
+### Regra de revisão atualizada
+
+Substitui a regra #5 anterior:
+
+> 5. **Recalcular cascata sem confirmação do coord.** Engine de cascade existe (`POST /deliveries/{id}/recalc-dependents`), mas só roda com `apply: true` vindo de ação humana explícita.
+
+Mantém #4 (sem múltiplos predecessors); estende implicitamente: o `dependency_type` aceita apenas `FS` até que um novo ADR justifique adicionar SS/FF/SF.

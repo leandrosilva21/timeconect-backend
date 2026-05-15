@@ -3,6 +3,7 @@
 namespace App\Services\Bot;
 
 use App\Enums\MessageType;
+use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\Inbox\InboxService;
@@ -52,6 +53,27 @@ class BotMinutorService
             'type'           => MessageType::Bot,
             'body'           => $body,
             'metadata'       => $metadata,
+        ]);
+    }
+
+    /**
+     * Entrega mensagem do BOT em uma Conversation específica (grupo).
+     * Usado pelo NotificationEngine quando o canal da regra é "group".
+     */
+    public function deliverToConversation(
+        Conversation $conv,
+        MessageType $type,
+        string $title,
+        string $body,
+        array $metadata = [],
+    ): Message {
+        $msgBody = $title ? "**{$title}**\n\n{$body}" : $body;
+
+        return $this->inbox->persist($conv, [
+            'sender_user_id' => null,
+            'type'           => $type,
+            'body'           => $msgBody,
+            'metadata'       => array_merge(['title' => $title], $metadata),
         ]);
     }
 }

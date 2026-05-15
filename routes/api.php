@@ -929,8 +929,12 @@ Route::prefix('v1')->group(function () {
             Route::put('/agents/{id}',     [\App\Http\Controllers\BotConfigController::class, 'updateAgent'])->name('bot.agents.update');
             Route::get('/skills',          [\App\Http\Controllers\BotConfigController::class, 'skills'])->name('bot.skills');
             Route::put('/skills/{id}',     [\App\Http\Controllers\BotConfigController::class, 'updateSkill'])->name('bot.skills.update');
-            Route::get('/rules',           [\App\Http\Controllers\BotConfigController::class, 'rules'])->name('bot.rules');
-            Route::put('/rules/{id}',      [\App\Http\Controllers\BotConfigController::class, 'updateRule'])->name('bot.rules.update');
+            Route::get('/rules',                [\App\Http\Controllers\BotConfigController::class, 'rules'])->name('bot.rules');
+            Route::get('/rules/options',        [\App\Http\Controllers\BotConfigController::class, 'ruleOptions'])->name('bot.rules.options');
+            Route::post('/rules',               [\App\Http\Controllers\BotConfigController::class, 'storeRule'])->name('bot.rules.store');
+            Route::put('/rules/{id}',           [\App\Http\Controllers\BotConfigController::class, 'updateRule'])->name('bot.rules.update');
+            Route::delete('/rules/{id}',        [\App\Http\Controllers\BotConfigController::class, 'destroyRule'])->name('bot.rules.destroy');
+            Route::post('/rules/{id}/test',     [\App\Http\Controllers\BotConfigController::class, 'testRule'])->name('bot.rules.test');
         });
     });
 });

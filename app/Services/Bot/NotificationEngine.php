@@ -2,26 +2,30 @@
 
 namespace App\Services\Bot;
 
+use App\Enums\ConversationType;
+use App\Enums\MessageType;
 use App\Models\BotNotificationRule;
+use App\Models\Conversation;
 use App\Models\OperationalFeed;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
 
 /**
- * NotificationEngine — decide PARA QUEM entregar uma notificação a partir
- * das `bot_notification_rules` ativas. Não conhece HTTP nem queue; só roteamento.
+ * NotificationEngine — avalia bot_notification_rules ativas contra um feed e
+ * entrega via canal apropriado (inbox/bot_dm individual, group conversation,
+ * ou email/teams placeholder). Não conhece HTTP nem queue; só roteamento.
  */
 class NotificationEngine
 {
     public function __construct(
         protected BotMinutorService $bot,
         protected AntiNoiseService $antiNoise,
+        protected NotificationRoutingService $routing,
     ) {
     }
 
     public function routeFeedToInbox(OperationalFeed $feed): int
     {
-        // Anti-ruído: stub hoje, motor real quando ativado
         $dedupeKey = $feed->metadata['dedupe_key'] ?? "feed_{$feed->id}";
         if (! $this->antiNoise->shouldDeliver($dedupeKey, $feed->customer_id)) {
             return 0;
@@ -30,7 +34,7 @@ class NotificationEngine
         $rules = BotNotificationRule::query()
             ->active()
             ->forEvent(\App\Events\OperationalFeedCreated::class)
-            ->where('channel', 'inbox')
+            ->orderBy('priority')
             ->get();
 
         if ($rules->isEmpty()) {
@@ -39,74 +43,105 @@ class NotificationEngine
 
         $delivered = 0;
         foreach ($rules as $rule) {
-            if (! $this->severityMatches($feed->severity->value, $rule->severity_min)) {
+            if (! $this->ruleMatchesFeed($rule, $feed)) {
                 continue;
             }
 
-            $recipients = $this->resolveRecipients($rule, $feed);
-
-            foreach ($recipients as $user) {
-                try {
-                    if ($feed->source->value === 'ai') {
-                        $this->bot->deliverAiInsight(
-                            user: $user,
-                            title: $feed->title,
-                            body: $feed->message,
-                            metadata: [
-                                'feed_id'    => $feed->id,
-                                'severity'   => $feed->severity->value,
-                                'event_type' => $feed->event_type->value,
-                                'source'     => $feed->source->value,
-                                'customer_id'=> $feed->customer_id,
-                                'provider'   => $feed->metadata['provider'] ?? null,
-                            ],
-                        );
-                    } else {
-                        $this->bot->deliverAlert(
-                            user: $user,
-                            title: $feed->title,
-                            body: $feed->message,
-                            metadata: [
-                                'feed_id'    => $feed->id,
-                                'severity'   => $feed->severity->value,
-                                'event_type' => $feed->event_type->value,
-                                'source'     => $feed->source->value,
-                                'customer_id'=> $feed->customer_id,
-                            ],
-                        );
-                    }
-                    $delivered++;
-                } catch (\Throwable $e) {
-                    Log::warning('[NotificationEngine] falha ao entregar', [
-                        'user_id' => $user->id,
-                        'feed_id' => $feed->id,
-                        'error'   => $e->getMessage(),
-                    ]);
-                }
+            try {
+                $delivered += $this->deliverByChannel($rule, $feed);
+            } catch (\Throwable $e) {
+                Log::warning('[NotificationEngine] falha ao entregar', [
+                    'rule_id' => $rule->id,
+                    'feed_id' => $feed->id,
+                    'error'   => $e->getMessage(),
+                ]);
             }
         }
 
         return $delivered;
     }
 
-    /**
-     * @return \Illuminate\Support\Collection<int, User>
-     */
-    protected function resolveRecipients(BotNotificationRule $rule, OperationalFeed $feed)
+    protected function ruleMatchesFeed(BotNotificationRule $rule, OperationalFeed $feed): bool
     {
-        return match ($rule->target_type) {
-            'user' => User::where('id', (int) $rule->target_value)->get(),
-            'all_admins' => User::where(function ($q) {
-                $q->where('type', 'admin')
-                  ->orWhere('type', 'coordinator')
-                  ->orWhere('is_executive', true);
-            })->get(),
-            'role' => User::where('type', $rule->target_value)->get(),
-            'customer_team' => $feed->customer_id
-                ? User::where('customer_id', $feed->customer_id)->get()
-                : collect(),
-            default => collect(),
+        if (! $this->severityMatches($feed->severity->value, $rule->severity_min)) {
+            return false;
+        }
+        if ($rule->event_type && $rule->event_type !== $feed->event_type->value) {
+            return false;
+        }
+        if ($rule->skill_slug) {
+            $feedSkill = $feed->metadata['skill_slug'] ?? null;
+            if ($feedSkill !== $rule->skill_slug) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    protected function deliverByChannel(BotNotificationRule $rule, OperationalFeed $feed): int
+    {
+        $metadata = [
+            'feed_id'    => $feed->id,
+            'severity'   => $feed->severity->value,
+            'event_type' => $feed->event_type->value,
+            'source'     => $feed->source->value,
+            'customer_id'=> $feed->customer_id,
+            'contract_id'=> $feed->contract_id,
+            'project_id' => $feed->project_id,
+            'provider'   => $feed->metadata['provider'] ?? null,
+            'rule_id'    => $rule->id,
+        ];
+
+        $type = $feed->source->value === 'ai' ? MessageType::AiInsight : MessageType::Alert;
+
+        return match ($rule->channel) {
+            'inbox', 'bot_dm' => $this->deliverToIndividualInboxes($rule, $feed, $type, $metadata),
+            'group'           => $this->deliverToGroup($rule, $feed, $type, $metadata),
+            'email'           => $this->deliverEmail($rule, $feed, $metadata),
+            'teams'           => $this->deliverEmail($rule, $feed, $metadata), // legacy, placeholder
+            default           => 0,
         };
+    }
+
+    protected function deliverToIndividualInboxes(
+        BotNotificationRule $rule, OperationalFeed $feed, MessageType $type, array $metadata,
+    ): int {
+        $recipients = $this->routing->resolveRecipients($rule, $feed);
+        $count = 0;
+        foreach ($recipients as $user) {
+            if ($type === MessageType::AiInsight) {
+                $this->bot->deliverAiInsight($user, $feed->title, $feed->message, $metadata);
+            } else {
+                $this->bot->deliverAlert($user, $feed->title, $feed->message, $metadata);
+            }
+            $count++;
+        }
+        return $count;
+    }
+
+    protected function deliverToGroup(
+        BotNotificationRule $rule, OperationalFeed $feed, MessageType $type, array $metadata,
+    ): int {
+        if (! $rule->target_value) {
+            return 0;
+        }
+        $conv = Conversation::where('id', (int) $rule->target_value)
+            ->where('type', ConversationType::Group->value)
+            ->first();
+        if (! $conv) {
+            return 0;
+        }
+        $this->bot->deliverToConversation($conv, $type, $feed->title, $feed->message, $metadata);
+        return 1;
+    }
+
+    protected function deliverEmail(BotNotificationRule $rule, OperationalFeed $feed, array $metadata): int
+    {
+        // Placeholder — não implementado nesta fatia
+        Log::info('[NotificationEngine] email channel pendente de implementação', [
+            'rule_id' => $rule->id, 'feed_id' => $feed->id,
+        ]);
+        return 0;
     }
 
     protected function severityMatches(string $feedSeverity, string $ruleMin): bool

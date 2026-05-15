@@ -7,6 +7,8 @@ use App\Models\BotAgent;
 use App\Models\BotConfig;
 use App\Models\BotNotificationRule;
 use App\Models\BotSkill;
+use App\Models\OperationalFeed;
+use App\Services\Bot\NotificationRoutingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -27,6 +29,10 @@ use Illuminate\Http\Request;
  */
 class BotConfigController extends Controller
 {
+    public function __construct(protected NotificationRoutingService $routing)
+    {
+    }
+
     // ── GENERAL ──────────────────────────────────────────────────────
     public function showConfig(): JsonResponse
     {
@@ -164,26 +170,65 @@ class BotConfigController extends Controller
         return $this->skills();
     }
 
-    // ── RULES ────────────────────────────────────────────────────────
+    // ── NOTIFICATION RULES ─────────────────────────────────────────
     public function rules(): JsonResponse
     {
-        $items = BotNotificationRule::query()->orderBy('id')->get();
-        return response()->json(['data' => $items]);
+        return response()->json(['data' => $this->routing->list()]);
+    }
+
+    public function storeRule(Request $request): JsonResponse
+    {
+        try {
+            $rule = $this->routing->create($request->all());
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json(['message' => 'Validation failed', 'errors' => $e->errors()], 422);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+        return response()->json(['data' => $this->routing->serialize($rule)], 201);
     }
 
     public function updateRule(Request $request, int $id): JsonResponse
     {
-        $rule = BotNotificationRule::findOrFail($id);
+        try {
+            $rule = $this->routing->update($id, $request->all());
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json(['message' => 'Validation failed', 'errors' => $e->errors()], 422);
+        }
+        return response()->json(['data' => $this->routing->serialize($rule)]);
+    }
+
+    public function destroyRule(int $id): JsonResponse
+    {
+        $this->routing->delete($id);
+        return response()->json(['deleted' => true]);
+    }
+
+    public function ruleOptions(): JsonResponse
+    {
+        return response()->json(['data' => $this->routing->options()]);
+    }
+
+    /**
+     * POST /api/v1/bot/rules/{id}/test
+     * body: { "feed_id"?: <int> }    Se omitido, usa o último feed criado.
+     * Retorna preview: severity_match, destinatários, canal, grupo.
+     */
+    public function testRule(Request $request, int $id): JsonResponse
+    {
         $data = $request->validate([
-            'name'          => 'sometimes|string|max:120',
-            'trigger_event' => 'sometimes|string|max:120',
-            'severity_min'  => 'sometimes|in:info,low,medium,high,critical',
-            'target_type'   => 'sometimes|in:user,role,customer_team,all_admins',
-            'target_value'  => 'sometimes|nullable|string|max:120',
-            'channel'       => 'sometimes|in:inbox,teams,email',
-            'active'        => 'sometimes|boolean',
+            'feed_id' => 'nullable|integer|exists:operational_feed,id',
         ]);
-        $rule->update($data);
-        return $this->rules();
+
+        $feedId = $data['feed_id'] ?? null;
+        $feed = $feedId
+            ? OperationalFeed::findOrFail($feedId)
+            : OperationalFeed::orderByDesc('id')->first();
+
+        if (! $feed) {
+            return response()->json(['message' => 'Nenhum feed disponível para testar'], 422);
+        }
+
+        return response()->json(['data' => $this->routing->previewWithFeed($id, $feed)]);
     }
 }

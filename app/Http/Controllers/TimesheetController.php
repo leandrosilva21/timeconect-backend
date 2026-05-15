@@ -160,6 +160,16 @@ class TimesheetController extends Controller
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject', 'movidesk_tickets.solicitante as ticket_solicitante')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket');
 
+        // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
+        if ($request->get('scope') === 'sustentacao') {
+            $scopedIds = app(\App\Services\SustentacaoScopeService::class)->projectIds();
+            if (empty($scopedIds)) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('timesheets.project_id', $scopedIds);
+            }
+        }
+
         // Controle de visibilidade por perfil
         if ($user->isCliente()) {
             // Cliente vê apenas apontamentos do seu cliente (empresa)
@@ -422,7 +432,52 @@ class TimesheetController extends Controller
 
                 $timesheets = $query->paginate($perPage, ['*'], 'page', $page);
 
-                $items = collect($timesheets->items())->map(function ($ts) use ($hideClientPct) {
+                // Total acumulado (lifetime) por ticket, no mesmo cliente — para coluna
+                // "Consumo do Ticket" no frontend. Só tickets com padrão 5 dígitos.
+                $ticketsByCustomer = [];
+                foreach ($timesheets->items() as $ts) {
+                    $t = $ts->ticket;
+                    if (!$t || !$ts->customer_id) continue;
+                    if (!preg_match('/^\d{5}$/', (string) $t)) continue;
+                    $ticketsByCustomer[$ts->customer_id][$t] = true;
+                }
+                $ticketTotalsMap = [];
+                if (!empty($ticketsByCustomer)) {
+                    // DB::table não aplica global scope de soft-delete; sem o
+                    // whereNull('deleted_at') o "Hist. de Hs Ticket" continua
+                    // somando apontamentos já soft-deletados (ex.: limpeza dos <5min).
+                    $totalsQ = \Illuminate\Support\Facades\DB::table('timesheets')
+                        ->whereNull('deleted_at')
+                        ->where('status', '!=', 'rejected')
+                        ->whereRaw("ticket ~ '^[0-9]{5}$'");
+                    $totalsQ->where(function ($q) use ($ticketsByCustomer) {
+                        foreach ($ticketsByCustomer as $cid => $tickets) {
+                            $q->orWhere(function ($qq) use ($cid, $tickets) {
+                                $qq->where('customer_id', $cid)->whereIn('ticket', array_keys($tickets));
+                            });
+                        }
+                    });
+                    foreach ($totalsQ->groupBy('customer_id', 'ticket')->selectRaw('customer_id, ticket, SUM(effort_minutes) AS total')->get() as $r) {
+                        $ticketTotalsMap[$r->customer_id . ':' . $r->ticket] = (int) $r->total;
+                    }
+
+                    // Soma o saldo inicial cadastrado (ticket_initial_balances).
+                    $initQ = \Illuminate\Support\Facades\DB::table('ticket_initial_balances')
+                        ->whereNull('deleted_at')
+                        ->where(function ($q) use ($ticketsByCustomer) {
+                            foreach ($ticketsByCustomer as $cid => $tickets) {
+                                $q->orWhere(function ($qq) use ($cid, $tickets) {
+                                    $qq->where('customer_id', $cid)->whereIn('ticket', array_keys($tickets));
+                                });
+                            }
+                        });
+                    foreach ($initQ->select('customer_id', 'ticket', 'initial_minutes')->get() as $r) {
+                        $key = $r->customer_id . ':' . $r->ticket;
+                        $ticketTotalsMap[$key] = ($ticketTotalsMap[$key] ?? 0) + (int) $r->initial_minutes;
+                    }
+                }
+
+                $items = collect($timesheets->items())->map(function ($ts) use ($hideClientPct, $ticketTotalsMap) {
                     if ($hideClientPct) {
                         $ts->makeHidden(['client_extra_pct']);
                     }
@@ -440,6 +495,7 @@ class TimesheetController extends Controller
 
                             $arr['conflicting_timesheets'] = Timesheet::with(['customer', 'project.customer'])
                                 ->where('user_id', $ts->user_id)
+                                ->where('customer_id', $ts->customer_id) // só conflita no MESMO cliente
                                 ->whereDate('date', $dateStr)
                                 ->where('id', '!=', $ts->id)
                                 ->whereNotIn('status', [Timesheet::STATUS_REJECTED])
@@ -466,6 +522,13 @@ class TimesheetController extends Controller
                                 'error'        => $e->getMessage(),
                             ]);
                         }
+                    }
+                    // Total acumulado do ticket no mesmo cliente (lifetime)
+                    $tk = (string) ($ts->ticket ?? '');
+                    if ($tk !== '' && preg_match('/^\d{5}$/', $tk) && $ts->customer_id) {
+                        $arr['ticket_total_minutes'] = $ticketTotalsMap[$ts->customer_id . ':' . $tk] ?? null;
+                    } else {
+                        $arr['ticket_total_minutes'] = null;
                     }
                     return $arr;
                 })->all();
@@ -930,13 +993,25 @@ class TimesheetController extends Controller
             }
 
             // Marcar apontamentos sobrepostos como conflitados
+            $newlyConflictedIds = collect();
             if ($hasConflict && isset($overlappingIds) && $overlappingIds->isNotEmpty()) {
-                Timesheet::whereIn('id', $overlappingIds)
+                $newlyConflictedIds = Timesheet::whereIn('id', $overlappingIds)
                     ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED])
+                    ->pluck('id');
+                Timesheet::whereIn('id', $newlyConflictedIds)
                     ->update(['status' => Timesheet::STATUS_CONFLICTED]);
             }
 
             DB::commit();
+
+            // Notifica donos dos apontamentos marcados como conflito
+            if ($hasConflict) {
+                $timesheet->notifyOwnerOfStatus('CONFLITO');
+            }
+            foreach ($newlyConflictedIds as $cid) {
+                $conflicted = Timesheet::find($cid);
+                if ($conflicted) $conflicted->notifyOwnerOfStatus('CONFLITO');
+            }
 
             $timesheet->load(['user', 'customer', 'project']);
 
@@ -1037,7 +1112,12 @@ class TimesheetController extends Controller
             $step = 'auth_check';
             $isOwner      = $timesheet->user_id === $user->id;
             $isClienteOk  = $user->isCliente() && $user->customer_id && $timesheet->customer_id === $user->customer_id;
-            $canView      = $user->isAdmin() || $user->isCoordenador() || $user->hasAccess('hours.view_all') || $isOwner || $isClienteOk;
+            // Parceiro Admin/Gestor: vê apontamentos de qualquer membro da sua parceria
+            $isTeamTimesheet = $user->isParceiroAdmin() && $user->partner_id &&
+                \App\Models\User::where('id', $timesheet->user_id)
+                    ->where('partner_id', $user->partner_id)
+                    ->exists();
+            $canView      = $user->isAdmin() || $user->isCoordenador() || $user->hasAccess('hours.view_all') || $isOwner || $isClienteOk || $isTeamTimesheet;
             if ($user && !$canView) {
                 return response()->json(['success' => false, 'message' => 'Acesso negado'], 403);
             }
@@ -1442,8 +1522,14 @@ class TimesheetController extends Controller
                 }
             }
 
-            // Resetar status para pendente se houve alterações após rejeição ou conflito
+            // Resetar status para pendente quando o usuário corrige um apontamento
+            // que foi rejeitado, conflitado ou marcado para ajuste. Edição = correção.
             if ($timesheet->status === Timesheet::STATUS_REJECTED) {
+                $validatedData['status'] = Timesheet::STATUS_PENDING;
+                $validatedData['rejection_reason'] = null;
+                $validatedData['reviewed_by'] = null;
+                $validatedData['reviewed_at'] = null;
+            } elseif ($timesheet->status === Timesheet::STATUS_ADJUSTMENT_REQUESTED) {
                 $validatedData['status'] = Timesheet::STATUS_PENDING;
                 $validatedData['rejection_reason'] = null;
                 $validatedData['reviewed_by'] = null;
@@ -1550,11 +1636,14 @@ class TimesheetController extends Controller
                     ->where('end_time', '>', $timesheet->start_time)
                     ->pluck('id');
 
+                $newlyConflictedIds = collect();
                 if ($overlappingIds->isNotEmpty()) {
                     $timesheet->status = Timesheet::STATUS_CONFLICTED;
                     $timesheet->save();
-                    Timesheet::whereIn('id', $overlappingIds)
+                    $newlyConflictedIds = Timesheet::whereIn('id', $overlappingIds)
                         ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED])
+                        ->pluck('id');
+                    Timesheet::whereIn('id', $newlyConflictedIds)
                         ->update(['status' => Timesheet::STATUS_CONFLICTED]);
                 }
             }
@@ -1563,6 +1652,17 @@ class TimesheetController extends Controller
             $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
 
             DB::commit();
+
+            // Notifica donos dos apontamentos marcados como conflito
+            if ($timesheet->status === Timesheet::STATUS_CONFLICTED) {
+                $timesheet->notifyOwnerOfStatus('CONFLITO');
+            }
+            if (isset($newlyConflictedIds)) {
+                foreach ($newlyConflictedIds as $cid) {
+                    $conflicted = Timesheet::find($cid);
+                    if ($conflicted) $conflicted->notifyOwnerOfStatus('CONFLITO');
+                }
+            }
 
             $timesheet->load(['user', 'customer', 'project']);
 
@@ -1651,7 +1751,16 @@ class TimesheetController extends Controller
             ], 422);
         }
 
+        // Captura user_id/date ANTES do delete pra resolver conflitos órfãos depois.
+        // Se o apontamento deletado estava em conflito com outro(s), o(s) outro(s)
+        // devem voltar a 'pending' agora que o conflito sumiu.
+        $tsUserId = $timesheet->user_id;
+        $tsDate   = $timesheet->date instanceof \Carbon\Carbon
+            ? $timesheet->date->format('Y-m-d')
+            : (string) $timesheet->date;
+
         $timesheet->delete();
+        $this->resolveStaleConflicts($tsUserId, $tsDate);
         $this->invalidateListCache('timesheets');
 
         return response()->json([
@@ -1684,6 +1793,59 @@ class TimesheetController extends Controller
      *     )
      * )
      */
+    /**
+     * Bulk update de cliente/projeto em vários apontamentos. Marca manual_project_edit=true
+     * em cada um pra que o reprocess do Movidesk não reverta a alteração manual.
+     */
+    public function bulkUpdateProjectCustomer(\Illuminate\Http\Request $request): \Illuminate\Http\JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Não autorizado'], 403);
+        }
+        $data = $request->validate([
+            'ids'         => 'required|array|min:1',
+            'ids.*'       => 'integer|exists:timesheets,id',
+            'customer_id' => 'nullable|integer|exists:customers,id',
+            'project_id'  => 'nullable|integer|exists:projects,id',
+        ]);
+        if (empty($data['customer_id']) && empty($data['project_id'])) {
+            return response()->json(['message' => 'Informe customer_id e/ou project_id'], 422);
+        }
+
+        // Se projeto for fornecido, descobrir o customer dele e validar coerência
+        $projectCustomerId = null;
+        if (!empty($data['project_id'])) {
+            $project = \App\Models\Project::find($data['project_id']);
+            if (!$project) {
+                return response()->json(['message' => 'Projeto não encontrado'], 422);
+            }
+            $projectCustomerId = (int) $project->customer_id;
+            if (!empty($data['customer_id']) && (int) $data['customer_id'] !== $projectCustomerId) {
+                return response()->json([
+                    'message' => 'Projeto não pertence ao cliente informado',
+                ], 422);
+            }
+        }
+
+        $finalCustomerId = $data['customer_id'] ?? $projectCustomerId;
+        $finalProjectId  = $data['project_id'] ?? null;
+
+        $updated = 0;
+        foreach (Timesheet::whereIn('id', $data['ids'])->get() as $ts) {
+            if ($finalCustomerId !== null) $ts->customer_id = $finalCustomerId;
+            if ($finalProjectId  !== null) $ts->project_id  = $finalProjectId;
+            // Trava manual: sync do Movidesk não sobrescreve mais cliente/projeto.
+            $ts->manual_project_edit = true;
+            if ($ts->isDirty()) {
+                $ts->save(); // dispara observer pra log de auditoria
+                $updated++;
+            }
+        }
+
+        return response()->json(['success' => true, 'updated' => $updated]);
+    }
+
     public function bulkExtraPct(\Illuminate\Http\Request $request): \Illuminate\Http\JsonResponse
     {
         $user = Auth::user();
@@ -2260,16 +2422,29 @@ class TimesheetController extends Controller
             ->orderBy('timesheets.ticket')
             ->get();
 
+        // Saldos iniciais cadastrados pra esse cliente — somam SOMENTE no
+        // lifetime_minutes (histórico), não no period_minutes (saldo é
+        // histórico anterior à entrada do ticket no Minutor).
+        $initialByTicket = \DB::table('ticket_initial_balances')
+            ->whereNull('deleted_at')
+            ->where('customer_id', $customerId)
+            ->whereIn('ticket', $rows->pluck('ticket')->all())
+            ->pluck('initial_minutes', 'ticket');
+
         return response()->json([
-            'tickets' => $rows->map(fn ($r) => [
-                'ticket'           => $r->ticket,
-                'title'            => $r->title,
-                'requester'        => $r->requester,
-                'period_minutes'   => (int) $r->period_minutes,
-                'period_count'     => (int) $r->period_count,
-                'lifetime_minutes' => (int) $r->lifetime_minutes,
-                'lifetime_count'   => (int) $r->lifetime_count,
-            ])->values(),
+            'tickets' => $rows->map(function ($r) use ($initialByTicket) {
+                $initial = (int) ($initialByTicket[$r->ticket] ?? 0);
+                return [
+                    'ticket'           => $r->ticket,
+                    'title'            => $r->title,
+                    'requester'        => $r->requester,
+                    'period_minutes'   => (int) $r->period_minutes,
+                    'period_count'     => (int) $r->period_count,
+                    'lifetime_minutes' => (int) $r->lifetime_minutes + $initial,
+                    'lifetime_count'   => (int) $r->lifetime_count,
+                    'initial_minutes'  => $initial,
+                ];
+            })->values(),
         ]);
     }
 
@@ -2618,24 +2793,17 @@ class TimesheetController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        $ids              = $request->input('ids', []);
-        $defaultProjectId = \App\Models\SystemSetting::get('movidesk_default_project_id');
-
+        $ids             = $request->input('ids', []);
         $movideskOrigins = ['movidesk', 'webhook'];
 
-        if (!empty($ids)) {
-            $timesheets = Timesheet::whereIn('id', array_map('intval', $ids))
-                ->whereIn('origin', $movideskOrigins)
-                ->whereNotNull('ticket')
-                ->whereNotNull('movidesk_appointment_id')
-                ->get();
-        } else {
-            // Sem IDs: prioriza apontamentos que caíram no PROJETO PADRÃO
-            // (esses são os candidatos a re-resolver depois de ajustes feitos
-            // no Movidesk, como amarrar pessoa→organização ou dept→empresa).
-            // Invalida o cache de departamento Movidesk antes do reprocess
-            // para respeitar mudanças recentes feitas no Movidesk.
+        // Sem IDs: roda o MESMO fluxo do cron (movidesk:sync) — fetch tickets
+        // atualizados desde o último sync, importa novos, atualiza existentes
+        // e detecta órfãos. Antes o botão só re-resolvia timesheets do PROJETO
+        // PADRÃO (limit 50) — divergia do automático e deixava de pegar tudo.
+        if (empty($ids)) {
             try {
+                // Invalida cache de departamento Movidesk antes do sync — respeita
+                // mudanças recentes (pessoa→organização, dept→empresa).
                 $store = \Illuminate\Support\Facades\Cache::getStore();
                 if (method_exists($store, 'getRedis')) {
                     $redis = $store->getRedis();
@@ -2645,20 +2813,35 @@ class TimesheetController extends Controller
                     }
                 }
             } catch (\Throwable $e) {
-                // Cache driver sem suporte a keys() — sem invalidação manual.
-                // Cada entrada expira em 1h naturalmente.
+                // Cache driver sem suporte a keys() — cada entrada expira em 1h.
             }
 
-            $query = Timesheet::whereIn('origin', $movideskOrigins)
-                ->whereNotNull('ticket')
-                ->whereNotNull('movidesk_appointment_id');
-
-            if ($defaultProjectId) {
-                $query->where('project_id', (int) $defaultProjectId);
+            // Sync completo processa 100+ tickets e leva minutos — não cabe num
+            // request HTTP (nginx tem proxy_read_timeout=120s). Despacha pra
+            // fila e retorna imediatamente; o worker (minutor-queue) executa
+            // em background e o usuário vê o resultado ao recarregar a tela.
+            try {
+                \Illuminate\Support\Facades\Artisan::queue('movidesk:sync');
+                return response()->json([
+                    'message' => 'Reprocessamento iniciado em segundo plano. Os apontamentos serão atualizados em alguns minutos — recarregue a tela em ~3 min.',
+                    'updated' => 0,
+                    'skipped' => 0,
+                    'errors'  => 0,
+                    'queued'  => true,
+                ]);
+            } catch (\Throwable $e) {
+                Log::error('[Reprocess Movidesk] Falha ao enfileirar sync', ['error' => $e->getMessage()]);
+                return response()->json(['message' => 'Erro ao iniciar sync. Verifique os logs.', 'updated' => 0, 'skipped' => 0, 'errors' => 1], 500);
             }
-
-            $timesheets = $query->orderByDesc('id')->limit(50)->get();
         }
+
+        // Com IDs: reprocess individual (caso o usuário queira forçar apenas
+        // os apontamentos selecionados via UI).
+        $timesheets = Timesheet::whereIn('id', array_map('intval', $ids))
+            ->whereIn('origin', $movideskOrigins)
+            ->whereNotNull('ticket')
+            ->whereNotNull('movidesk_appointment_id')
+            ->get();
 
         if ($timesheets->isEmpty()) {
             return response()->json(['message' => 'Nenhum apontamento para reprocessar.', 'updated' => 0, 'skipped' => 0, 'errors' => 0]);

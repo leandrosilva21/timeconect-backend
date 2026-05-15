@@ -475,7 +475,10 @@ class ContractController extends Controller
         $projectCards = $projects->map(fn($p) => $this->formatProjectCard($p, (float) ($timesheetSums[$p->id] ?? 0)));
 
         // ── Coordenadores ativos (apenas projetos — sustentação tem colunas próprias)
-        // Inclui: coordenadores com coordinator_type=projetos + admins definidos em algum projeto
+        // Inclui:
+        //  - coordenadores com coordinator_type=projetos
+        //  - admins definidos em algum projeto via project_coordinators (M2M)
+        //  - usuários referenciados como kanban_coordinator_override_id em algum projeto
         $coordinators = User::where('enabled', true)
             ->where(function ($q) {
                 $q->where(function ($inner) {
@@ -484,6 +487,11 @@ class ContractController extends Controller
                 })->orWhere(function ($inner) {
                     $inner->where('type', 'admin')
                           ->whereHas('coordinatorProjects');
+                })->orWhereExists(function ($sub) {
+                    $sub->select(DB::raw(1))
+                        ->from('projects')
+                        ->whereColumn('projects.kanban_coordinator_override_id', 'users.id')
+                        ->whereNull('projects.deleted_at');
                 });
             })
             ->select('id', 'name')
@@ -905,11 +913,12 @@ class ContractController extends Controller
         }
 
         $contractRequest->update([
-            'req_decision'         => $decision,
-            'linked_contract_id'   => $linkedContractId,
-            'linked_project_id'    => $linkedProjectId,
-            'linked_coordinator_id'=> $linkedCoordinatorId,
-            'kanban_column'        => $toColumn,
+            'req_decision'          => $decision,
+            'req_decided_at'        => $contractRequest->req_decided_at ?? now(),
+            'linked_contract_id'    => $linkedContractId,
+            'linked_project_id'     => $linkedProjectId,
+            'linked_coordinator_id' => $linkedCoordinatorId,
+            'kanban_column'         => $toColumn,
         ]);
 
         \App\Models\ContractRequestKanbanLog::create([
@@ -1148,6 +1157,7 @@ class ContractController extends Controller
             'expected_end_date'     => $project->expected_end_date,
             'coordinator_ids'       => $project->coordinators->pluck('id'),
             'coordinators'          => $project->coordinators->pluck('name'),
+            'kanban_coordinator_override_id' => $project->kanban_coordinator_override_id,
             'consultants'           => $project->consultants->pluck('name'),
             'executivo_conta_name'  => $project->executivoConta?->name ?? $project->customer?->executive?->name,
             'contract_type'         => $project->contractType?->name,

@@ -2,8 +2,11 @@
 
 namespace App\Observers;
 
+use App\Models\Customer;
+use App\Models\Project;
 use App\Models\Timesheet;
 use App\Models\TimesheetLog;
+use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
@@ -20,8 +23,13 @@ class TimesheetObserver
 
     /**
      * Campos cujas edições manuais devem proteger o apontamento contra reprocess do Movidesk.
+     * Cobre todos os campos de conteúdo — alteração via UI trava sobrescrita pelo sync.
      */
-    private const PROTECTED_ON_MANUAL_EDIT = ['customer_id', 'project_id'];
+    private const PROTECTED_ON_MANUAL_EDIT = [
+        'customer_id', 'project_id',
+        'date', 'start_time', 'end_time',
+        'effort_minutes', 'observation',
+    ];
 
     public function updated(Timesheet $timesheet): void
     {
@@ -50,10 +58,27 @@ class TimesheetObserver
                 ]);
             }
         }
+
+        // Quando data/horário muda, apontamentos conflitados do mesmo user/data
+        // podem ter deixado de ter sobreposição — reverte pra pending automaticamente.
+        // Inclui também o original (se a data anterior mudou).
+        $resolveFields = ['date', 'start_time', 'end_time', 'customer_id'];
+        if (!empty(array_intersect($resolveFields, array_keys($changes)))) {
+            $oldDate = $timesheet->getOriginal('date');
+            $newDate = $timesheet->date;
+            $this->resolveConflictsForDate($timesheet->user_id, $newDate);
+            if ($oldDate && $oldDate !== $newDate) {
+                $this->resolveConflictsForDate($timesheet->user_id, $oldDate);
+            }
+        }
     }
 
     public function deleted(Timesheet $timesheet): void
     {
+        // Reavalia conflitos do user/data — o apontamento deletado pode ter
+        // sido a fonte do conflito; outros marcados conflicted voltam pra pending.
+        $this->resolveConflictsForDate($timesheet->user_id, $timesheet->date);
+
         $this->createLog($timesheet, 'deleted', [
             'deleted_at' => ['old' => null, 'new' => optional($timesheet->deleted_at)->toIso8601String() ?? now()->toIso8601String()],
         ], $this->detectSource($timesheet));
@@ -64,6 +89,32 @@ class TimesheetObserver
         $this->createLog($timesheet, 'restored', [
             'deleted_at' => ['old' => optional($timesheet->getOriginal('deleted_at'))->toString() ?? 'unknown', 'new' => null],
         ], $this->detectSource($timesheet));
+    }
+
+    /**
+     * Re-checa conflitos do user/data e marca como pending os que não têm
+     * mais sobreposição. Idempotente — se o status já é pending, no-op.
+     * Não dispara recursão infinita porque Timesheet::resolveStaleConflicts
+     * só processa status=conflicted; depois do save vira pending e a próxima
+     * passagem do observer não vê nada pra processar.
+     */
+    private function resolveConflictsForDate(?int $userId, $date): void
+    {
+        if (!$userId || !$date) return;
+        $dateStr = $date instanceof \Carbon\Carbon
+            ? $date->format('Y-m-d')
+            : (is_string($date) ? substr($date, 0, 10) : (string) $date);
+        if (!$dateStr) return;
+        try {
+            Timesheet::resolveStaleConflicts($userId, $dateStr);
+        } catch (\Throwable $e) {
+            // Não bloqueia o salvamento principal por causa do resolve
+            \Illuminate\Support\Facades\Log::warning('[TimesheetObserver] resolveStaleConflicts falhou', [
+                'user_id' => $userId,
+                'date'    => $dateStr,
+                'error'   => $e->getMessage(),
+            ]);
+        }
     }
 
     private function buildDiff(Timesheet $timesheet): array
@@ -78,12 +129,45 @@ class TimesheetObserver
             if ($oldValue == $newValue) {
                 continue;
             }
-            $diff[$field] = [
+            $entry = [
                 'old' => $this->normalize($oldValue),
                 'new' => $this->normalize($newValue),
             ];
+            // Resolve label humano pra campos FK (IDs).
+            // Grava no log na hora — preserva nome no momento da mudança
+            // (auditoria não muda se projeto for renomeado depois).
+            $labels = $this->resolveFkLabels($field, $oldValue, $newValue);
+            if ($labels !== null) {
+                $entry['old_label'] = $labels['old'];
+                $entry['new_label'] = $labels['new'];
+            }
+            $diff[$field] = $entry;
         }
         return $diff;
+    }
+
+    /**
+     * Para campos FK, busca os labels humanos (nome/código). Retorna
+     * ['old' => '...', 'new' => '...'] ou null se o campo não for FK.
+     */
+    private function resolveFkLabels(string $field, mixed $oldId, mixed $newId): ?array
+    {
+        $resolver = match ($field) {
+            'project_id' => function ($id) {
+                if (!$id) return null;
+                $p = Project::find($id);
+                return $p ? trim(($p->code ? $p->code . ' — ' : '') . $p->name) : null;
+            },
+            'customer_id'    => fn ($id) => $id ? optional(Customer::find($id))->name : null,
+            'user_id'        => fn ($id) => $id ? optional(User::find($id))->name    : null,
+            'reviewed_by'    => fn ($id) => $id ? optional(User::find($id))->name    : null,
+            default          => null,
+        };
+        if (!$resolver) return null;
+        return [
+            'old' => $resolver($oldId),
+            'new' => $resolver($newId),
+        ];
     }
 
     private function normalize(mixed $value): mixed

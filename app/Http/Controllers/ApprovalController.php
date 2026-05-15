@@ -147,9 +147,61 @@ class ApprovalController extends Controller
 
             $timesheets = $query->paginate($perPage);
 
+            // Total acumulado por ticket (lifetime, mesmo cliente) — coluna "Consumo do Ticket"
+            $ticketsByCustomer = [];
+            foreach ($timesheets->items() as $ts) {
+                $t = $ts->ticket;
+                if (!$t || !$ts->customer_id) continue;
+                if (!preg_match('/^\d{5}$/', (string) $t)) continue;
+                $ticketsByCustomer[$ts->customer_id][$t] = true;
+            }
+            $ticketTotalsMap = [];
+            if (!empty($ticketsByCustomer)) {
+                // DB::table não aplica global scope de soft-delete; sem o
+                // whereNull('deleted_at') o "Hist. de Hs Ticket" continua
+                // somando apontamentos já soft-deletados.
+                $totalsQ = DB::table('timesheets')
+                    ->whereNull('deleted_at')
+                    ->where('status', '!=', 'rejected')
+                    ->whereRaw("ticket ~ '^[0-9]{5}$'");
+                $totalsQ->where(function ($q) use ($ticketsByCustomer) {
+                    foreach ($ticketsByCustomer as $cid => $tickets) {
+                        $q->orWhere(function ($qq) use ($cid, $tickets) {
+                            $qq->where('customer_id', $cid)->whereIn('ticket', array_keys($tickets));
+                        });
+                    }
+                });
+                foreach ($totalsQ->groupBy('customer_id', 'ticket')->selectRaw('customer_id, ticket, SUM(effort_minutes) AS total')->get() as $r) {
+                    $ticketTotalsMap[$r->customer_id . ':' . $r->ticket] = (int) $r->total;
+                }
+
+                // Soma o saldo inicial cadastrado (ticket_initial_balances).
+                $initQ = DB::table('ticket_initial_balances')
+                    ->whereNull('deleted_at')
+                    ->where(function ($q) use ($ticketsByCustomer) {
+                        foreach ($ticketsByCustomer as $cid => $tickets) {
+                            $q->orWhere(function ($qq) use ($cid, $tickets) {
+                                $qq->where('customer_id', $cid)->whereIn('ticket', array_keys($tickets));
+                            });
+                        }
+                    });
+                foreach ($initQ->select('customer_id', 'ticket', 'initial_minutes')->get() as $r) {
+                    $key = $r->customer_id . ':' . $r->ticket;
+                    $ticketTotalsMap[$key] = ($ticketTotalsMap[$key] ?? 0) + (int) $r->initial_minutes;
+                }
+            }
+            $items = collect($timesheets->items())->map(function ($ts) use ($ticketTotalsMap) {
+                $arr = $ts->toArray();
+                $tk = (string) ($ts->ticket ?? '');
+                $arr['ticket_total_minutes'] = ($tk !== '' && preg_match('/^\d{5}$/', $tk) && $ts->customer_id)
+                    ? ($ticketTotalsMap[$ts->customer_id . ':' . $tk] ?? null)
+                    : null;
+                return $arr;
+            })->all();
+
             return response()->json([
                 'success' => true,
-                'data' => $timesheets->items(),
+                'data' => $items,
                 'pagination' => [
                     'current_page' => $timesheets->currentPage(),
                     'last_page' => $timesheets->lastPage(),
@@ -571,6 +623,16 @@ class ApprovalController extends Controller
         ->orderBy('date', 'desc')
         ->orderBy('created_at', 'desc');
 
+        // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
+        if ($request && $request->get('scope') === 'sustentacao') {
+            $scopedIds = app(\App\Services\SustentacaoScopeService::class)->projectIds();
+            if (empty($scopedIds)) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('project_id', $scopedIds);
+            }
+        }
+
         // Se não é admin, filtrar apenas timesheets dos projetos que pode aprovar
         if (!$user->isAdmin()) {
             $isSustentacao = $user->isCoordenador() && $user->coordinator_type === 'sustentacao';
@@ -605,6 +667,16 @@ class ApprovalController extends Controller
         ->where('status', Expense::STATUS_PENDING)
         ->orderBy('expense_date', 'desc')
         ->orderBy('created_at', 'desc');
+
+        // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
+        if ($request && $request->get('scope') === 'sustentacao') {
+            $scopedIds = app(\App\Services\SustentacaoScopeService::class)->projectIds();
+            if (empty($scopedIds)) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('project_id', $scopedIds);
+            }
+        }
 
         // Se não é admin, filtrar apenas despesas dos projetos que pode aprovar
         if (!$user->isAdmin()) {
@@ -647,6 +719,11 @@ class ApprovalController extends Controller
         // Filtro por projeto
         if ($request->filled('project_id')) {
             $query->where('project_id', $request->get('project_id'));
+        }
+
+        // Filtro por ticket (Movidesk)
+        if ($request->filled('ticket')) {
+            $query->where('ticket', trim((string) $request->get('ticket')));
         }
 
         // Filtro por usuário (colaborador)

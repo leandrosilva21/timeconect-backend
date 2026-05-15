@@ -3,18 +3,28 @@
 namespace App\Models;
 
 use App\Observers\TimesheetObserver;
+use App\Notifications\TimesheetStatusNotification;
+use App\Services\TimesheetN8nNotifier;
 use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
 #[ObservedBy([TimesheetObserver::class])]
 class Timesheet extends Model
 {
     use HasFactory, SoftDeletes;
+
+    /**
+     * Source explícito pra o TimesheetObserver registrar no log de auditoria.
+     * Propriedade pública (não atributo Eloquent) — não vai pro UPDATE SQL.
+     * Setar antes do save() quando origem != contexto padrão (ex: sync Movidesk).
+     */
+    public ?string $_logSource = null;
 
     /**
      * Status constants
@@ -403,7 +413,17 @@ class Timesheet extends Model
         $this->reviewed_at = now();
         $this->rejection_reason = $reason;
 
-        return $this->save();
+        $saved = $this->save();
+
+        if ($saved) {
+            $timesheet = $this;
+            DB::afterCommit(function () use ($timesheet, $reason) {
+                app(TimesheetN8nNotifier::class)->notify($timesheet, 'REJEITADO', $reason);
+                $timesheet->notifyOwnerOfStatus('REJEITADO', $reason);
+            });
+        }
+
+        return $saved;
     }
 
     /**
@@ -452,7 +472,40 @@ class Timesheet extends Model
         $this->reviewed_at = now();
         $this->rejection_reason = $reason;
 
-        return $this->save();
+        $saved = $this->save();
+
+        if ($saved) {
+            $timesheet = $this;
+            DB::afterCommit(function () use ($timesheet, $reason) {
+                app(TimesheetN8nNotifier::class)->notify($timesheet, 'AJUSTE', $reason);
+                $timesheet->notifyOwnerOfStatus('AJUSTE', $reason);
+            });
+        }
+
+        return $saved;
+    }
+
+    /**
+     * Envia e-mail para o dono do apontamento avisando da mudança de status.
+     * Funciona em paralelo ao webhook n8n (caso de redundância); o destino é
+     * sempre o user.email do timesheet — fix da reclamação onde o n8n estava
+     * caindo no admin em vez do dono.
+     */
+    public function notifyOwnerOfStatus(string $statusKey, ?string $reason = null): void
+    {
+        $owner = $this->user;
+        if (!$owner || !$owner->email) {
+            return;
+        }
+        try {
+            $owner->notify(new TimesheetStatusNotification($this, $statusKey, $reason));
+        } catch (\Throwable $e) {
+            \Log::warning('notifyOwnerOfStatus: falha ao enviar', [
+                'timesheet_id' => $this->id,
+                'status'       => $statusKey,
+                'error'        => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -560,9 +613,19 @@ class Timesheet extends Model
     }
 
     /**
-     * Reavalia todos os timesheets conflitados do usuário na data informada.
-     * Conflito só vale entre apontamentos do mesmo cliente — se não houver
-     * mais sobreposição com outro do mesmo cliente, volta para pending.
+     * Reavalia timesheets conflitados do usuário na data informada.
+     *
+     * Regra: um apontamento só permanece em `conflicted` enquanto houver
+     * OUTRO apontamento do MESMO cliente/data sobreposto que AINDA NÃO
+     * TENHA SIDO TRATADO MANUALMENTE pelo admin/coord.
+     *
+     * "Tratado manualmente" = qualquer status diferente de pending/conflicted
+     * (approved, rejected, adjustment_requested, internal, released). Esses
+     * já passaram por decisão humana — não fazem mais sentido travar o par
+     * como conflicted indefinidamente.
+     *
+     * Se o overlap restante já foi tratado (ou sumiu), volta pra `pending`
+     * pra que o ciclo de aprovação continue.
      */
     public static function resolveStaleConflicts(int $userId, string $date): void
     {
@@ -577,7 +640,10 @@ class Timesheet extends Model
                     ->where('customer_id', $ts->customer_id)
                     ->where('date', $ts->date)
                     ->where('id', '!=', $ts->id)
-                    ->whereNotIn('status', [self::STATUS_REJECTED])
+                    // Considera "em disputa" SOMENTE outro pending ou conflicted.
+                    // Approved/rejected/adjustment_requested/internal/released =
+                    // decisão humana tomada, libera o par.
+                    ->whereIn('status', [self::STATUS_PENDING, self::STATUS_CONFLICTED])
                     ->whereNotNull('start_time')
                     ->whereNotNull('end_time')
                     ->where('start_time', '<', $ts->end_time)

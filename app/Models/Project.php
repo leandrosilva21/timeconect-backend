@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Scopes\HideAusterFrozenScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -12,6 +13,12 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class Project extends Model
 {
     use HasFactory, SoftDeletes;
+
+    // Nota: o global scope HideAusterFrozenScope foi removido por decisão de produto
+    // (12/05/2026). Esses subprojetos voltam a aparecer em listagens, mas continuam
+    // sendo ignorados nos cálculos de consumed_hours do pai via isAusterFrozen() +
+    // `continue` nos loops (ver getGeneralHoursBalance, index gestao mode, etc).
+    // O frontend marca esses projetos com badge "Histórico" usando o accessor abaixo.
 
     // Contract type constants removidos - agora vem da tabela contract_types
 
@@ -107,12 +114,19 @@ class Project extends Model
         'contract_request_id',
         'is_investimento_comercial',
         'categoria_interna',
+        'kanban_coordinator_override_id',
+        'movidesk_integration_enabled',
     ];
 
     /**
      * Atributos calculados incluídos automaticamente no JSON.
      */
-    protected $appends = ['status_display', 'contract_type_display', 'is_operational'];
+    protected $appends = ['status_display', 'contract_type_display', 'is_operational', 'is_auster_frozen'];
+
+    public function getIsAusterFrozenAttribute(): bool
+    {
+        return $this->isAusterFrozen();
+    }
 
     /**
      * The attributes that should be cast.
@@ -138,6 +152,7 @@ class Project extends Model
         'allow_manual_timesheets' => 'boolean',
         'allow_negative_balance' => 'boolean',
         'is_investimento_comercial' => 'boolean',
+        'movidesk_integration_enabled' => 'boolean',
         'save_erpserv' => 'decimal:2',
         'start_date' => 'date:Y-m-d',
         'expected_end_date' => 'date:Y-m-d',
@@ -290,6 +305,19 @@ class Project extends Model
     public function executivoConta(): BelongsTo
     {
         return $this->belongsTo(User::class, 'executivo_conta_id');
+    }
+
+    /**
+     * Coordenador "override" para projetos de sustentação que devem ser
+     * gerenciados por outro coordenador (admin/coord de projetos).
+     * Quando preenchido:
+     *  - Card do contrato migra da fila de sustentação pra coluna desse coord no Kanban
+     *  - Projeto some das abas Apontamentos/Despesas/Aprovações do Portal /sustentacao
+     *  - Aprovações globais e dashboards permanecem inalterados
+     */
+    public function kanbanOverrideCoordinator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'kanban_coordinator_override_id');
     }
 
     public function vendedor(): BelongsTo
@@ -743,8 +771,12 @@ class Project extends Model
         // Horas de coordenação sobre as horas apontadas deste projeto
         $coordinationHours = $this->calculateCoordinationHours($totalLoggedHours);
 
-        $initialBalance = (float) ($this->initial_hours_balance ?? 0);
-        $balance = ($soldHours + $contributionHours) - ($totalLoggedHours + $coordinationHours) + $initialBalance;
+        $initialBalance  = (float) ($this->initial_hours_balance ?? 0);
+        $initialConsumed = (float) ($this->initial_hours_consumed ?? 0);
+        // initial_hours_consumed: horas já consumidas antes do projeto entrar no Minutor (saldo
+        // já queimado pelo cliente). Sem essa subtração o show() devolvia o saldo inflado e o
+        // modal de subprojeto autorizava criação acima do realmente disponível.
+        $balance = ($soldHours + $contributionHours) - ($totalLoggedHours + $coordinationHours) + $initialBalance - $initialConsumed;
 
         // Sempre incluir projetos filhos no cálculo
         if ($this->hasChildProjects()) {
@@ -757,9 +789,14 @@ class Project extends Model
                 // Verificar se o projeto filho é do tipo "Fechado"
                 $isClosedContract = $childProject->contractType &&
                                     strtolower(trim($childProject->contractType->name)) === 'fechado';
+                $childCode = (string) ($childProject->contractType->code ?? '');
+                $childName = $childProject->contractType ? strtolower(trim($childProject->contractType->name)) : '';
+                $isBhFixoChild = $childCode === 'fixed_hours' || $childName === 'banco de horas fixo';
 
-                if ($isClosedContract) {
-                    // Contratos fechados: subtrai horas vendidas + aportes (valor fixo)
+                if ($isClosedContract || $isBhFixoChild) {
+                    // Fechado E Banco de Horas Fixo (como subprojeto): comprometem
+                    // horas vendidas + aportes do filho no saldo do pai, independente
+                    // do consumo efetivo.
                     $childTotalHours = $childProject->getTotalAvailableHours();
                     $balance -= $childTotalHours;
                 } elseif ($childProject->isBankHoursMonthly()) {
@@ -781,14 +818,15 @@ class Project extends Model
                         + $childInitialBalance;
                     $balance -= $childBalance;
                 } else {
-                    // Outros tipos de Banco de Horas
+                    // Demais tipos: subtrai apenas o efetivamente apontado + initial_consumed
                     $childQuery = $childProject->timesheets()->where('status', '!=', 'rejected');
                     if ($excludeTimesheetId) {
                         $childQuery->where('id', '!=', $excludeTimesheetId);
                     }
                     $childLoggedHours = round(($childQuery->sum('effort_minutes') ?? 0) / 60, 2);
+                    $childInitialConsumed = (float) ($childProject->initial_hours_consumed ?? 0);
                     $childCoordinationHours = $childProject->calculateCoordinationHours($childLoggedHours);
-                    $balance -= ($childLoggedHours + $childCoordinationHours);
+                    $balance -= ($childLoggedHours + $childInitialConsumed + $childCoordinationHours);
                 }
             }
         }
@@ -840,8 +878,9 @@ class Project extends Model
 
         // Calcular saldo base do projeto atual
         // IMPORTANTE: Para Banco de Horas Mensal, soldHours já é accumulated até o mês anterior
-        $initialBalance = (float) ($this->initial_hours_balance ?? 0);
-        $balance = ($soldHours + $contributionHours) - $totalLoggedHours + $initialBalance;
+        $initialBalance  = (float) ($this->initial_hours_balance ?? 0);
+        $initialConsumed = (float) ($this->initial_hours_consumed ?? 0);
+        $balance = ($soldHours + $contributionHours) - $totalLoggedHours + $initialBalance - $initialConsumed;
 
         // Sempre incluir projetos filhos no cálculo
         if ($this->hasChildProjects()) {
@@ -851,13 +890,17 @@ class Project extends Model
             foreach ($this->childProjects as $childProject) {
                 if ($childProject->isAusterFrozen()) continue;
 
-                // Verificar se o projeto filho é do tipo "Fechado"
+                // Verificar se o projeto filho é do tipo "Fechado" ou "Banco de Horas Fixo"
                 $isClosedContract = $childProject->contractType &&
                                     strtolower(trim($childProject->contractType->name)) === 'fechado';
+                $childCode = (string) ($childProject->contractType->code ?? '');
+                $childName = $childProject->contractType ? strtolower(trim($childProject->contractType->name)) : '';
+                $isBhFixoChild = $childCode === 'fixed_hours' || $childName === 'banco de horas fixo';
 
-                if ($isClosedContract) {
-                    // Para contratos fechados: subtrair (horas vendidas + aportes) do projeto filho
-                    // Usar getTotalAvailableHours() que já contempla novos aportes + fallback legado
+                if ($isClosedContract || $isBhFixoChild) {
+                    // Fechado E Banco de Horas Fixo (como subprojeto): comprometem
+                    // horas vendidas + aportes do filho no saldo do pai, independente
+                    // do consumo efetivo.
                     $childTotalHours = $childProject->getTotalAvailableHours();
                     $balance -= $childTotalHours;
                 } elseif ($childProject->isBankHoursMonthly()) {
@@ -885,7 +928,7 @@ class Project extends Model
                     $childBalance = ($childSoldHours + $childContributionHours) - $childLoggedHours + $childInitialBalance;
                     $balance -= $childBalance;
                 } else {
-                    // Para outros tipos: subtrair normalmente pelas horas apontadas (excluindo mês atual e rejeitados)
+                    // Para outros tipos (inclui Banco de Horas Fixo): subtrair apontadas + initial_hours_consumed
                     $childQuery = $childProject->timesheets()
                         ->where('status', '!=', 'rejected')
                         ->where('date', '<=', $endOfLastMonth->format('Y-m-d'));
@@ -896,7 +939,8 @@ class Project extends Model
 
                     $childLoggedMinutes = $childQuery->sum('effort_minutes') ?? 0;
                     $childLoggedHours = round($childLoggedMinutes / 60, 2);
-                    $balance -= $childLoggedHours;
+                    $childInitialConsumed = (float) ($childProject->initial_hours_consumed ?? 0);
+                    $balance -= ($childLoggedHours + $childInitialConsumed);
                 }
             }
         }
@@ -945,13 +989,17 @@ class Project extends Model
     /**
      * Subprojetos da Auster com início anterior a 01/05/2025 são somente-leitura histórica:
      * não devem contribuir para saldos, totais ou custos do projeto pai.
+     *
+     * Nota: o global scope HideAusterFrozenScope já filtra esses projetos das queries
+     * por padrão. Este método é mantido como guarda defensiva (caso alguém carregue
+     * via withoutGlobalScope) e como fonte da regra para indicadores futuros.
      */
     public function isAusterFrozen(): bool
     {
-        return $this->customer_id === 220
+        return $this->customer_id === HideAusterFrozenScope::AUSTER_CUSTOMER_ID
             && $this->parent_project_id !== null
             && $this->start_date !== null
-            && \Carbon\Carbon::parse($this->start_date)->lt(\Carbon\Carbon::parse('2025-05-01'));
+            && \Carbon\Carbon::parse($this->start_date)->lt(\Carbon\Carbon::parse(HideAusterFrozenScope::FREEZE_DATE));
     }
 
     /**

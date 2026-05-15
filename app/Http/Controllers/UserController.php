@@ -123,12 +123,15 @@ class UserController extends Controller
 
         // Se não é admin nem tem permissão para ver/editar/resetar todos, só pode ver próprio perfil
         // Coordenadores podem ver todos os usuários (necessário para filtros de aprovações/apontamentos)
-        $canSeeAll = $user->isAdmin()
+        // Consultor NUNCA vê outros usuários — mesmo com extra_permissions; rotina não pertence ao escopo dele.
+        $canSeeAll = !$user->isConsultor() && (
+            $user->isAdmin()
             || $user->isCoordenador()
             || $user->hasAccess('users.view_all')
             || $user->hasAccess('users.update')
             || $user->hasAccess('users.reset_password')
-            || $user->hasAccess('users.create');
+            || $user->hasAccess('users.create')
+        );
         if (!$canSeeAll) {
             $query->where('id', $user->id);
         }

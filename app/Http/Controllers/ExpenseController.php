@@ -237,6 +237,16 @@ class ExpenseController extends Controller
 
         $query = Expense::with(['user', 'project.customer', 'project.contractType', 'project.serviceType', 'category', 'reviewedBy']);
 
+        // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
+        if ($request->get('scope') === 'sustentacao') {
+            $scopedIds = app(\App\Services\SustentacaoScopeService::class)->projectIds();
+            if (empty($scopedIds)) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('expenses.project_id', $scopedIds);
+            }
+        }
+
         // Controle de visibilidade por perfil
         if ($user->isCliente()) {
             // Cliente vê apenas despesas do seu cliente, somente pendentes e aprovadas

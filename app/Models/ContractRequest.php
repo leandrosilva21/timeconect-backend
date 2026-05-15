@@ -17,10 +17,12 @@ class ContractRequest extends Model
         'descricao', 'cenario_atual', 'cenario_desejado',
         'status', 'kanban_column', 'reviewed_by_id', 'reviewed_at', 'notas_revisao', 'contract_id',
         'linked_contract_id', 'linked_coordinator_id', 'linked_project_id', 'req_decision',
+        'req_decided_at',
     ];
 
     protected $casts = [
-        'reviewed_at' => 'datetime',
+        'reviewed_at'    => 'datetime',
+        'req_decided_at' => 'datetime',
         'created_at'  => 'datetime',
         'updated_at'  => 'datetime',
         'deleted_at'  => 'datetime',

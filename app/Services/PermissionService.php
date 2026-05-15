@@ -47,18 +47,64 @@ class PermissionService
     }
 
     /**
+     * Lista MASTER de todas as permissões existentes no sistema, mesmo que
+     * não façam parte da base de nenhum perfil — usadas como "extras" via
+     * usuário ou grupo. Esta é a fonte de verdade exposta na UI de grupos.
+     */
+    private const ALL_AVAILABLE = [
+        // Dashboard
+        'dashboard.view', 'dashboard.manager', 'dashboard.consultant',
+        // Dashboards (granular por tipo de contrato)
+        'dashboards.view', 'dashboards.bank_hours_fixed.view',
+        'dashboards.bank_hours_monthly.view', 'dashboards.on_demand.view',
+        'dashboards.fechado.view',
+        // Banco de Horas
+        'hora_banco.view',
+        // Contratos
+        'contracts.view', 'contracts.manage',
+        // Projetos
+        'projects.view', 'projects.create', 'projects.update', 'projects.delete',
+        'projects.assign_consultants', 'projects.change_status', 'projects.view_financial',
+        // Gestão de Projetos (acesso ao módulo Gestão de Projetos)
+        'gestao_projetos.view', 'gestao_projetos.update',
+        // Fechamento
+        'fechamento.view', 'fechamento.manage', 'fechamento.fechar', 'fechamento.reabrir',
+        // Apontamentos
+        'timesheets.view', 'timesheets.manage', 'timesheets.approve',
+        'timesheets.view_project_full', 'timesheets.view_project_summary',
+        'hours.view_all', 'hours.update_all', 'hours.delete_all',
+        // Despesas
+        'expenses.view', 'expenses.manage', 'expenses.approve', 'expenses.reject',
+        'expenses.view_all', 'expenses.pay',
+        // Aprovações
+        'approvals.view', 'approvals.manage',
+        // Clientes
+        'customers.view', 'customers.create', 'customers.update', 'customers.delete', 'customers.manage',
+        // Cadastros (acesso ao CRUD de cada cadastro)
+        'services.manage', 'executives.manage', 'groups.manage', 'holidays.manage',
+        'expense_categories.manage', 'expense_types.manage', 'payment_methods.manage',
+        'consultant_groups.view',
+        // Parceiros
+        'partners.view', 'partners.manage',
+        // Usuários
+        'users.view', 'users.view_all', 'users.create', 'users.update', 'users.delete',
+        'users.reset_password', 'users.view_own_profile', 'users.update_own_profile',
+        'users.view_team',
+        // Financeiro
+        'financial.view_own_rate', 'financial.view_partner_rate', 'financial.view_project_cost',
+        // Relatórios
+        'reports.view', 'reports.export',
+        // Sistema
+        'settings.view',
+    ];
+
+    /**
      * Retorna todas as permissões disponíveis para exibição na UI.
      * Não inclui '*' (admin) — é usado apenas para selecionar extras.
      */
     public static function allPermissions(): array
     {
-        return array_values(array_unique(array_merge(
-            self::administrativoPermissions(),
-            self::coordenadorPermissions(),
-            self::consultorPermissions(),
-            self::clientePermissions(),
-            self::parceiroAdminPermissions(),
-        )));
+        return self::ALL_AVAILABLE;
     }
 
     // ── Administrator ────────────────────────────────────────────────────────

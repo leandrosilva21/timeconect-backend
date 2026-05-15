@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Expense;
 use App\Models\Project;
 use App\Models\ProjectChangeLog;
 use App\Models\Timesheet;
@@ -186,10 +187,8 @@ class BankHoursFixedController extends Controller
         $parentProjects = $query->get();
 
         foreach ($parentProjects as $parentProject) {
-            // getGeneralHoursBalance já exclui filhos frozen; subtrair initial_hours_consumed (histórico pré-importação)
-            $projectBalance = $parentProject->getGeneralHoursBalance()
-                - (float) ($parentProject->initial_hours_consumed ?? 0);
-            $hoursBalance += $projectBalance;
+            // getGeneralHoursBalance já subtrai initial_hours_consumed do pai (fix f727001) e exclui filhos frozen
+            $hoursBalance += $parentProject->getGeneralHoursBalance();
         }
 
         // Arredondar para 2 casas decimais
@@ -355,12 +354,14 @@ class BankHoursFixedController extends Controller
                         $childTotalHours = $childProject->getTotalAvailableHours();
                         $consumedHours += $childTotalHours;
                     } else {
-                        // Para outros tipos: usar horas apontadas normalmente (excluindo rejeitados)
+                        // Para outros tipos (inclui BH Fixo): apontadas + initial_hours_consumed
+                        // (alinhado com ProjectController::index gestao mode)
                         $childLoggedMinutes = $childProject->timesheets()
                             ->where('status', '!=', 'rejected')
                             ->sum('effort_minutes') ?? 0;
                         $childLoggedHours = round($childLoggedMinutes / 60, 2);
                         $consumedHours += $childLoggedHours;
+                        $consumedHours += (float) ($childProject->initial_hours_consumed ?? 0);
                     }
                 }
             }
@@ -549,11 +550,14 @@ class BankHoursFixedController extends Controller
 
         $serviceTypeProjetoId = ServiceType::where('code', 'projeto')->orWhere('name', 'Projeto')->value('id');
         $serviceTypeManutId   = ServiceType::where('code', 'sustentação')->orWhere('name', 'Sustentação')->value('id');
+        $serviceTypeArqId     = ServiceType::where('code', 'arquitetura')->orWhere('name', 'Arquitetura')->value('id');
 
-        $projectsConsumedHours         = 0.0;
-        $projectsMonthConsumedHours    = 0.0;
-        $maintenanceConsumedHours      = 0.0;
-        $maintenanceMonthConsumedHours = 0.0;
+        $projectsConsumedHours          = 0.0;
+        $projectsMonthConsumedHours     = 0.0;
+        $maintenanceConsumedHours       = 0.0;
+        $maintenanceMonthConsumedHours  = 0.0;
+        $architectureConsumedHours      = 0.0;
+        $architectureMonthConsumedHours = 0.0;
 
         foreach ($parentProjects as $parentProject) {
             $processProject = function ($proj, $stId, &$accum, &$accumMonth)
@@ -570,6 +574,8 @@ class BankHoursFixedController extends Controller
                 } else {
                     $mins = $proj->timesheets()->where('status', '!=', 'rejected')->sum('effort_minutes') ?? 0;
                     $accum += round($mins / 60, 2);
+                    // Histórico pré-importação (alinhado com ProjectController::index gestao mode)
+                    $accum += (float) ($proj->initial_hours_consumed ?? 0);
                 }
 
                 // Consumo do mês
@@ -589,16 +595,14 @@ class BankHoursFixedController extends Controller
                 }
             };
 
-            $processProject($parentProject, $serviceTypeProjetoId, $projectsConsumedHours, $projectsMonthConsumedHours);
-            $processProject($parentProject, $serviceTypeManutId,   $maintenanceConsumedHours, $maintenanceMonthConsumedHours);
-
-            // Pai sustentação: somar apenas initial_hours_consumed (horas históricas pré-importação)
-            // Filhos são processados pelo loop abaixo via processProject, evitando dupla contagem
-            if ($parentProject->service_type_id === $serviceTypeManutId) {
-                $maintenanceConsumedHours += (float) ($parentProject->initial_hours_consumed ?? 0);
+            $processProject($parentProject, $serviceTypeProjetoId, $projectsConsumedHours,     $projectsMonthConsumedHours);
+            $processProject($parentProject, $serviceTypeManutId,   $maintenanceConsumedHours,  $maintenanceMonthConsumedHours);
+            if ($serviceTypeArqId) {
+                $processProject($parentProject, $serviceTypeArqId, $architectureConsumedHours, $architectureMonthConsumedHours);
             }
+            // initial_hours_consumed do pai já é somado dentro de processProject (alinhamento com gestao mode)
 
-            // Filhos: sempre processa para Projeto; para Manutenção apenas quando pai NÃO é sustentação
+            // Filhos: sempre processa para Projeto; para Manutenção/Arquitetura apenas quando pai NÃO for daquele tipo
             if ($parentProject->hasChildProjects()) {
                 foreach ($parentProject->childProjects as $childProject) {
                     if ($childProject->isAusterFrozen()) continue;
@@ -606,27 +610,36 @@ class BankHoursFixedController extends Controller
                     if ($parentProject->service_type_id !== $serviceTypeManutId) {
                         $processProject($childProject, $serviceTypeManutId, $maintenanceConsumedHours, $maintenanceMonthConsumedHours);
                     }
+                    if ($serviceTypeArqId && $parentProject->service_type_id !== $serviceTypeArqId) {
+                        $processProject($childProject, $serviceTypeArqId, $architectureConsumedHours, $architectureMonthConsumedHours);
+                    }
                 }
             }
         }
 
-        $projectsConsumedHours         = round($projectsConsumedHours, 2);
-        $projectsMonthConsumedHours    = round($projectsMonthConsumedHours, 2);
-        $maintenanceConsumedHours      = round($maintenanceConsumedHours, 2);
-        $maintenanceMonthConsumedHours = round($maintenanceMonthConsumedHours, 2);
+        $projectsConsumedHours          = round($projectsConsumedHours, 2);
+        $projectsMonthConsumedHours     = round($projectsMonthConsumedHours, 2);
+        $maintenanceConsumedHours       = round($maintenanceConsumedHours, 2);
+        $maintenanceMonthConsumedHours  = round($maintenanceMonthConsumedHours, 2);
+        $architectureConsumedHours      = round($architectureConsumedHours, 2);
+        $architectureMonthConsumedHours = round($architectureMonthConsumedHours, 2);
         // ─────────────────────────────────────────────────────────────────────────
 
-        // ─── has_support ─────────────────────────────────────────────────────────
-        // true se algum projeto (ou filho) tem service_type = Sustentação
+        // ─── has_support / has_architecture ──────────────────────────────────────
+        // true se algum projeto (ou filho) tem service_type = Sustentação / Arquitetura
         // Usa dados já carregados via eager loading — sem queries extras (N+1)
-        $hasSupport = false;
+        $hasSupport      = false;
+        $hasArchitecture = false;
         foreach ($parentProjects as $proj) {
             $typeName = strtolower(trim($proj->serviceType->name ?? ''));
-            if (str_contains($typeName, 'sustenta')) { $hasSupport = true; break; }
+            if (str_contains($typeName, 'sustenta'))   $hasSupport      = true;
+            if (str_contains($typeName, 'arquitet'))   $hasArchitecture = true;
             foreach ($proj->childProjects ?? [] as $child) {
                 $childType = strtolower(trim($child->serviceType->name ?? ''));
-                if (str_contains($childType, 'sustenta')) { $hasSupport = true; break 2; }
+                if (str_contains($childType, 'sustenta'))  $hasSupport      = true;
+                if (str_contains($childType, 'arquitet'))  $hasArchitecture = true;
             }
+            if ($hasSupport && $hasArchitecture) break;
         }
         // ─────────────────────────────────────────────────────────────────────────
 
@@ -642,6 +655,8 @@ class BankHoursFixedController extends Controller
                 'projects_month_consumed_hours' => $projectsMonthConsumedHours,
                 'maintenance_consumed_hours' => $maintenanceConsumedHours,
                 'maintenance_month_consumed_hours' => $maintenanceMonthConsumedHours,
+                'architecture_consumed_hours' => $architectureConsumedHours,
+                'architecture_month_consumed_hours' => $architectureMonthConsumedHours,
                 'hours_balance' => $hoursBalance,
                 'exceeded_hours' => $exceededHours,
                 'amount_to_pay' => $amountToPay,
@@ -649,6 +664,7 @@ class BankHoursFixedController extends Controller
                 'weighted_hourly_rate' => $weightedHourlyRate,  // ✨ Média ponderada (usado no cálculo)
                 'contributed_hours_history' => $contributionHistory,
                 'has_support' => $hasSupport,
+                'has_architecture' => $hasArchitecture,
                 'customer_id' => $customerId,
                 'project_id' => $projectId ? (int) $projectId : null
             ]
@@ -1730,39 +1746,35 @@ class BankHoursFixedController extends Controller
         // Buscar todos os timesheets que atendem aos critérios
         $timesheets = $timesheetsQuery->get();
 
-        // Agrupar por solicitante
-        $requesterHours = [];
+        // Agrupar por solicitante (horas + tickets únicos)
+        $requesterHours   = [];
+        $requesterTickets = [];
 
         foreach ($timesheets as $timesheet) {
-            // Buscar o ticket relacionado
             $ticket = MovideskTicket::where('ticket_id', $timesheet->ticket)->first();
 
             if ($ticket && $ticket->solicitante) {
-                // Extrair nome do solicitante do JSON
                 $solicitante = $ticket->solicitante;
                 $requesterName = $solicitante['name'] ?? 'Não informado';
-
-                // Converter minutos para horas
                 $hours = $timesheet->effort_minutes / 60;
 
-                // Acumular horas por solicitante
-                if (!isset($requesterHours[$requesterName])) {
-                    $requesterHours[$requesterName] = 0;
+                $requesterHours[$requesterName] = ($requesterHours[$requesterName] ?? 0) + $hours;
+                if (!isset($requesterTickets[$requesterName])) {
+                    $requesterTickets[$requesterName] = [];
                 }
-                $requesterHours[$requesterName] += $hours;
+                $requesterTickets[$requesterName][$timesheet->ticket] = true;
             }
         }
 
-        // Converter para formato de resposta
         $data = [];
         foreach ($requesterHours as $requester => $totalHours) {
             $data[] = [
-                'requester' => $requester,
-                'total_hours' => round($totalHours, 2)
+                'requester'    => $requester,
+                'total_hours'  => round($totalHours, 2),
+                'ticket_count' => count($requesterTickets[$requester] ?? []),
             ];
         }
 
-        // Ordenar por total de horas (decrescente)
         usort($data, function ($a, $b) {
             return $b['total_hours'] <=> $a['total_hours'];
         });
@@ -2129,38 +2141,34 @@ class BankHoursFixedController extends Controller
         // Buscar todos os timesheets que atendem aos critérios
         $timesheets = $timesheetsQuery->get();
 
-        // Agrupar por serviço/módulo
-        $serviceHours = [];
+        // Agrupar por serviço/módulo (horas + tickets únicos)
+        $serviceHours   = [];
+        $serviceTickets = [];
 
         foreach ($timesheets as $timesheet) {
-            // Buscar o ticket relacionado
             $ticket = MovideskTicket::where('ticket_id', $timesheet->ticket)->first();
 
             if ($ticket && $ticket->servico) {
-                // Extrair serviço/módulo
                 $service = $ticket->servico;
-
-                // Converter minutos para horas
                 $hours = $timesheet->effort_minutes / 60;
 
-                // Acumular horas por serviço
-                if (!isset($serviceHours[$service])) {
-                    $serviceHours[$service] = 0;
+                $serviceHours[$service] = ($serviceHours[$service] ?? 0) + $hours;
+                if (!isset($serviceTickets[$service])) {
+                    $serviceTickets[$service] = [];
                 }
-                $serviceHours[$service] += $hours;
+                $serviceTickets[$service][$timesheet->ticket] = true;
             }
         }
 
-        // Converter para formato de resposta
         $data = [];
         foreach ($serviceHours as $service => $totalHours) {
             $data[] = [
-                'service' => $service,
-                'total_hours' => round($totalHours, 2)
+                'service'      => $service,
+                'total_hours'  => round($totalHours, 2),
+                'ticket_count' => count($serviceTickets[$service] ?? []),
             ];
         }
 
-        // Ordenar por total de horas (decrescente)
         usort($data, function ($a, $b) {
             return $b['total_hours'] <=> $a['total_hours'];
         });
@@ -4748,6 +4756,510 @@ class BankHoursFixedController extends Controller
             'success' => true,
             'message' => 'Apontamentos obtidos com sucesso',
             'data' => $timesheetsData
+        ]);
+    }
+
+    /**
+     * Tickets agrupados por urgência (Urgente | Alta | Média | Baixa).
+     * Respeita filtros do dashboard (customer/project/mês/ano).
+     */
+    public function bankHoursFixedTicketsByUrgency(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Usuário não autenticado'], 401);
+        }
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
+            return response()->json(['success' => false, 'message' => 'Acesso negado'], 403);
+        }
+
+        $customerId = $user->customer_id ?: ($user->isAdmin() ? $request->get('customer_id') : null);
+        $projectId  = $request->get('project_id');
+
+        $tsQ = Timesheet::whereNotNull('ticket')
+            ->where('ticket', '!=', '')
+            ->where('status', '!=', 'rejected')
+            ->whereRaw("ticket ~ '^[0-9]{5}$'");
+
+        $dateRange = $this->resolveIndicatorDateRange($request);
+        if ($dateRange) $tsQ->whereBetween('date', $dateRange);
+
+        if ($customerId) {
+            $tsQ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId));
+        }
+        if ($projectId) {
+            $projectIds = array_merge([$projectId], Project::where('parent_project_id', $projectId)->pluck('id')->toArray());
+            $tsQ->whereIn('project_id', $projectIds);
+        } else {
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) $tsQ->whereHas('project', fn ($q) => $q->where('contract_type_id', $bhFixedType->id));
+        }
+
+        $ticketIds = $tsQ->pluck('ticket')->unique()->values();
+        if ($ticketIds->isEmpty()) return response()->json(['success' => true, 'data' => []]);
+
+        $rows = MovideskTicket::whereIn('ticket_id', $ticketIds)
+            ->whereNotNull('urgencia')
+            ->where('urgencia', '!=', '')
+            ->selectRaw('urgencia, COUNT(*) AS ticket_count')
+            ->groupBy('urgencia')
+            ->get()
+            ->map(fn ($r) => ['urgency' => $r->urgencia, 'ticket_count' => (int) $r->ticket_count]);
+
+        // Ordenação fixa Urgente → Alta → Média → Baixa → outros
+        $order = ['Urgente' => 0, 'Alta' => 1, 'Média' => 2, 'Baixa' => 3];
+        $rows = $rows->sortBy(fn ($r) => $order[$r['urgency']] ?? 99)->values();
+
+        return response()->json(['success' => true, 'data' => $rows]);
+    }
+
+    /**
+     * Drilldown da aba Indicadores — Tickets por Urgência.
+     * Retorna timesheets dos tickets daquela urgência, respeitando filtros.
+     */
+    public function bankHoursFixedUrgencyTimesheets(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user) return response()->json(['success' => false, 'message' => 'Usuário não autenticado'], 401);
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
+            return response()->json(['success' => false, 'message' => 'Acesso negado'], 403);
+        }
+        $urgency = $request->get('urgency');
+        if (!$urgency) return response()->json(['success' => false, 'message' => 'Parâmetro "urgency" é obrigatório'], 400);
+
+        $customerId = $user->customer_id ?: ($user->isAdmin() ? $request->get('customer_id') : null);
+        $projectId  = $request->get('project_id');
+
+        $tsQ = Timesheet::with(['user', 'project.customer'])
+            ->whereNotNull('ticket')
+            ->where('ticket', '!=', '')
+            ->where('status', '!=', 'rejected')
+            ->whereRaw("ticket ~ '^[0-9]{5}$'");
+
+        $dateRange = $this->resolveIndicatorDateRange($request);
+        if ($dateRange) $tsQ->whereBetween('date', $dateRange);
+
+        if ($customerId) {
+            $tsQ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId));
+        }
+        if ($projectId) {
+            $projectIds = array_merge([$projectId], Project::where('parent_project_id', $projectId)->pluck('id')->toArray());
+            $tsQ->whereIn('project_id', $projectIds);
+        } else {
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) $tsQ->whereHas('project', fn ($q) => $q->where('contract_type_id', $bhFixedType->id));
+        }
+
+        $ticketIds = MovideskTicket::where('urgencia', $urgency)->pluck('ticket_id')->toArray();
+        if (empty($ticketIds)) return response()->json(['success' => true, 'data' => []]);
+
+        $tsQ->whereIn('ticket', $ticketIds);
+        $timesheets = $tsQ->orderByDesc('date')->orderByDesc('id')->limit(500)->get();
+
+        $fmtTime = fn ($v) => $v instanceof \DateTimeInterface ? $v->format('H:i') : (is_string($v) && strlen($v) >= 5 ? substr($v, -8, 5) : null);
+        $parseReq = function ($req) {
+            if (is_array($req) && isset($req['name'])) return $req['name'];
+            if (is_string($req) && str_starts_with(trim($req), '{')) {
+                $d = json_decode($req, true);
+                if (is_array($d) && isset($d['name'])) return $d['name'];
+            }
+            return $req;
+        };
+
+        return response()->json([
+            'success' => true,
+            'data' => $timesheets->map(fn ($t) => [
+                'id'             => $t->id,
+                'date'           => optional($t->date)->format('Y-m-d'),
+                'start_time'     => $fmtTime($t->start_time),
+                'end_time'       => $fmtTime($t->end_time),
+                'effort_minutes' => $t->effort_minutes,
+                'description'    => $t->observation,
+                'ticket'         => $t->ticket,
+                'ticket_subject' => $t->ticket_subject,
+                'requester'      => $parseReq($t->ticket_solicitante),
+                'status'         => $t->status,
+                'status_display' => $t->status_display,
+                'attachment_path'=> $t->attachment_path,
+                'user'           => $t->user ? ['id' => $t->user->id, 'name' => $t->user->name] : null,
+                'customer'       => $t->project && $t->project->customer ? $t->project->customer->name : null,
+                'project'        => $t->project ? ['id' => $t->project->id, 'code' => $t->project->code, 'name' => $t->project->name] : null,
+            ])->values(),
+        ]);
+    }
+
+    /**
+     * Lista timesheets por categoria de service_type (architecture | maintenance).
+     * Usado pelos modais "Ver Apontamentos" nas abas correspondentes do dashboard.
+     */
+    public function categoryTimesheetsModal(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $category = (string) $request->get('category', '');
+
+        $serviceCodeMap = [
+            'architecture' => 'arquitetura',
+            'maintenance'  => 'sustentação',
+        ];
+        $serviceNameMap = [
+            'architecture' => 'Arquitetura',
+            'maintenance'  => 'Sustentação',
+        ];
+        if (!isset($serviceCodeMap[$category])) {
+            return response()->json(['success' => false, 'message' => 'category inválida'], 422);
+        }
+
+        $serviceTypeId = ServiceType::where('code', $serviceCodeMap[$category])
+            ->orWhere('name', $serviceNameMap[$category])
+            ->value('id');
+        if (!$serviceTypeId) {
+            return response()->json(['success' => true, 'data' => []]);
+        }
+
+        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        $projectId  = $request->get('project_id');
+        $dateFrom   = $request->get('date_from');
+        $dateTo     = $request->get('date_to');
+
+        $projectIdsQuery = Project::where('service_type_id', $serviceTypeId)->whereNull('deleted_at');
+        if ($customerId) $projectIdsQuery->where('customer_id', $customerId);
+        if ($projectId) {
+            $projectIdsQuery->where(function ($q) use ($projectId) {
+                $q->where('id', $projectId)->orWhere('parent_project_id', $projectId);
+            });
+        }
+        $projectIds = $projectIdsQuery->pluck('id');
+        if ($projectIds->isEmpty()) {
+            return response()->json(['success' => true, 'data' => []]);
+        }
+
+        $ts = Timesheet::with(['user', 'project.contractType', 'project.customer'])
+            ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject', 'movidesk_tickets.solicitante as ticket_solicitante')
+            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+            ->whereIn('timesheets.project_id', $projectIds)
+            ->where('timesheets.status', '!=', 'rejected');
+        if ($dateFrom) $ts->where('timesheets.date', '>=', $dateFrom);
+        if ($dateTo)   $ts->where('timesheets.date', '<=', $dateTo);
+        $ts = $ts->orderByDesc('timesheets.date')->orderByDesc('timesheets.id')->limit(500)->get();
+
+        $fmtTime = fn ($v) => $v instanceof \DateTimeInterface ? $v->format('H:i') : (is_string($v) && strlen($v) >= 5 ? substr($v, -8, 5) : null);
+        $parseRequester = function ($req) {
+            if (is_array($req) && isset($req['name'])) return $req['name'];
+            if (is_string($req) && str_starts_with(trim($req), '{')) {
+                $d = json_decode($req, true);
+                if (is_array($d) && isset($d['name'])) return $d['name'];
+            }
+            return $req;
+        };
+
+        return response()->json([
+            'success' => true,
+            'data' => $ts->map(fn ($t) => [
+                'id'                 => $t->id,
+                'date'               => optional($t->date)->format('Y-m-d'),
+                'start_time'         => $fmtTime($t->start_time),
+                'end_time'           => $fmtTime($t->end_time),
+                'effort_minutes'     => $t->effort_minutes,
+                'description'        => $t->observation,
+                'status'             => $t->status,
+                'status_display'     => $t->status_display,
+                'ticket'             => $t->ticket,
+                'ticket_subject'     => $t->ticket_subject,
+                'requester'          => $parseRequester($t->ticket_solicitante),
+                'attachment_path'    => $t->attachment_path,
+                'user'               => $t->user ? ['id' => $t->user->id, 'name' => $t->user->name] : null,
+                'customer'           => $t->project && $t->project->customer ? $t->project->customer->name : null,
+                'project'            => $t->project ? [
+                    'id'            => $t->project->id,
+                    'code'          => $t->project->code,
+                    'name'          => $t->project->name,
+                    'contract_type' => optional($t->project->contractType)->name,
+                ] : null,
+            ])->values(),
+        ]);
+    }
+
+    /**
+     * Lista timesheets de um projeto específico (e seus filhos), com todos os campos
+     * necessários para o modal "Ver Apontamentos" + modal de detalhe.
+     */
+    public function projectTimesheetsModal(Request $request): JsonResponse
+    {
+        $user       = $request->user();
+        $projectId  = $request->get('project_id');
+        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        $dateFrom   = $request->get('date_from');
+        $dateTo     = $request->get('date_to');
+
+        if (!$projectId) {
+            return response()->json(['success' => false, 'message' => 'project_id obrigatório'], 422);
+        }
+
+        $projectIds = Project::where(function ($q) use ($projectId) {
+                $q->where('id', $projectId)->orWhere('parent_project_id', $projectId);
+            })
+            ->when($customerId, fn ($q) => $q->where('customer_id', $customerId))
+            ->whereNull('deleted_at')
+            ->pluck('id');
+
+        if ($projectIds->isEmpty()) {
+            return response()->json(['success' => true, 'data' => []]);
+        }
+
+        $ts = Timesheet::with(['user', 'project.contractType', 'project.customer'])
+            ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject', 'movidesk_tickets.solicitante as ticket_solicitante')
+            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+            ->whereIn('timesheets.project_id', $projectIds)
+            ->where('timesheets.status', '!=', 'rejected')
+            ->when($dateFrom, fn ($q) => $q->where('timesheets.date', '>=', $dateFrom))
+            ->when($dateTo,   fn ($q) => $q->where('timesheets.date', '<=', $dateTo))
+            ->orderByDesc('timesheets.date')->orderByDesc('timesheets.id')
+            ->limit(1000)
+            ->get();
+
+        $data = $ts->map(function ($t) {
+            $req = $t->ticket_solicitante;
+            $reqName = null;
+            if (is_array($req) && isset($req['name'])) $reqName = $req['name'];
+            elseif (is_string($req) && str_starts_with(trim($req), '{')) {
+                $decoded = json_decode($req, true);
+                if (is_array($decoded) && isset($decoded['name'])) $reqName = $decoded['name'];
+            } else $reqName = $req;
+
+            $fmtTime = fn ($v) => $v instanceof \DateTimeInterface ? $v->format('H:i') : (is_string($v) && strlen($v) >= 5 ? substr($v, -8, 5) : null);
+
+            return [
+                'id'             => $t->id,
+                'date'           => optional($t->date)->format('Y-m-d'),
+                'start_time'     => $fmtTime($t->start_time),
+                'end_time'       => $fmtTime($t->end_time),
+                'effort_minutes' => $t->effort_minutes,
+                'description'    => $t->observation,
+                'ticket'         => $t->ticket,
+                'ticket_subject' => $t->ticket_subject,
+                'requester'      => $reqName,
+                'status'         => $t->status,
+                'status_display' => $t->status_display,
+                'attachment_path'=> $t->attachment_path,
+                'user'           => $t->user ? ['id' => $t->user->id, 'name' => $t->user->name] : null,
+                'customer'       => $t->project && $t->project->customer ? $t->project->customer->name : null,
+                'project'        => $t->project ? [
+                    'id'   => $t->project->id,
+                    'code' => $t->project->code,
+                    'name' => $t->project->name,
+                    'contract_type' => optional($t->project->contractType)->name,
+                ] : null,
+            ];
+        });
+
+        return response()->json(['success' => true, 'data' => $data->values()]);
+    }
+
+    /**
+     * Agrupa apontamentos por ticket (5 dígitos) para um projeto específico
+     * (pai + filhos), sem filtrar por service_type. Usado por dashboards
+     * como On Demand onde não faz sentido split entre Projeto / Sustentação.
+     */
+    public function projectTicketSummary(Request $request): JsonResponse
+    {
+        $user       = $request->user();
+        $projectId  = $request->get('project_id');
+        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        if (!$projectId || !$customerId) return response()->json(['tickets' => []]);
+        $dateFrom = $request->get('date_from');
+        $dateTo   = $request->get('date_to');
+
+        $projectIds = Project::where(function ($q) use ($projectId) {
+                $q->where('id', $projectId)->orWhere('parent_project_id', $projectId);
+            })
+            ->where('customer_id', $customerId)
+            ->whereNull('deleted_at')
+            ->pluck('id');
+        if ($projectIds->isEmpty()) return response()->json(['tickets' => []]);
+
+        $base = Timesheet::query()
+            ->where('timesheets.customer_id', $customerId)
+            ->whereIn('timesheets.project_id', $projectIds)
+            ->whereNotNull('timesheets.ticket')
+            ->where('timesheets.ticket', '!=', '')
+            ->whereRaw("timesheets.ticket ~ '^[0-9]{5}$'")
+            ->where('timesheets.status', '!=', 'rejected');
+
+        $periodQ = (clone $base);
+        if ($dateFrom) $periodQ->where('timesheets.date', '>=', $dateFrom);
+        if ($dateTo)   $periodQ->where('timesheets.date', '<=', $dateTo);
+        $ticketsInPeriod = $periodQ->select('timesheets.ticket')->distinct()->pluck('ticket')->toArray();
+
+        if (empty($ticketsInPeriod)) return response()->json(['tickets' => []]);
+
+        $rows = (clone $base)
+            ->whereIn('timesheets.ticket', $ticketsInPeriod)
+            ->select(
+                'timesheets.ticket',
+                DB::raw("MAX(timesheets.ticket_subject) AS ticket_subject"),
+                DB::raw("MAX(timesheets.ticket_solicitante::text) AS ticket_solicitante"),
+                DB::raw("SUM(timesheets.effort_minutes) AS lifetime_minutes"),
+                DB::raw(
+                    "SUM(CASE WHEN timesheets.date BETWEEN " .
+                    "COALESCE(?, timesheets.date) AND COALESCE(?, timesheets.date) " .
+                    "THEN timesheets.effort_minutes ELSE 0 END) AS period_minutes"
+                ),
+            )
+            ->addBinding($dateFrom, 'select')
+            ->addBinding($dateTo,   'select')
+            ->groupBy('timesheets.ticket')
+            ->get();
+
+        $tickets = $rows->map(function ($r) {
+            $req = $r->ticket_solicitante;
+            $reqName = null;
+            if ($req && str_starts_with((string)$req, '{')) {
+                $decoded = json_decode($req, true);
+                if (is_array($decoded) && isset($decoded['name'])) $reqName = $decoded['name'];
+            } else $reqName = $req;
+            return [
+                'ticket'           => $r->ticket,
+                'title'            => $r->ticket_subject,
+                'requester'        => $reqName,
+                'period_minutes'   => (int) $r->period_minutes,
+                'lifetime_minutes' => (int) $r->lifetime_minutes,
+            ];
+        })->sortBy('ticket', SORT_NATURAL)->values();
+
+        return response()->json(['tickets' => $tickets]);
+    }
+
+    /**
+     * Agrupa apontamentos por ticket (5 dígitos) para a categoria informada,
+     * respeitando os filtros do dashboard (customer/project/datas).
+     * Retorna: ticket, title, requester, period_minutes, lifetime_minutes.
+     */
+    public function categoryTicketSummary(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $category = (string) $request->get('category', 'maintenance');
+
+        $serviceCodeMap = ['architecture' => 'arquitetura', 'maintenance' => 'sustentação'];
+        $serviceNameMap = ['architecture' => 'Arquitetura',  'maintenance' => 'Sustentação'];
+        if (!isset($serviceCodeMap[$category])) {
+            return response()->json(['tickets' => []]);
+        }
+        $serviceTypeId = ServiceType::where('code', $serviceCodeMap[$category])
+            ->orWhere('name', $serviceNameMap[$category])
+            ->value('id');
+        if (!$serviceTypeId) return response()->json(['tickets' => []]);
+
+        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        if (!$customerId) return response()->json(['tickets' => []]);
+        $projectId  = $request->get('project_id');
+        $dateFrom   = $request->get('date_from');
+        $dateTo     = $request->get('date_to');
+
+        $projectIdsQ = Project::where('service_type_id', $serviceTypeId)
+            ->where('customer_id', $customerId)
+            ->whereNull('deleted_at');
+        if ($projectId) {
+            $projectIdsQ->where(function ($q) use ($projectId) {
+                $q->where('id', $projectId)->orWhere('parent_project_id', $projectId);
+            });
+        }
+        $projectIds = $projectIdsQ->pluck('id');
+        if ($projectIds->isEmpty()) return response()->json(['tickets' => []]);
+
+        $base = Timesheet::query()
+            ->where('timesheets.customer_id', $customerId)
+            ->whereIn('timesheets.project_id', $projectIds)
+            ->whereNotNull('timesheets.ticket')
+            ->where('timesheets.ticket', '!=', '')
+            ->whereRaw("timesheets.ticket ~ '^[0-9]{5}$'")
+            ->where('timesheets.status', '!=', 'rejected');
+
+        $periodQ = (clone $base);
+        if ($dateFrom) $periodQ->where('timesheets.date', '>=', $dateFrom);
+        if ($dateTo)   $periodQ->where('timesheets.date', '<=', $dateTo);
+        $ticketsInPeriod = $periodQ->select('timesheets.ticket')->distinct()->pluck('ticket')->toArray();
+
+        if (empty($ticketsInPeriod)) return response()->json(['tickets' => []]);
+
+        $rows = (clone $base)
+            ->whereIn('timesheets.ticket', $ticketsInPeriod)
+            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+            ->select(
+                'timesheets.ticket',
+                DB::raw("MAX(timesheets.ticket_subject) AS ticket_subject"),
+                DB::raw("MAX(timesheets.ticket_solicitante::text) AS ticket_solicitante"),
+                DB::raw("SUM(timesheets.effort_minutes) AS lifetime_minutes"),
+                DB::raw(
+                    "SUM(CASE WHEN timesheets.date BETWEEN " .
+                    "COALESCE(?, timesheets.date) AND COALESCE(?, timesheets.date) " .
+                    "THEN timesheets.effort_minutes ELSE 0 END) AS period_minutes"
+                ),
+            )
+            ->addBinding($dateFrom, 'select')
+            ->addBinding($dateTo,   'select')
+            ->groupBy('timesheets.ticket')
+            ->get();
+
+        $tickets = $rows->map(function ($r) {
+            $req = $r->ticket_solicitante;
+            $reqName = null;
+            if ($req && str_starts_with($req, '{')) {
+                $decoded = json_decode($req, true);
+                if (is_array($decoded) && isset($decoded['name'])) $reqName = $decoded['name'];
+            } else {
+                $reqName = $req;
+            }
+            return [
+                'ticket'           => $r->ticket,
+                'title'            => $r->ticket_subject,
+                'requester'        => $reqName,
+                'period_minutes'   => (int) $r->period_minutes,
+                'lifetime_minutes' => (int) $r->lifetime_minutes,
+            ];
+        })->sortBy('ticket', SORT_NATURAL)->values();
+
+        return response()->json(['tickets' => $tickets]);
+    }
+
+    /**
+     * Lista despesas relacionadas ao recorte do dashboard (customer/project/datas).
+     */
+    public function expensesModal(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        $projectId  = $request->get('project_id');
+        $dateFrom   = $request->get('date_from');
+        $dateTo     = $request->get('date_to');
+
+        $q = Expense::with(['user', 'project', 'category']);
+        if ($customerId) {
+            $q->whereHas('project', fn ($pq) => $pq->where('customer_id', $customerId));
+        }
+        if ($projectId) {
+            $q->where(function ($qq) use ($projectId) {
+                $qq->where('project_id', $projectId)
+                   ->orWhereHas('project', fn ($pq) => $pq->where('parent_project_id', $projectId));
+            });
+        }
+        if ($dateFrom) $q->where('expense_date', '>=', $dateFrom);
+        if ($dateTo)   $q->where('expense_date', '<=', $dateTo);
+
+        $expenses = $q->orderByDesc('expense_date')->orderByDesc('id')->limit(500)->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $expenses->map(fn ($e) => [
+                'id'             => $e->id,
+                'date'           => optional($e->expense_date)->format('Y-m-d'),
+                'amount'         => (float) $e->amount,
+                'description'    => $e->description,
+                'status'         => $e->status,
+                'status_display' => $e->status_display ?? $e->status,
+                'user'           => $e->user ? ['id' => $e->user->id, 'name' => $e->user->name] : null,
+                'project'        => $e->project ? ['id' => $e->project->id, 'code' => $e->project->code, 'name' => $e->project->name] : null,
+                'category'       => $e->category ? ['id' => $e->category->id, 'name' => $e->category->name] : null,
+            ])->values(),
         ]);
     }
 }

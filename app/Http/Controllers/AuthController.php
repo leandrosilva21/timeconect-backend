@@ -141,22 +141,23 @@ class AuthController extends Controller
 
         return response()->json([
             'message' => 'Login realizado com sucesso',
-            'user' => [
-                'id'                      => $user->id,
-                'name'                    => $user->name,
-                'email'                   => $user->email,
-                'email_verified_at'       => $user->email_verified_at,
+            // Payload alinhado com /user (AuthController::user) — sem isso, campos
+            // como is_executive/permissions/extra_permissions ficavam undefined no
+            // frontend logo após login e a sidebar do parceiro_admin caía no
+            // ramo "parceiro simples" até /user ser re-chamado na próxima visibility.
+            'user' => array_merge($user->toArray(), [
                 'has_temporary_password'  => false,
                 'type'                    => $user->type,
                 'coordinator_type'        => $user->coordinator_type,
-                'customer_id'             => $user->customer_id,
+                'extra_permissions'       => $user->extra_permissions ?? [],
+                'permissions'             => \App\Services\PermissionService::for($user),
                 'consultant_type'         => $user->consultant_type,
                 'rate_type'               => $user->rate_type,
                 'hourly_rate'             => $user->hourly_rate,
                 'daily_hours'             => $user->daily_hours,
                 'bank_hours_start_date'   => $user->bank_hours_start_date,
                 'guaranteed_hours'        => $user->guaranteed_hours,
-            ],
+            ]),
             'token'                    => $token,
             'token_type'               => 'Bearer',
             'requires_password_change' => false,

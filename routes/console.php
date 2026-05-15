@@ -43,6 +43,15 @@ Schedule::command('projects:ensure-monthly-update')
   ->name('ensure-monthly-accumulated-hours-update')
   ->description('Verifica se accumulated_sold_hours foi atualizado no mês atual');
 
+// Rede de segurança pro reset de conflitos órfãos (observer já cobre saves/deletes
+// via Eloquent; este sweep cobre mudanças via SQL bruto e legado pré-observer).
+Schedule::command('timesheets:resolve-stale-conflicts')
+  ->cron('*/10 * * * *')
+  ->name('timesheets-resolve-stale-conflicts')
+  ->description('Reverte apontamentos conflicted sem sobreposição para pending')
+  ->withoutOverlapping(10)
+  ->runInBackground();
+
 // Sync de apontamentos Movidesk (fallback do webhook — garante que nenhum apontamento seja perdido)
 Schedule::command('movidesk:sync')
   ->cron('*/5 * * * *')

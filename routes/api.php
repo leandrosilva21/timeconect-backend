@@ -2,6 +2,7 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\AusterIndicatorsController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\MeController;
 use App\Http\Controllers\UserCapacityController;
@@ -147,6 +148,17 @@ Route::prefix('v1')->group(function () {
                 ->name('dashboards.bank-hours-fixed.projects');
             Route::get('/dashboards/bank-hours-fixed/projects/{projectId}/tickets', [BankHoursFixedController::class, 'bankHoursFixedProjectTickets'])
                 ->name('dashboards.bank-hours-fixed.projects.tickets');
+            // Listas inline e agrupamentos dentro do dashboard
+            Route::get('/dashboards/bank-hours-fixed/category-timesheets', [BankHoursFixedController::class, 'categoryTimesheetsModal'])
+                ->name('dashboards.bank-hours-fixed.category-timesheets');
+            Route::get('/dashboards/bank-hours-fixed/category-ticket-summary', [BankHoursFixedController::class, 'categoryTicketSummary'])
+                ->name('dashboards.bank-hours-fixed.category-ticket-summary');
+            Route::get('/dashboards/bank-hours-fixed/project-timesheets', [BankHoursFixedController::class, 'projectTimesheetsModal'])
+                ->name('dashboards.bank-hours-fixed.project-timesheets');
+            Route::get('/dashboards/bank-hours-fixed/project-ticket-summary', [BankHoursFixedController::class, 'projectTicketSummary'])
+                ->name('dashboards.bank-hours-fixed.project-ticket-summary');
+            Route::get('/dashboards/bank-hours-fixed/expenses', [BankHoursFixedController::class, 'expensesModal'])
+                ->name('dashboards.bank-hours-fixed.expenses');
             Route::get('/dashboards/bank-hours-fixed/maintenance/tickets', [BankHoursFixedController::class, 'bankHoursFixedMaintenanceTickets'])
                 ->name('dashboards.bank-hours-fixed.maintenance.tickets');
             Route::get('/dashboards/bank-hours-fixed/maintenance/tickets/{ticketId}/timesheets', [BankHoursFixedController::class, 'bankHoursFixedMaintenanceTicketTimesheets'])
@@ -159,6 +171,10 @@ Route::prefix('v1')->group(function () {
                 ->name('dashboards.bank-hours-fixed.indicators.hours-by-service');
             Route::get('/dashboards/bank-hours-fixed/indicators/service-timesheets', [BankHoursFixedController::class, 'bankHoursFixedServiceTimesheets'])
                 ->name('dashboards.bank-hours-fixed.indicators.service-timesheets');
+            Route::get('/dashboards/bank-hours-fixed/indicators/tickets-by-urgency', [BankHoursFixedController::class, 'bankHoursFixedTicketsByUrgency'])
+                ->name('dashboards.bank-hours-fixed.indicators.tickets-by-urgency');
+            Route::get('/dashboards/bank-hours-fixed/indicators/urgency-timesheets', [BankHoursFixedController::class, 'bankHoursFixedUrgencyTimesheets'])
+                ->name('dashboards.bank-hours-fixed.indicators.urgency-timesheets');
             Route::get('/dashboards/bank-hours-fixed/indicators/tickets-by-status', [BankHoursFixedController::class, 'bankHoursFixedTicketsByStatus'])
                 ->name('dashboards.bank-hours-fixed.indicators.tickets-by-status');
             Route::get('/dashboards/bank-hours-fixed/indicators/status-timesheets', [BankHoursFixedController::class, 'bankHoursFixedStatusTimesheets'])
@@ -303,7 +319,9 @@ Route::prefix('v1')->group(function () {
         // 🏢 CLIENT PORTAL
         Route::get('/client/portal', [ClientPortalController::class, 'portal'])->name('client.portal');
         Route::get('/client/portal/customers', [ClientPortalController::class, 'customers'])->name('client.portal.customers');
-        Route::get('/client/portal/projects/{projectId}/operational-summary', [ClientPortalController::class, 'operationalSummary'])->name('client.portal.project-operational-summary');
+        Route::get('/client/portal/summary', [ClientPortalController::class, 'summary'])->name('client.portal.summary');
+        Route::get('/client/portal/projects/{projectId}/operational-summary', [ClientPortalController::class, 'operationalSummary'])
+            ->name('client.portal.project-operational-summary');
 
         // 👥 CUSTOMERS - Protegido por permissões específicas (Admins sempre têm acesso)
         Route::middleware('permission.or.admin:customers.view')->group(function () {
@@ -392,6 +410,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/ic-summary', [ProjectController::class, 'icSummary'])->name('projects.ic-summary');
             Route::get('/projects/ic-analytics', [ProjectController::class, 'icAnalytics'])->name('projects.ic-analytics');
             Route::get('/projects/hours-per-consultant', [ProjectController::class, 'hoursPerConsultant'])->name('projects.hours-per-consultant');
+            Route::get('/projects/movidesk-integration-conflict', [ProjectController::class, 'movideskIntegrationConflict'])->name('projects.movidesk-conflict');
             Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
             Route::get('/projects/{project}/change-history', [ProjectController::class, 'changeHistory'])->name('projects.change-history');
             Route::get('/projects/{project}/contract-request', [ProjectController::class, 'contractRequest'])->name('projects.contract-request');
@@ -486,8 +505,18 @@ Route::prefix('v1')->group(function () {
         Route::get('/timesheets', [TimesheetController::class, 'index'])->name('timesheets.index');
         Route::get('/timesheets/export', [TimesheetController::class, 'export'])->name('timesheets.export');
         Route::put('/timesheets/bulk-extra-pct', [TimesheetController::class, 'bulkExtraPct'])->name('timesheets.bulk-extra-pct');
+        Route::put('/timesheets/bulk-update-project-customer', [TimesheetController::class, 'bulkUpdateProjectCustomer'])->name('timesheets.bulk-update-project-customer');
         Route::post('/timesheets/reprocess-movidesk', [TimesheetController::class, 'reprocessMovidesk'])->name('timesheets.reprocess-movidesk');
         Route::get('/timesheets/summary-by-ticket', [TimesheetController::class, 'summaryByTicket'])->name('timesheets.summary-by-ticket');
+
+        // Saldo inicial de ticket (admin/coord) — soma no histórico do ticket
+        Route::get   ('/ticket-initial-balances/lookup', [\App\Http\Controllers\TicketInitialBalanceController::class, 'lookup'])->name('ticket-initial-balances.lookup');
+        Route::get   ('/ticket-initial-balances',        [\App\Http\Controllers\TicketInitialBalanceController::class, 'index'])->name('ticket-initial-balances.index');
+        Route::get   ('/ticket-initial-balances/{id}',   [\App\Http\Controllers\TicketInitialBalanceController::class, 'show'])->name('ticket-initial-balances.show');
+        Route::post  ('/ticket-initial-balances',        [\App\Http\Controllers\TicketInitialBalanceController::class, 'store'])->name('ticket-initial-balances.store');
+        Route::put   ('/ticket-initial-balances/{id}',   [\App\Http\Controllers\TicketInitialBalanceController::class, 'update'])->name('ticket-initial-balances.update');
+        Route::delete('/ticket-initial-balances/{id}',   [\App\Http\Controllers\TicketInitialBalanceController::class, 'destroy'])->name('ticket-initial-balances.destroy');
+
         Route::get('/timesheets/{timesheet}', [TimesheetController::class, 'show'])->name('timesheets.show');
 
         // Histórico de alterações de um apontamento específico (admin/coord)
@@ -651,6 +680,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/users/capacity', [UserCapacityController::class, 'index'])->name('users.capacity.index');
             Route::get('/users/{user}/capacity', [UserCapacityController::class, 'show'])->name('users.capacity.show');
         });
+
+        // 📊 INDICADORES — Auster (admin only via check no controller; inclui projetos congelados)
+        Route::get('/indicadores/auster/projects',      [AusterIndicatorsController::class, 'projects'])->name('indicadores.auster.projects');
+        Route::get('/indicadores/auster/top-consumed',  [AusterIndicatorsController::class, 'topConsumed'])->name('indicadores.auster.top-consumed');
 
         // 🎯 APROVAÇÕES - Endpoints para gerenciar aprovações pendentes
         Route::middleware('permission.or.admin:timesheets.approve,expenses.approve')->group(function () {
@@ -900,6 +933,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/debug-project-map',   [SustentacaoController::class, 'debugProjectMap'])->name('sustentacao.debug-project-map');
             Route::post('/sync-orgs',          [SustentacaoController::class, 'syncOrgs'])->name('sustentacao.sync-orgs');
             Route::post('/sync-agents',        [SustentacaoController::class, 'syncAgents'])->name('sustentacao.sync-agents');
+            // Rotinas embarcadas no portal — filtradas por service_type Sustentação
+            Route::get('/timesheets',          [SustentacaoController::class, 'timesheets'])->name('sustentacao.timesheets');
+            Route::get('/expenses',            [SustentacaoController::class, 'expenses'])->name('sustentacao.expenses');
+            Route::get('/approvals',           [SustentacaoController::class, 'approvals'])->name('sustentacao.approvals');
         });
 
         // ⚙️ CONFIGURAÇÕES DO SISTEMA - Protegido por permissões específicas (Admins sempre têm acesso)

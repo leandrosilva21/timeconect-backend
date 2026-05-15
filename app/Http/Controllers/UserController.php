@@ -153,9 +153,16 @@ class UserController extends Controller
             $query->where('type', $typeFilter);
         }
 
-        // Aceita ?type= como alias de ?role=
+        // Aceita ?type= como alias de ?role=. Suporta valores múltiplos via vírgula.
         if ($request->filled('type') && !$request->filled('role')) {
-            $query->where('type', $request->type);
+            $types = is_array($request->type)
+                ? $request->type
+                : array_values(array_filter(array_map('trim', explode(',', (string) $request->type))));
+            if (count($types) === 1) {
+                $query->where('type', $types[0]);
+            } elseif (count($types) > 1) {
+                $query->whereIn('type', $types);
+            }
         }
 
         if ($request->filled('coordinator_type')) {
@@ -172,6 +179,10 @@ class UserController extends Controller
 
         if ($request->filled('partner_id')) {
             $query->where('partner_id', $request->partner_id);
+        }
+
+        if ($request->filled('customer_id')) {
+            $query->where('customer_id', $request->customer_id);
         }
 
         // Filtro por status (ativo/inativo) usando campo enabled

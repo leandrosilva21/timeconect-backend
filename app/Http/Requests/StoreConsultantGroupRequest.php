@@ -12,7 +12,13 @@ class StoreConsultantGroupRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return $this->user()->isAdmin() || $this->user()->hasAccess('consultant_groups.create');
+        // 'groups.manage' é a permissão coerente que libera o menu lateral e que
+        // já está cadastrada em PermissionService — 'consultant_groups.create'
+        // nunca foi registrada lá, então quem só tinha permissão via grupo de
+        // perfil caía em 403 silencioso (mascarado como 422 pelo handler global).
+        return $this->user()->isAdmin()
+            || $this->user()->hasAccess('groups.manage')
+            || $this->user()->hasAccess('consultant_groups.create');
     }
 
     /**
@@ -65,9 +71,11 @@ class StoreConsultantGroupRequest extends FormRequest
      */
     protected function prepareForValidation(): void
     {
-        // Garantir que apenas usuários com role Consultant são aceitos
+        // Garantir que só consultores e parceiros (parceiro_admin) podem entrar
+        // num grupo de consultor. Reflete a regra de bcb5c5f, onde parceiros
+        // são tratados como consultores nas alocações.
         if ($this->has('consultant_ids') && is_array($this->consultant_ids)) {
-            $validConsultantIds = \App\Models\User::where('type', 'consultor')
+            $validConsultantIds = \App\Models\User::whereIn('type', ['consultor', 'parceiro_admin'])
                 ->whereIn('id', $this->consultant_ids)->pluck('id')->toArray();
 
             $this->merge([

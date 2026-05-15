@@ -37,9 +37,17 @@ class FechamentoClienteController extends Controller
     {
         $yearMonth = $request->query('year_month');
 
+        // Só lista clientes com projeto On Demand REAL — exclui os buckets internos
+        // de investimento (is_investimento_comercial=true: "Investimento Comercial",
+        // "Investimento Suporte", "Investimento Projetos"), que tecnicamente têm
+        // contract_type=on_demand mas não são contratos com o cliente.
         $customers = Customer::whereRaw('"active" = true')
             ->whereHas('projects', function ($q) {
-                $q->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand'));
+                $q->where(function ($qq) {
+                        $qq->where('is_investimento_comercial', false)
+                           ->orWhereNull('is_investimento_comercial');
+                    })
+                  ->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand'));
             })
             ->orderBy('name')
             ->get(['id', 'name', 'company_name']);

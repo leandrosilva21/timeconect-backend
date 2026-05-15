@@ -23,6 +23,15 @@ class ProjectMessageController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
+        // Cliente: vê apenas mensagens criadas até req_decided_at da contract_request
+        // que originou o projeto. Após virar projeto, novas trocas internas/visíveis
+        // não chegam mais a ele.
+        $clientCutoff = null;
+        if ($user->isCliente() && $project->contract_request_id) {
+            $cr = \App\Models\ContractRequest::find($project->contract_request_id);
+            $clientCutoff = $cr?->req_decided_at;
+        }
+
         $messages = ProjectMessage::where('project_id', $project->id)
             ->with([
                 'author:id,name,profile_photo',
@@ -32,6 +41,7 @@ class ProjectMessageController extends Controller
             ->withExists(['mentions as is_mentioned' => fn($q) => $q->where('mentioned_user_id', $user->id)])
             // Clientes só veem mensagens marcadas como visíveis
             ->when($user->isCliente(), fn($q) => $q->where('visibility', 'client'))
+            ->when($clientCutoff, fn($q) => $q->where('created_at', '<=', $clientCutoff))
             ->latest()
             ->paginate(50);
 

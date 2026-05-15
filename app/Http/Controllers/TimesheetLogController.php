@@ -22,8 +22,19 @@ class TimesheetLogController extends Controller
     }
 
     /**
+     * Campos cuja mudança é considerada "fluxo de aprovação" (não edição de
+     * conteúdo). Quando uma entrada de log SÓ mexe nesses campos, ela é
+     * filtrada da listagem geral (/timesheet-logs) — continua visível no
+     * histórico individual do apontamento (/timesheets/{id}/logs).
+     */
+    private const APPROVAL_ONLY_FIELDS = [
+        'status', 'reviewed_at', 'reviewed_by', 'rejection_reason',
+    ];
+
+    /**
      * GET /api/v1/timesheet-logs
      * Filtros: user_id, project_id, customer_id, source, action, start_date, end_date, search
+     * NÃO retorna entradas que são apenas fluxo de aprovação.
      */
     public function index(Request $request): JsonResponse
     {
@@ -37,6 +48,16 @@ class TimesheetLogController extends Controller
                 'timesheet.project:id,code,name',
                 'timesheet.customer:id,name',
             ]);
+
+        // Portal de Sustentação: restringe a logs cujo timesheet pertença a projeto elegível.
+        if ($request->get('scope') === 'sustentacao') {
+            $scopedIds = app(\App\Services\SustentacaoScopeService::class)->projectIds();
+            if (empty($scopedIds)) {
+                $q->whereRaw('1 = 0');
+            } else {
+                $q->whereHas('timesheet', fn ($s) => $s->whereIn('project_id', $scopedIds));
+            }
+        }
 
         if ($request->filled('user_id')) {
             $q->whereHas('timesheet', fn ($s) => $s->where('user_id', $request->integer('user_id')));
@@ -62,6 +83,17 @@ class TimesheetLogController extends Controller
         if ($request->filled('end_date')) {
             $q->whereDate('created_at', '<=', $request->date('end_date'));
         }
+
+        // Filtro pré-paginação (Postgres JSONB): exclui entradas 'updated' cujos
+        // únicos campos mudados são de aprovação. Filtrar pós-paginação fazia
+        // a página vir vazia quando os 50 mais recentes eram todos aprovação.
+        $q->where(function ($w) {
+            $w->where('action', '!=', 'updated')
+              ->orWhereRaw(
+                  "EXISTS (SELECT 1 FROM jsonb_object_keys(changes::jsonb) k WHERE k NOT IN (?, ?, ?, ?))",
+                  self::APPROVAL_ONLY_FIELDS
+              );
+        });
 
         $perPage = min((int) $request->input('per_page', 50), 200);
 

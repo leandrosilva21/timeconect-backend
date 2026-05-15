@@ -39,7 +39,8 @@ class FechamentoClienteController extends Controller
 
         $customers = Customer::whereRaw('"active" = true')
             ->whereHas('projects', function ($q) {
-                $q->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand'));
+                $q->whereNull('parent_project_id')
+                  ->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand'));
             })
             ->orderBy('name')
             ->get(['id', 'name', 'company_name']);
@@ -154,6 +155,7 @@ class FechamentoClienteController extends Controller
             ->whereNull('deleted_at')
             ->whereHas('project', function ($q) use ($customerId, $contractCode) {
                 $q->where('customer_id', $customerId)
+                  ->whereNull('parent_project_id')
                   ->where('is_investimento_comercial', false);
                 if ($contractCode) {
                     $q->whereHas('contractType', fn ($q2) => $q2->where('code', $contractCode));
@@ -416,7 +418,7 @@ class FechamentoClienteController extends Controller
         $projectIds = Timesheet::whereBetween('date', [$from, $to])
             ->whereNotIn('status', $excludeStatuses)
             ->whereNull('deleted_at')
-            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
+            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)->whereNull('parent_project_id'))
             ->distinct()
             ->pluck('project_id');
 

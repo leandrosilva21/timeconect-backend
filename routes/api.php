@@ -38,6 +38,7 @@ use App\Http\Controllers\PartnerController;
 use App\Http\Controllers\PartnerReportController;
 use App\Http\Controllers\ConsultantHourBankController;
 use App\Http\Controllers\HolidayController;
+use App\Http\Controllers\ClientActivityController;
 use App\Http\Controllers\ClientPortalController;
 use App\Http\Controllers\FechadoController;
 use App\Http\Controllers\ProjectMessageController;
@@ -322,6 +323,12 @@ Route::prefix('v1')->group(function () {
         Route::get('/client/portal/summary', [ClientPortalController::class, 'summary'])->name('client.portal.summary');
         Route::get('/client/portal/projects/{projectId}/operational-summary', [ClientPortalController::class, 'operationalSummary'])
             ->name('client.portal.project-operational-summary');
+
+        // 🤝 Cliente envolvido em atividade pontual (acesso contextual, ADR 0009 appendix)
+        Route::get('/client/activities', [ClientActivityController::class, 'index'])->name('client.activities.index');
+        Route::get('/client/activities/{delivery}', [ClientActivityController::class, 'show'])->name('client.activities.show');
+        Route::get('/client/activities/{delivery}/timeline', [ClientActivityController::class, 'timeline'])->name('client.activities.timeline');
+        Route::post('/client/activities/{delivery}/comments', [ClientActivityController::class, 'storeComment'])->name('client.activities.comments.store');
 
         // 👥 CUSTOMERS - Protegido por permissões específicas (Admins sempre têm acesso)
         Route::middleware('permission.or.admin:customers.view')->group(function () {

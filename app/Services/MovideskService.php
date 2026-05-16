@@ -62,6 +62,27 @@ class MovideskService
     }
 
     /**
+     * Variante leve do fetchTicket — usa $expand mínimo (só actions/timeAppointments,
+     * sem clients/owner) e timeout maior. Pensada para slow-lane que reprocessa
+     * tickets que travaram no fetchTicket normal. Lança exception em qualquer falha
+     * (status != 200 ou exceção HTTP) — o caller registra o erro.
+     */
+    public function fetchTicketLight(int $ticketId): array
+    {
+        $response = Http::timeout(30)->get("{$this->baseUrl()}/tickets", [
+            'token'   => $this->token(),
+            'id'      => $ticketId,
+            '$expand' => 'actions($expand=timeAppointments;$select=id,type,isPublic,htmlDescription,createdBy,timeAppointments)',
+        ]);
+
+        if (!$response->successful()) {
+            throw new \RuntimeException("Movidesk HTTP {$response->status()}");
+        }
+
+        return $response->json();
+    }
+
+    /**
      * Busca tickets com lastUpdate > $since, com paginação automática.
      */
     public function fetchTicketsSince(Carbon $since): array

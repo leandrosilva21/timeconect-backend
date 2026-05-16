@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\MovideskProblemTicket;
 use App\Models\SystemSetting;
 use App\Services\MovideskService;
 use Carbon\Carbon;
@@ -58,6 +59,7 @@ class MovideskSyncCommand extends Command
                 if (!$ticketData) {
                     $this->warn("  ⚠️  Ticket #{$ticketId}: falhou ao buscar detalhes");
                     $totalFailed++;
+                    $this->recordProblem((string) $ticketId, 'fetchTicket retornou null (timeout ou status != 200)');
                     continue;
                 }
 
@@ -67,6 +69,9 @@ class MovideskSyncCommand extends Command
                 if ($created > 0) {
                     $this->line("  ✅ Ticket #{$ticketId}: {$created} apontamento(s) importado(s)");
                 }
+
+                // Sucesso: se o ticket estava na fila de problemas, sai dela.
+                MovideskProblemTicket::where('ticket_id', (string) $ticketId)->delete();
             } catch (\Throwable $e) {
                 // Isolamento por ticket: um erro não pode abortar o batch inteiro.
                 $totalFailed++;
@@ -75,6 +80,7 @@ class MovideskSyncCommand extends Command
                     'ticket_id' => $ticketId,
                     'error'     => $e->getMessage(),
                 ]);
+                $this->recordProblem((string) $ticketId, $e->getMessage());
             }
         }
 
@@ -114,5 +120,19 @@ class MovideskSyncCommand extends Command
     private function updateLastSync(): void
     {
         SystemSetting::set('movidesk_last_sync', now()->toIso8601String(), 'string', 'movidesk');
+    }
+
+    /**
+     * Upsert na fila de problemas. Atende a slow-lane (movidesk:retry-problem-tickets)
+     * pega esses tickets de hora em hora com fetchTicketLight (timeout 30s) e tenta
+     * de novo. Após MAX_ATTEMPTS, o ticket vira blacklisted (admin precisa intervir).
+     */
+    private function recordProblem(string $ticketId, string $error): void
+    {
+        $row = MovideskProblemTicket::firstOrNew(['ticket_id' => $ticketId]);
+        $row->attempts        = ($row->attempts ?? 0) + 1;
+        $row->last_error      = mb_substr($error, 0, 1000);
+        $row->last_attempt_at = now();
+        $row->save();
     }
 }

@@ -60,6 +60,15 @@ Schedule::command('movidesk:sync')
   ->withoutOverlapping(10)
   ->runInBackground();
 
+// Slow-lane: tickets que falharam no sync principal (timeout 5s) são reprocessados
+// aqui de hora em hora via fetchTicketLight (timeout 30s, $expand mínimo).
+Schedule::command('movidesk:retry-problem-tickets')
+  ->hourly()
+  ->name('movidesk-retry-problem-tickets')
+  ->description('Reprocessa tickets do Movidesk que falharam na sync principal')
+  ->withoutOverlapping(120)
+  ->runInBackground();
+
 // Sync do Portal de Sustentação (tickets dos últimos 90 dias com campos SLA)
 try { $portalSyncInterval = (int) \App\Models\SystemSetting::get('movidesk_portal_sync_interval_minutes', 30); }
 catch (\Exception $e) { $portalSyncInterval = 30; }

@@ -156,7 +156,18 @@ class TimesheetController extends Controller
         $perPage = min($request->get('pageSize', 15), 100);
         $page = (int) $request->get('page', 1);
 
-        $query = Timesheet::with(['user', 'customer', 'project.contractType', 'project.customer', 'project.serviceType', 'reviewedBy'])
+        // Eager-load com colunas específicas — evita trazer rows inteiras de relações
+        // (cada user/customer/project tem muitos campos não usados pela listagem).
+        // Reduz payload e tempo de serialização significativamente.
+        $query = Timesheet::with([
+                'user:id,name,email,type,partner_id,customer_id',
+                'customer:id,name',
+                'project' => fn($q) => $q->select('id', 'name', 'service_type_id', 'contract_type_id', 'customer_id', 'is_investimento_comercial', 'parent_project_id', 'status'),
+                'project.contractType:id,name',
+                'project.customer:id,name',
+                'project.serviceType:id,code,name',
+                'reviewedBy:id,name',
+            ])
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject', 'movidesk_tickets.solicitante as ticket_solicitante')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket');
 
@@ -435,12 +446,13 @@ class TimesheetController extends Controller
                     ->where('timesheets.is_billable_only', true)
                     ->sum('effort_minutes');
 
+                // Agrega no SQL (SUM(effort_minutes * consultant_extra_pct/100)) em vez
+                // de carregar todas as rows em PHP só pra somar — economiza tráfego e CPU.
                 $totalConsultantExtraMinutes = (int) round(
                     (clone $query)
                         ->where('timesheets.is_billable_only', false)
                         ->whereNotNull('consultant_extra_pct')
-                        ->get(['effort_minutes', 'consultant_extra_pct'])
-                        ->sum(fn ($t) => $t->effort_minutes * ((float) $t->consultant_extra_pct / 100))
+                        ->sum(\Illuminate\Support\Facades\DB::raw('timesheets.effort_minutes * timesheets.consultant_extra_pct / 100'))
                 );
 
                 $timesheets = $query->paginate($perPage, ['*'], 'page', $page);
@@ -490,7 +502,42 @@ class TimesheetController extends Controller
                     }
                 }
 
-                $items = collect($timesheets->items())->map(function ($ts) use ($hideClientPct, $ticketTotalsMap) {
+                // Batch das queries de conflicting_timesheets: 1 SELECT pra todos os
+                // conflitos do lote em vez de N queries (1 por conflito).
+                $conflictedItems = array_values(array_filter(
+                    $timesheets->items(),
+                    fn($t) => $t->status === Timesheet::STATUS_CONFLICTED && $t->start_time && $t->end_time && $t->date
+                ));
+                $conflictCandidatesByKey = [];
+                if (!empty($conflictedItems)) {
+                    try {
+                        $userIds     = array_unique(array_map(fn($t) => $t->user_id, $conflictedItems));
+                        $customerIdsCnf = array_unique(array_map(fn($t) => $t->customer_id, $conflictedItems));
+                        $datesCnf    = array_unique(array_map(
+                            fn($t) => $t->date instanceof \Carbon\Carbon ? $t->date->format('Y-m-d') : (string) $t->date,
+                            $conflictedItems
+                        ));
+                        $candidates = Timesheet::with(['customer', 'project.customer'])
+                            ->whereIn('user_id', $userIds)
+                            ->whereIn('customer_id', $customerIdsCnf)
+                            ->whereIn('date', $datesCnf)
+                            ->whereNotIn('status', [Timesheet::STATUS_REJECTED])
+                            ->whereNotNull('start_time')
+                            ->whereNotNull('end_time')
+                            ->get();
+                        foreach ($candidates as $c) {
+                            $cDate = $c->date instanceof \Carbon\Carbon ? $c->date->format('Y-m-d') : (string) $c->date;
+                            $key   = $c->user_id . ':' . $c->customer_id . ':' . $cDate;
+                            $conflictCandidatesByKey[$key][] = $c;
+                        }
+                    } catch (\Throwable $e) {
+                        \Illuminate\Support\Facades\Log::warning('conflicting_timesheets batch lookup failed', [
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                }
+
+                $items = collect($timesheets->items())->map(function ($ts) use ($hideClientPct, $ticketTotalsMap, $conflictCandidatesByKey) {
                     if ($hideClientPct) {
                         $ts->makeHidden(['client_extra_pct']);
                     }
@@ -499,42 +546,34 @@ class TimesheetController extends Controller
                         $arr['ticket_solicitante'] = json_decode($arr['ticket_solicitante'], true);
                     }
                     // Para timesheets em conflito, inclui os apontamentos sobrepostos
+                    // (filtragem por overlap feita in-memory sobre o lote pré-carregado).
                     $arr['conflicting_timesheets'] = [];
                     if ($ts->status === Timesheet::STATUS_CONFLICTED && $ts->start_time && $ts->end_time && $ts->date) {
-                        try {
-                            $dateStr  = $ts->date instanceof \Carbon\Carbon ? $ts->date->format('Y-m-d') : (string) $ts->date;
-                            $endStr   = $ts->end_time instanceof \Carbon\Carbon   ? $ts->end_time->format('H:i:s')   : substr((string) $ts->end_time,   0, 8);
-                            $startStr = $ts->start_time instanceof \Carbon\Carbon ? $ts->start_time->format('H:i:s') : substr((string) $ts->start_time, 0, 8);
-
-                            $arr['conflicting_timesheets'] = Timesheet::with(['customer', 'project.customer'])
-                                ->where('user_id', $ts->user_id)
-                                ->where('customer_id', $ts->customer_id) // só conflita no MESMO cliente
-                                ->whereDate('date', $dateStr)
-                                ->where('id', '!=', $ts->id)
-                                ->whereNotIn('status', [Timesheet::STATUS_REJECTED])
-                                ->whereNotNull('start_time')
-                                ->whereNotNull('end_time')
-                                ->where('start_time', '<', $endStr)
-                                ->where('end_time', '>', $startStr)
-                                ->get()
-                                ->map(fn($c) => [
-                                    'id'            => $c->id,
-                                    'date'          => $c->date instanceof \Carbon\Carbon ? $c->date->format('Y-m-d') : (string) $c->date,
-                                    'start_time'    => $c->start_time instanceof \Carbon\Carbon ? $c->start_time->format('H:i') : null,
-                                    'end_time'      => $c->end_time instanceof \Carbon\Carbon   ? $c->end_time->format('H:i')   : null,
-                                    'effort_hours'  => $c->effort_hours,
-                                    'customer_name' => $c->customer?->name ?? $c->project?->customer?->name,
-                                    'project_name'  => $c->project?->name,
-                                    'origin'        => $c->origin,
-                                ])
-                                ->values()
-                                ->all();
-                        } catch (\Throwable $e) {
-                            \Illuminate\Support\Facades\Log::warning('conflicting_timesheets lookup failed', [
-                                'timesheet_id' => $ts->id,
-                                'error'        => $e->getMessage(),
-                            ]);
-                        }
+                        $dateStr  = $ts->date instanceof \Carbon\Carbon ? $ts->date->format('Y-m-d') : (string) $ts->date;
+                        $endStr   = $ts->end_time instanceof \Carbon\Carbon   ? $ts->end_time->format('H:i:s')   : substr((string) $ts->end_time,   0, 8);
+                        $startStr = $ts->start_time instanceof \Carbon\Carbon ? $ts->start_time->format('H:i:s') : substr((string) $ts->start_time, 0, 8);
+                        $key      = $ts->user_id . ':' . $ts->customer_id . ':' . $dateStr;
+                        $bucket   = $conflictCandidatesByKey[$key] ?? [];
+                        $arr['conflicting_timesheets'] = collect($bucket)
+                            ->filter(function ($c) use ($ts, $startStr, $endStr) {
+                                if ($c->id === $ts->id) return false;
+                                $cStart = $c->start_time instanceof \Carbon\Carbon ? $c->start_time->format('H:i:s') : substr((string) $c->start_time, 0, 8);
+                                $cEnd   = $c->end_time   instanceof \Carbon\Carbon ? $c->end_time->format('H:i:s')   : substr((string) $c->end_time,   0, 8);
+                                // overlap clássico: a.start < b.end && b.start < a.end
+                                return $cStart < $endStr && $startStr < $cEnd;
+                            })
+                            ->map(fn($c) => [
+                                'id'            => $c->id,
+                                'date'          => $c->date instanceof \Carbon\Carbon ? $c->date->format('Y-m-d') : (string) $c->date,
+                                'start_time'    => $c->start_time instanceof \Carbon\Carbon ? $c->start_time->format('H:i') : null,
+                                'end_time'      => $c->end_time instanceof \Carbon\Carbon   ? $c->end_time->format('H:i')   : null,
+                                'effort_hours'  => $c->effort_hours,
+                                'customer_name' => $c->customer?->name ?? $c->project?->customer?->name,
+                                'project_name'  => $c->project?->name,
+                                'origin'        => $c->origin,
+                            ])
+                            ->values()
+                            ->all();
                     }
                     // Total acumulado do ticket no mesmo cliente (lifetime)
                     $tk = (string) ($ts->ticket ?? '');

@@ -890,6 +890,7 @@ Route::prefix('v1')->group(function () {
         // 🔗 MOVIDESK ADMIN - Sync manual e status da integração (somente admins)
         Route::middleware('permission.or.admin:system_settings.view')->group(function () {
             Route::get('/movidesk/status', [\App\Http\Controllers\MovideskAdminController::class, 'status'])->name('movidesk.status');
+            Route::get('/movidesk/problem-tickets', [\App\Http\Controllers\MovideskAdminController::class, 'problemTickets'])->name('movidesk.problem_tickets.index');
         });
 
         Route::middleware('permission.or.admin:system_settings.update')->group(function () {
@@ -901,6 +902,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/movidesk/debug-orgs',        [\App\Http\Controllers\MovideskAdminController::class, 'debugOrgs'])->name('movidesk.debug.orgs');
             Route::post('/movidesk/link-org',         [\App\Http\Controllers\MovideskAdminController::class, 'linkOrg'])->name('movidesk.link.org');
             Route::post('/movidesk/link-org-project', [\App\Http\Controllers\MovideskAdminController::class, 'linkOrgProject'])->name('movidesk.link.org.project');
+
+            // Slow-lane: tickets que travaram no fetchTicket principal
+            Route::post('/movidesk/problem-tickets/{id}/retry', [\App\Http\Controllers\MovideskAdminController::class, 'problemTicketRetry'])->name('movidesk.problem_tickets.retry');
+            Route::delete('/movidesk/problem-tickets/{id}',     [\App\Http\Controllers\MovideskAdminController::class, 'problemTicketDrop'])->name('movidesk.problem_tickets.drop');
         });
 
         // 🧠 MATRIZ DE CONHECIMENTO — Skills + Consultant Skills

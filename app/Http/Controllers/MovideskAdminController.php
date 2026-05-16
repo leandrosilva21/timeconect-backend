@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Customer;
 use App\Models\MovideskOrganization;
+use App\Models\MovideskProblemTicket;
 use App\Models\Project;
 use App\Models\SystemSetting;
 use App\Models\Timesheet;
@@ -358,5 +359,67 @@ class MovideskAdminController extends Controller
                 ? "Org vinculada ao projeto \"{$project->name}\"."
                 : 'Vínculo de projeto removido — voltará a usar projeto de sustentação ou padrão.',
         ]);
+    }
+
+    /**
+     * Lista tickets da fila de problemas (slow-lane).
+     * Filtros: ?status=retryable|blacklisted|all (default: all).
+     */
+    public function problemTickets(Request $request): JsonResponse
+    {
+        $status = $request->get('status', 'all');
+        $q      = MovideskProblemTicket::query();
+        if ($status === 'retryable')  $q->retryable();
+        if ($status === 'blacklisted') $q->blacklisted();
+
+        $items = $q->orderByDesc('blacklisted_at')
+                   ->orderByDesc('last_attempt_at')
+                   ->limit(500)
+                   ->get(['id', 'ticket_id', 'attempts', 'last_error', 'last_attempt_at', 'blacklisted_at', 'created_at'])
+                   ->map(fn($t) => [
+                       'id'              => $t->id,
+                       'ticket_id'       => $t->ticket_id,
+                       'attempts'        => $t->attempts,
+                       'last_error'      => $t->last_error,
+                       'last_attempt_at' => $t->last_attempt_at?->toIso8601String(),
+                       'blacklisted_at'  => $t->blacklisted_at?->toIso8601String(),
+                       'first_seen_at'   => $t->created_at?->toIso8601String(),
+                       'status'          => $t->blacklisted_at
+                           ? 'blacklisted'
+                           : ($t->attempts >= MovideskProblemTicket::MAX_ATTEMPTS ? 'blacklisted' : 'retryable'),
+                       'movidesk_url'    => "https://erpservices.movidesk.com/Ticket/Edit/{$t->ticket_id}",
+                   ]);
+
+        return response()->json([
+            'items' => $items,
+            'total' => $items->count(),
+        ]);
+    }
+
+    /**
+     * Reabilita um ticket blacklisted: zera attempts/last_error/blacklisted_at.
+     * Próxima execução do slow-lane (movidesk:retry-problem-tickets) vai tentar de novo.
+     */
+    public function problemTicketRetry(int $id): JsonResponse
+    {
+        $row = MovideskProblemTicket::findOrFail($id);
+        $row->attempts        = 0;
+        $row->blacklisted_at  = null;
+        $row->last_error      = null;
+        $row->last_attempt_at = null;
+        $row->save();
+
+        return response()->json(['success' => true, 'ticket_id' => $row->ticket_id]);
+    }
+
+    /**
+     * Remove definitivamente da fila — caller manualmente decidiu que não há nada a importar.
+     */
+    public function problemTicketDrop(int $id): JsonResponse
+    {
+        $row = MovideskProblemTicket::findOrFail($id);
+        $ticketId = $row->ticket_id;
+        $row->delete();
+        return response()->json(['success' => true, 'ticket_id' => $ticketId]);
     }
 }

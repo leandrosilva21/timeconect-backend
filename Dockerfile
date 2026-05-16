@@ -73,6 +73,17 @@ RUN printf 'server {\n\
 # Limite de upload PHP
 RUN printf 'upload_max_filesize=20M\npost_max_size=25M\nmemory_limit=256M\n' > /usr/local/etc/php/conf.d/uploads.ini
 
+# PHP-FPM pool: o default da imagem é max_children=5 — muito apertado.
+# Backend recebe tráfego de usuários + webhooks Movidesk (que podem segurar
+# o worker por até ~5s no fetchTicket). Com 5 workers, qualquer pico ou
+# pequena rajada de webhooks empilha requests. Subindo pra 25.
+RUN sed -i \
+      -e 's|^pm.max_children = 5$|pm.max_children = 25|' \
+      -e 's|^pm.start_servers = 2$|pm.start_servers = 5|' \
+      -e 's|^pm.min_spare_servers = 1$|pm.min_spare_servers = 3|' \
+      -e 's|^pm.max_spare_servers = 3$|pm.max_spare_servers = 10|' \
+      /usr/local/etc/php-fpm.d/www.conf
+
 # Supervisor para rodar nginx + php-fpm juntos
 RUN printf '[supervisord]\n\
 nodaemon=true\n\

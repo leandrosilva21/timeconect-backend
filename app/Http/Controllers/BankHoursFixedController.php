@@ -539,14 +539,21 @@ class BankHoursFixedController extends Controller
                     $accum += (float) ($proj->initial_hours_consumed ?? 0);
                 }
 
-                // Consumo do mês — sempre por timesheets do mês (independente do tipo de contrato).
-                // Antes: contratos fechados somavam sold_hours só se start_date caísse no mês.
-                // Mostrava 0 sempre que o filtro era um mês ≠ do início, escondendo o trabalho real do mês.
+                // Consumo do mês — apontamentos do período (independente do tipo de contrato).
                 $mins = $proj->timesheets()
                     ->where('status', '!=', 'rejected')
                     ->whereBetween('date', [$monthStart, $monthEnd])
                     ->sum('effort_minutes') ?? 0;
                 $accumMonth += round($mins / 60, 2);
+
+                // Fechado consome o valor vendido na data de início — soma sold_hours
+                // quando o start_date cai dentro do período do filtro.
+                if ($isClosedContract && $proj->start_date) {
+                    $sd = $proj->start_date->format('Y-m-d');
+                    if ($sd >= $monthStart && $sd <= $monthEnd) {
+                        $accumMonth += (float) ($proj->sold_hours ?? 0);
+                    }
+                }
             };
 
             $processProject($parentProject, $serviceTypeProjetoId, $projectsConsumedHours,     $projectsMonthConsumedHours);
@@ -784,6 +791,27 @@ class BankHoursFixedController extends Controller
             }
 
             $projects = $query->get();
+        }
+
+        // Filtro por start_date no período (Mês/Ano ou Período).
+        // Limita as linhas listadas aos projetos cuja data de início cai
+        // dentro do intervalo selecionado pelo filtro de data do dashboard.
+        $dateFrom = $request->get('date_from');
+        $dateTo   = $request->get('date_to');
+        if (!$dateFrom || !$dateTo) {
+            $month = (int) $request->get('month');
+            $year  = (int) $request->get('year');
+            if ($month >= 1 && $month <= 12 && $year >= 1970) {
+                $dateFrom = sprintf('%04d-%02d-01', $year, $month);
+                $dateTo   = date('Y-m-t', strtotime($dateFrom));
+            }
+        }
+        if ($dateFrom && $dateTo) {
+            $projects = $projects->filter(function ($p) use ($dateFrom, $dateTo) {
+                if (!$p->start_date) return false;
+                $sd = $p->start_date->format('Y-m-d');
+                return $sd >= $dateFrom && $sd <= $dateTo;
+            })->values();
         }
 
         $projectsData = $projects->map(function($project) {
@@ -5140,7 +5168,8 @@ class BankHoursFixedController extends Controller
     public function expensesModal(Request $request): JsonResponse
     {
         $user = $request->user();
-        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        $isCliente = $user && method_exists($user, 'isCliente') && $user->isCliente();
+        $customerId = $request->get('customer_id') ?? ($isCliente ? $user->customer_id : null);
         $projectId  = $request->get('project_id');
         $dateFrom   = $request->get('date_from');
         $dateTo     = $request->get('date_to');
@@ -5150,13 +5179,27 @@ class BankHoursFixedController extends Controller
             $q->whereHas('project', fn ($pq) => $pq->where('customer_id', $customerId));
         }
         if ($projectId) {
-            $q->where(function ($qq) use ($projectId) {
+            // Resolve o customer do projeto selecionado pra também incluir despesas
+            // lançadas em projetos de "Investimento Comercial" do mesmo cliente.
+            $projectCustomerId = \App\Models\Project::where('id', $projectId)->value('customer_id');
+            $q->where(function ($qq) use ($projectId, $projectCustomerId) {
                 $qq->where('project_id', $projectId)
                    ->orWhereHas('project', fn ($pq) => $pq->where('parent_project_id', $projectId));
+                if ($projectCustomerId) {
+                    $qq->orWhereHas('project', fn ($pq) => $pq
+                        ->where('customer_id', $projectCustomerId)
+                        ->where('is_investimento_comercial', true)
+                    );
+                }
             });
         }
         if ($dateFrom) $q->where('expense_date', '>=', $dateFrom);
         if ($dateTo)   $q->where('expense_date', '<=', $dateTo);
+
+        // Regra "Visão do Cliente": todo mundo vê só o que o cliente veria —
+        // despesas aprovadas e faturáveis (charge_client = true). Admin/coord
+        // continuam podendo ver tudo pela tela transversal de Despesas.
+        $q->where('status', 'approved')->where('charge_client', true);
 
         $expenses = $q->orderByDesc('expense_date')->orderByDesc('id')->limit(500)->get();
 

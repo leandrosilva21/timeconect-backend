@@ -159,6 +159,23 @@ class FechadoController extends Controller
             ->with('hourContributions')
             ->get();
 
+        // Filtro por start_date no período (Mês/Ano ou Período).
+        $dateFrom = $request->get('date_from');
+        $dateTo   = $request->get('date_to');
+        if (!$dateFrom || !$dateTo) {
+            if ($month >= 1 && $month <= 12 && $year >= 1970) {
+                $dateFrom = sprintf('%04d-%02d-01', $year, $month);
+                $dateTo   = date('Y-m-t', strtotime($dateFrom));
+            }
+        }
+        if ($dateFrom && $dateTo) {
+            $projects = $projects->filter(function ($p) use ($dateFrom, $dateTo) {
+                if (!$p->start_date) return false;
+                $sd = \Carbon\Carbon::parse($p->start_date)->format('Y-m-d');
+                return $sd >= $dateFrom && $sd <= $dateTo;
+            })->values();
+        }
+
         $data = $projects->map(function ($p) use ($month, $year) {
             $inMonth = false;
             if ($p->start_date) {
@@ -218,8 +235,12 @@ class FechadoController extends Controller
             return response()->json(['success' => true, 'data' => []]);
         }
 
+        // Regra "Visão do Cliente": todos os perfis veem só o que o cliente veria —
+        // despesas aprovadas e faturáveis (charge_client = true).
         $expenses = Expense::whereIn('project_id', $projectIds)
             ->with(['project:id,name,code', 'user:id,name', 'category:id,name'])
+            ->where('status', 'approved')
+            ->where('charge_client', true)
             ->orderBy('expense_date', 'desc')
             ->get()
             ->map(fn ($e) => [

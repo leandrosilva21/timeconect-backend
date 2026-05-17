@@ -61,6 +61,11 @@ class ProjectStageController extends Controller
             // Earned value (ADR 0002)
             $totalHours = (float) ($s->deliveries_hours_planned_sum ?? 0);
             $doneHours  = (float) ($s->deliveries_hours_planned_done_sum ?? 0);
+
+            // Fix Fase 9 (UX): horas efetivas = hours_planned se > 0, senão soma das deliveries.
+            // Evita que UI mostre "0h planejadas" quando as horas estão no nível atividade.
+            $stagePlanned = (float) ($s->hours_planned ?? 0);
+            $s->effective_hours_planned = $stagePlanned > 0 ? $stagePlanned : $totalHours;
             if ($totalHours > 0) {
                 $s->progress_pct = round(($doneHours / $totalHours) * 100, 2);
             } elseif (($s->deliveries_count ?? 0) > 0) {

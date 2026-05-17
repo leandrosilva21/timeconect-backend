@@ -63,6 +63,16 @@ class StageDeliveryController extends Controller
             ->where('status', $data['status'] ?? StageDelivery::STATUS_BACKLOG)
             ->max('order_index') + 1;
 
+        // Fix Fase 9: auto-persiste due_date sugerida se start+horas presentes e fim ausente.
+        // Antes o backend só RETORNAVA suggested_due_date — agora aplica direto pra que
+        // duration_business_days não fique null e a UI já mostre o intervalo completo.
+        if (empty($data['due_date']) && !empty($data['planned_start_at']) && !empty($data['hours_planned'])) {
+            $tmp = new StageDelivery($data);
+            if ($suggested = $this->suggestedDueDate($tmp)) {
+                $data['due_date'] = $suggested;
+            }
+        }
+
         $delivery = StageDelivery::create($data);
 
         $payload = $delivery->load('responsible:id,name,email')->toArray();
@@ -121,6 +131,11 @@ class StageDeliveryController extends Controller
 
     public function destroy(StageDelivery $delivery): JsonResponse
     {
+        // Fix Fase 9: limpa FK de dependentes antes do soft-delete pra evitar
+        // referências fantasma (FK ON DELETE SET NULL não dispara em soft-delete).
+        StageDelivery::where('depends_on_delivery_id', $delivery->id)
+            ->update(['depends_on_delivery_id' => null, 'dependency_type' => null]);
+
         $delivery->delete();
 
         return response()->json(['deleted' => true]);

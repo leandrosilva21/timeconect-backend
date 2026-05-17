@@ -2093,6 +2093,25 @@ class ProjectController extends Controller
             'allow_holiday' => (bool) $project->allow_holiday_work,
         ];
 
+        // Fix Fase 9: actual_hours por etapa no payload /schedule (evita 2 fetches no front).
+        // Soma effort_minutes/60 de timesheets approved+released agrupados por stage_id.
+        $stageIds = $stages->pluck('id')->all();
+        $actualByStage = [];
+        if (!empty($stageIds)) {
+            $actualByStage = \DB::table('timesheets')
+                ->whereNull('deleted_at')
+                ->whereIn('stage_id', $stageIds)
+                ->whereIn('status', [\App\Models\Timesheet::STATUS_APPROVED, \App\Models\Timesheet::STATUS_RELEASED])
+                ->groupBy('stage_id')
+                ->selectRaw('stage_id, COALESCE(SUM(effort_minutes),0)/60.0 as actual_hours')
+                ->pluck('actual_hours', 'stage_id')
+                ->map(fn ($v) => (float) $v)
+                ->all();
+        }
+        foreach ($stages as $st) {
+            $st->setAttribute('actual_hours', (float) ($actualByStage[$st->id] ?? 0));
+        }
+
         // Enriquecer cada delivery com os 4 campos derivados
         foreach ($stages as $st) {
             foreach ($st->deliveries as $d) {

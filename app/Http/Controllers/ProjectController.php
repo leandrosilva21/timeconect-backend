@@ -2170,7 +2170,13 @@ class ProjectController extends Controller
                 $derivedStatus = 'planejamento';
             }
             $st->setAttribute('derived_status', $derivedStatus);
-            $st->setAttribute('progress_pct', $total > 0 ? round(($done / $total) * 100, 2) : 0.0);
+            // Fase 10: alinhamento com /stages — earned value se houver horas, senão contagem.
+            $totalHours = (float) $st->deliveries->sum('hours_planned');
+            $doneHours  = (float) $st->deliveries->where('status', \App\Models\StageDelivery::STATUS_DONE)->sum('hours_planned');
+            $progressPct = $totalHours > 0
+                ? round(($doneHours / $totalHours) * 100, 2)
+                : ($total > 0 ? round(($done / $total) * 100, 2) : 0.0);
+            $st->setAttribute('progress_pct', $progressPct);
 
             $lastActAt = $st->deliveries->pluck('updated_at')->filter()->max();
             $daysSince = $lastActAt

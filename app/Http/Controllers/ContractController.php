@@ -335,7 +335,7 @@ class ContractController extends Controller
     {
         $request->validate([
             'file' => 'required|file|max:20480|mimes:pdf,doc,docx,xls,xlsx,ppt,pptx,jpg,jpeg,png,txt,csv,zip',
-            'type' => 'required|in:proposta,contrato,logo',
+            'type' => 'required|in:proposta,contrato,logo,aprovacao_cliente',
         ]);
 
         $file = $request->file('file');

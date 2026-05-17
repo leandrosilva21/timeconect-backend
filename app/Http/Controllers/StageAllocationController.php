@@ -76,45 +76,9 @@ class StageAllocationController extends Controller
         ]);
     }
 
-    /**
-     * @deprecated 2026-05-15 — alocação stage-level virou legado. ADR 0007 moveu
-     * a unidade de execução pra atividade (stage_delivery). Use o novo endpoint
-     * POST /activities/{delivery}/allocations (storeForActivity).
-     */
-    public function store(Request $request, ProjectStage $stage): JsonResponse
-    {
-        \Log::warning('[deprecated] POST /stages/{id}/allocations — use POST /activities/{id}/allocations (ADR 0007)', [
-            'stage_id' => $stage->id,
-            'user_id'  => $request->user()?->id,
-            'route'    => $request->path(),
-        ]);
-
-        $data = $request->validate([
-            'user_id'       => 'required|integer|exists:users,id',
-            'planned_hours' => 'required|numeric|min:0.5',
-        ]);
-
-        $existing = StageAllocation::where('stage_id', $stage->id)
-            ->where('user_id', $data['user_id'])
-            ->first();
-
-        if ($existing) {
-            return response()->json([
-                'message' => 'Consultor já alocado nesta etapa. Use PATCH pra atualizar horas.',
-            ], 422);
-        }
-
-        $err = $this->guardStageCapacity($stage, (float) $data['planned_hours']);
-        if ($err !== null) return $err;
-
-        $allocation = StageAllocation::create([
-            'stage_id'      => $stage->id,
-            'user_id'       => $data['user_id'],
-            'planned_hours' => $data['planned_hours'],
-        ]);
-
-        return response()->json($allocation->load('user:id,name,email'), 201);
-    }
+    // Removido 2026-05-17 (Fase 4 — ADR 0007). Allocation é exclusivamente
+    // activity-level via storeForActivity(). Rota POST /stages/{stage}/allocations
+    // foi removida em routes/api.php.
 
     public function update(Request $request, StageAllocation $allocation): JsonResponse
     {

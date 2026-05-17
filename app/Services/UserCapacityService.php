@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Timesheet;
+use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 
@@ -167,6 +168,45 @@ class UserCapacityService
             )'));
 
         return round($dailyHours - $planned, 2);
+    }
+
+    /**
+     * Resumo de capacidade num período (intervalo de datas).
+     * Soma `dailyAvailable` em cada dia útil entre $fromIso e $toIso.
+     * `overloaded` = qualquer dia útil com remaining < 0.
+     */
+    public static function periodSummary(int $userId, string $fromIso, string $toIso, float $dailyHours = 8.0): array
+    {
+        $from = Carbon::parse($fromIso);
+        $to   = Carbon::parse($toIso);
+        if ($to->lt($from)) {
+            return ['capacity_hours' => 0.0, 'planned_hours' => 0.0, 'remaining_hours' => 0.0, 'overloaded' => false, 'days_overloaded' => 0];
+        }
+
+        $calendar = app(\App\Services\BusinessCalendarService::class);
+        $capacity = 0.0;
+        $remaining = 0.0;
+        $daysOverloaded = 0;
+
+        $cursor = $from->copy();
+        while ($cursor->lte($to)) {
+            if ($calendar->isBusinessDay($cursor)) {
+                $capacity += $dailyHours;
+                $r = self::dailyAvailable($userId, $cursor, $dailyHours);
+                $remaining += $r;
+                if ($r < 0) $daysOverloaded++;
+            }
+            $cursor->addDay();
+        }
+
+        $planned = round($capacity - $remaining, 2);
+        return [
+            'capacity_hours'   => round($capacity, 2),
+            'planned_hours'    => $planned,
+            'remaining_hours'  => round($remaining, 2),
+            'overloaded'       => $daysOverloaded > 0,
+            'days_overloaded'  => $daysOverloaded,
+        ];
     }
 
     private static function health(float $planned, float $actual): string

@@ -487,7 +487,8 @@ Route::prefix('v1')->group(function () {
             Route::delete('/deliveries/{delivery}', [StageDeliveryController::class, 'destroy'])->name('deliveries.destroy');
             Route::post('/deliveries/{delivery}/move', [StageDeliveryController::class, 'move'])->name('deliveries.move');
             Route::post('/deliveries/{delivery}/recalc-dependents', [StageDeliveryController::class, 'recalcDependents'])->name('deliveries.recalc-dependents');
-            Route::post('/stages/{stage}/allocations', [StageAllocationController::class, 'store'])->name('stages.allocations.store');
+            // Removido (Fase 4 — ADR 0007): POST /stages/{stage}/allocations.
+            // Alocação é exclusivamente activity-level via POST /activities/{delivery}/allocations.
             Route::post('/stages/{stage}/aportes', [StageHourAporteController::class, 'store'])->name('stages.aportes.store');
             // Aporte no nível da atividade (Pilar C do refactor 2026-05-15)
             Route::post('/activities/{delivery}/aportes', [StageHourAporteController::class, 'storeForActivity'])->name('activities.aportes.store');
@@ -660,7 +661,17 @@ Route::prefix('v1')->group(function () {
 
         // Gerenciamento completo de usuários (requer permissões específicas)
         Route::get('/users', [UserController::class, 'index'])->name('users.index');
-        Route::get('/users/{user}', [UserController::class, 'show'])->name('users.show');
+        // IMPORTANTE: /users/capacity precisa vir ANTES de /users/{user} pra não cair
+        // no implicit param routing como {user}=capacity.
+        Route::middleware('block.cliente')->group(function () {
+            Route::get('/users/capacity', [UserCapacityController::class, 'index'])->name('users.capacity.index');
+            Route::get('/users/{user}/capacity', [UserCapacityController::class, 'show'])
+                ->where('user', '[0-9]+')
+                ->name('users.capacity.show');
+        });
+        Route::get('/users/{user}', [UserController::class, 'show'])
+            ->where('user', '[0-9]+')
+            ->name('users.show');
 
         Route::middleware('permission.or.admin:users.create')->group(function () {
             Route::post('/users', [UserController::class, 'store'])->name('users.store');
@@ -682,12 +693,6 @@ Route::prefix('v1')->group(function () {
 
         // Histórico de alterações de valor hora
         Route::get('/users/{user}/hourly-rate-history', [UserController::class, 'getHourlyRateHistory'])->name('users.hourly-rate-history');
-
-        // Capacidade global do consultor (Bloco E)
-        Route::middleware('block.cliente')->group(function () {
-            Route::get('/users/capacity', [UserCapacityController::class, 'index'])->name('users.capacity.index');
-            Route::get('/users/{user}/capacity', [UserCapacityController::class, 'show'])->name('users.capacity.show');
-        });
 
         // 📊 INDICADORES — Auster (admin only via check no controller; inclui projetos congelados)
         Route::get('/indicadores/auster/projects',      [AusterIndicatorsController::class, 'projects'])->name('indicadores.auster.projects');

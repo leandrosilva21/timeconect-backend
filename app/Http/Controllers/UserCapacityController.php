@@ -14,7 +14,7 @@ class UserCapacityController extends Controller
      * Lista alocações ativas (etapa não concluída, projeto operacional) com
      * planned/actual/remaining e totais. `overload` é derivado.
      */
-    public function show(User $user): JsonResponse
+    public function show(User $user, Request $request): JsonResponse
     {
         $capacity = $user->capacity_hours !== null
             ? (float) $user->capacity_hours
@@ -22,9 +22,19 @@ class UserCapacityController extends Controller
 
         $summary = UserCapacityService::summarize($user->id, $capacity);
 
+        // Opcional ?from=YYYY-MM-DD&to=YYYY-MM-DD — resumo restrito a período
+        // (sem params = comportamento global preservado).
+        $from = $request->query('from');
+        $to   = $request->query('to');
+        $extra = [];
+        if ($from && $to) {
+            $extra['period'] = UserCapacityService::periodSummary($user->id, $from, $to);
+        }
+
         return response()->json(array_merge(
             ['user' => ['id' => $user->id, 'name' => $user->name, 'email' => $user->email]],
             $summary,
+            $extra,
         ));
     }
 

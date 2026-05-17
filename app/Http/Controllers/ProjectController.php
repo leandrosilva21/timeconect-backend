@@ -2138,8 +2138,189 @@ class ProjectController extends Controller
                 } else {
                     $d->setAttribute('duration_business_days', null);
                 }
+
+                // Fase 10: is_late = atrasada (due passou e não concluída)
+                $isLate = false;
+                if ($d->due_date && $d->status !== \App\Models\StageDelivery::STATUS_DONE) {
+                    $isLate = $d->due_date->lt(\Carbon\Carbon::now()->startOfDay());
+                }
+                $d->setAttribute('is_late', $isLate);
             }
         }
+
+        // Fase 10: derived_status + risk_level + risk_reasons por etapa
+        foreach ($stages as $st) {
+            // derived_status derivado das deliveries (mesma regra de ProjectStageController)
+            $total = $st->deliveries->count();
+            $done  = $st->deliveries->where('status', \App\Models\StageDelivery::STATUS_DONE)->count();
+            $review = $st->deliveries->where('status', \App\Models\StageDelivery::STATUS_REVIEW)->count();
+            $waiting = $st->deliveries->where('status', \App\Models\StageDelivery::STATUS_WAITING_CLIENT)->count();
+
+            if ($total === 0) {
+                $derivedStatus = 'planejamento';
+            } elseif ($waiting > 0) {
+                $derivedStatus = 'bloqueada';
+            } elseif ($done === $total) {
+                $derivedStatus = 'concluida';
+            } elseif (($review + $done) === $total) {
+                $derivedStatus = 'homologacao';
+            } elseif ($done > 0 || $st->deliveries->where('status', '!=', 'backlog')->count() > 0) {
+                $derivedStatus = 'execucao';
+            } else {
+                $derivedStatus = 'planejamento';
+            }
+            $st->setAttribute('derived_status', $derivedStatus);
+            $st->setAttribute('progress_pct', $total > 0 ? round(($done / $total) * 100, 2) : 0.0);
+
+            $lastActAt = $st->deliveries->pluck('updated_at')->filter()->max();
+            $daysSince = $lastActAt
+                ? (int) \Carbon\Carbon::now()->startOfDay()->diffInDays(\Carbon\Carbon::parse($lastActAt)->startOfDay())
+                : null;
+
+            $risk = \App\Services\ProjectStageRiskService::compute([
+                'derived_status'      => $derivedStatus,
+                'expected_end_date'   => $st->expected_end_date?->toDateString(),
+                'days_since_activity' => $daysSince,
+                'planned_hours'       => (float) ($st->hours_planned ?? 0),
+                'actual_hours'        => (float) ($st->actual_hours ?? 0),
+                'team_overrun_count'  => 0,
+            ]);
+            $st->setAttribute('risk_level', $risk['level']);
+            $st->setAttribute('risk_reasons', $risk['reasons']);
+        }
+
+        // Fase 10: executive summary + alerts + team_load
+        $todayCarbon = \Carbon\Carbon::now()->startOfDay();
+        $totalDeliveries = 0; $doneDeliveries = 0; $lateCount = 0;
+        $blockedCount = 0; $reviewCount = 0; $waitingClientCount = 0; $inProgressCount = 0;
+        $hoursPlannedTotal = 0; $hoursActualTotal = 0;
+        $alerts = [];
+        $userIdsInvolved = [];
+        foreach ($stages as $st) {
+            $hoursActualTotal += (float) ($st->actual_hours ?? 0);
+            foreach ($st->deliveries as $d) {
+                $totalDeliveries++;
+                if ($d->status === \App\Models\StageDelivery::STATUS_DONE)         $doneDeliveries++;
+                if ($d->status === \App\Models\StageDelivery::STATUS_IN_PROGRESS)  $inProgressCount++;
+                if ($d->status === \App\Models\StageDelivery::STATUS_REVIEW)       $reviewCount++;
+                if ($d->status === \App\Models\StageDelivery::STATUS_WAITING_CLIENT) $waitingClientCount++;
+                if ($d->predecessor_state === 'pending')                            $blockedCount++;
+                if ($d->is_late)                                                    $lateCount++;
+                $hoursPlannedTotal += (float) ($d->hours_planned ?? 0);
+                if ($d->responsible_user_id) $userIdsInvolved[$d->responsible_user_id] = true;
+
+                // Alertas leves por delivery
+                if ($d->status === \App\Models\StageDelivery::STATUS_IN_PROGRESS
+                    && $d->updated_at
+                    && $todayCarbon->diffInDays(\Carbon\Carbon::parse($d->updated_at)->startOfDay()) > 5
+                    && !$d->is_late) {
+                    $alerts[] = [
+                        'severity' => 'warning',
+                        'type'     => 'stale_activity',
+                        'message'  => 'Atividade parada há mais de 5 dias',
+                        'delivery_id' => $d->id,
+                        'title'    => $d->title,
+                    ];
+                }
+                if ($d->is_late) {
+                    $alerts[] = [
+                        'severity' => 'danger',
+                        'type'     => 'overdue',
+                        'message'  => 'Prazo vencido — atividade ainda não concluída',
+                        'delivery_id' => $d->id,
+                        'title'    => $d->title,
+                    ];
+                }
+                if ($d->status === \App\Models\StageDelivery::STATUS_WAITING_CLIENT
+                    && $d->updated_at
+                    && $todayCarbon->diffInDays(\Carbon\Carbon::parse($d->updated_at)->startOfDay()) > 7) {
+                    $alerts[] = [
+                        'severity' => 'warning',
+                        'type'     => 'waiting_client_stale',
+                        'message'  => 'Aguardando cliente há mais de 7 dias — sem retorno',
+                        'delivery_id' => $d->id,
+                        'title'    => $d->title,
+                    ];
+                }
+                if (!$d->responsible_user_id) {
+                    $alerts[] = [
+                        'severity' => 'warning',
+                        'type'     => 'no_responsible',
+                        'message'  => 'Atividade sem responsável',
+                        'delivery_id' => $d->id,
+                        'title'    => $d->title,
+                    ];
+                }
+            }
+        }
+        // Alertas no nível etapa
+        foreach ($stages as $st) {
+            if ($st->risk_level === \App\Services\ProjectStageRiskService::LEVEL_HIGH) {
+                $alerts[] = [
+                    'severity' => 'danger',
+                    'type'     => 'stage_high_risk',
+                    'message'  => 'Etapa em risco alto: ' . implode(' · ', $st->risk_reasons ?? []),
+                    'stage_id' => $st->id,
+                    'title'    => $st->name,
+                ];
+            }
+        }
+
+        // Risco geral (precedência alto > médio > baixo)
+        $highStages = $stages->filter(fn ($s) => $s->risk_level === 'high')->count();
+        $medStages  = $stages->filter(fn ($s) => $s->risk_level === 'medium')->count();
+        $overallRisk = $highStages > 0 ? 'high' : ($medStages > 0 ? 'medium' : 'low');
+
+        // Atraso estimado: max(days_late) entre etapas vencidas
+        $maxDaysLate = 0;
+        foreach ($stages as $st) {
+            if ($st->expected_end_date && $st->derived_status !== 'concluida') {
+                $diff = (int) $todayCarbon->diffInDays($st->expected_end_date->startOfDay(), false);
+                if ($diff < 0 && abs($diff) > $maxDaysLate) $maxDaysLate = abs($diff);
+            }
+        }
+
+        // Team load: usa UserCapacityService.summarize por user_id envolvido (lightweight)
+        $teamLoad = [];
+        if (!empty($userIdsInvolved)) {
+            $usersData = \App\Models\User::whereIn('id', array_keys($userIdsInvolved))->get(['id','name','email','capacity_hours']);
+            foreach ($usersData as $u) {
+                $cap = $u->capacity_hours !== null ? (float) $u->capacity_hours : \App\Services\UserCapacityService::DEFAULT_CAPACITY_HOURS;
+                $summary = \App\Services\UserCapacityService::summarize($u->id, $cap);
+                $teamLoad[] = [
+                    'user' => [
+                        'id'    => $u->id,
+                        'name'  => $u->name,
+                        'profile_photo_url' => $u->profile_photo_url ?? null,
+                    ],
+                    'capacity_hours'  => $cap,
+                    'planned_hours'   => $summary['totals']['planned_hours'],
+                    'actual_hours'    => $summary['totals']['actual_hours'],
+                    'remaining_hours' => $summary['totals']['remaining_hours'],
+                    'usage_pct'       => $cap > 0 ? round(($summary['totals']['planned_hours'] / $cap) * 100, 1) : 0.0,
+                    'overloaded'      => (bool) $summary['overload'],
+                ];
+            }
+            usort($teamLoad, fn ($a, $b) => $b['usage_pct'] <=> $a['usage_pct']);
+        }
+
+        $executiveSummary = [
+            'progress_pct'         => $totalDeliveries > 0 ? round(($doneDeliveries / $totalDeliveries) * 100, 1) : 0.0,
+            'total_deliveries'     => $totalDeliveries,
+            'done_deliveries'      => $doneDeliveries,
+            'in_progress_count'    => $inProgressCount,
+            'review_count'         => $reviewCount,
+            'blocked_count'        => $blockedCount,
+            'waiting_client_count' => $waitingClientCount,
+            'overdue_count'        => $lateCount,
+            'hours_planned'        => round($hoursPlannedTotal, 2),
+            'hours_actual'         => round($hoursActualTotal, 2),
+            'hours_balance'        => round($hoursPlannedTotal - $hoursActualTotal, 2),
+            'overall_risk'         => $overallRisk,
+            'high_risk_stages'     => $highStages,
+            'medium_risk_stages'   => $medStages,
+            'estimated_delay_days' => $maxDaysLate,
+        ];
 
         // Calcula a janela do cronograma (min start, max end) — usado pelo Gantt
         $minDate = null;
@@ -2189,6 +2370,9 @@ class ProjectController extends Controller
                     'email' => $u->email,
                 ])->values(),
             ],
+            'executive'  => $executiveSummary,
+            'alerts'     => $alerts,
+            'team_load'  => $teamLoad,
             'stages' => $stages,
         ]);
     }

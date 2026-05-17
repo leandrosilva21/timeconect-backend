@@ -1920,7 +1920,41 @@ class ProjectController extends Controller
 
     public function nextCode(Request $request): JsonResponse
     {
-        $request->validate(['customer_id' => 'required|exists:customers,id']);
+        $request->validate([
+            'customer_id'       => 'required_without:parent_project_id|exists:customers,id',
+            'parent_project_id' => 'nullable|exists:projects,id',
+        ]);
+
+        // Modo subprojeto: próximo sub_seq disponível pro projeto pai informado
+        if ($request->filled('parent_project_id')) {
+            $parent = Project::withTrashed()->findOrFail($request->parent_project_id);
+            $parentCode = $parent->code;
+
+            $childCodes = Project::withTrashed()
+                ->where('parent_project_id', $parent->id)
+                ->pluck('code')
+                ->toArray();
+
+            $maxSub = 0;
+            foreach ($childCodes as $cc) {
+                if ($cc && preg_match('/-(\d{2})$/', $cc, $m)) {
+                    $maxSub = max($maxSub, (int) $m[1]);
+                }
+            }
+
+            $next = $maxSub + 1;
+            do {
+                $padded = str_pad($next, 2, '0', STR_PAD_LEFT);
+                $code   = $parentCode . '-' . $padded;
+                $next++;
+            } while (Project::withTrashed()->where('code', $code)->exists());
+
+            return response()->json([
+                'sub_seq'     => str_pad($next - 1, 2, '0', STR_PAD_LEFT),
+                'parent_code' => $parentCode,
+                'code'        => $code,
+            ]);
+        }
 
         $customer = Customer::findOrFail($request->customer_id);
 
@@ -1940,7 +1974,12 @@ class ProjectController extends Controller
             $nextSeq++;
         } while (Project::withTrashed()->where('code', $code)->exists());
 
-        return response()->json(['code' => $code, 'prefix' => $prefix, 'year' => $year]);
+        return response()->json([
+            'code'   => $code,
+            'prefix' => $prefix,
+            'year'   => $year,
+            'seq'    => str_pad($nextSeq - 1, 3, '0', STR_PAD_LEFT),
+        ]);
     }
 
     /**

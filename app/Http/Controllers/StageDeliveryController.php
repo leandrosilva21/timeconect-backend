@@ -279,6 +279,21 @@ class StageDeliveryController extends Controller
         $apply = (bool) $request->boolean('apply', false);
         $calendar = app(BusinessCalendarService::class);
 
+        // Preview com valor *que o coord está digitando* sem persistir.
+        // Aceito apenas quando apply=false.
+        $simulate = $request->input('simulate', []);
+        if (!$apply && is_array($simulate) && !empty($simulate)) {
+            if (array_key_exists('planned_start_at', $simulate)) {
+                $delivery->planned_start_at = $simulate['planned_start_at'] ? Carbon::parse($simulate['planned_start_at']) : null;
+            }
+            if (array_key_exists('due_date', $simulate)) {
+                $delivery->due_date = $simulate['due_date'] ? Carbon::parse($simulate['due_date']) : null;
+            }
+            if (array_key_exists('hours_planned', $simulate)) {
+                $delivery->hours_planned = $simulate['hours_planned'];
+            }
+        }
+
         $chain = [];
         $visited = [];
 

@@ -1979,22 +1979,139 @@ class ProjectController extends Controller
             ->get();
 
         // Estado do predecessor (FS) por atividade — usado pelo cronograma e board.
-        // O frontend renderiza 🔒 Aguardando quando state === 'pending'.
-        $predecessorById = [];
+        // O frontend renderiza 🔒 Bloqueada por quando state === 'pending'.
+        $statusById = [];
+        $titleById  = [];
+        $orderById  = [];
+        $hoursById  = [];
         foreach ($stages as $st) {
             foreach ($st->deliveries as $d) {
-                $predecessorById[$d->id] = $d->status;
+                $statusById[$d->id] = $d->status;
+                $titleById[$d->id]  = $d->title;
+                $orderById[$d->id]  = $d->order_index;
+                $hoursById[$d->id]  = (float) ($d->hours_planned ?? 0);
             }
         }
+        // Adjacência FS: predecessor → [dependentes diretos]
+        $adj = [];
         foreach ($stages as $st) {
             foreach ($st->deliveries as $d) {
                 if ($d->depends_on_delivery_id && $d->dependency_type === 'FS') {
-                    $predStatus = $predecessorById[$d->depends_on_delivery_id] ?? null;
+                    $adj[$d->depends_on_delivery_id][] = $d->id;
+                }
+            }
+        }
+
+        // Calcula títulos impactados (downstream transitivo FS, BFS depth ≤ 10)
+        $impactedFor = function (int $rootId) use ($adj, $titleById): array {
+            $out  = [];
+            $seen = [];
+            $queue = [$rootId];
+            $depth = 0;
+            while (!empty($queue) && $depth < 10) {
+                $depth++;
+                $next = [];
+                foreach ($queue as $id) {
+                    foreach ($adj[$id] ?? [] as $childId) {
+                        if (isset($seen[$childId])) continue;
+                        $seen[$childId] = true;
+                        if (isset($titleById[$childId])) {
+                            $out[] = $titleById[$childId];
+                        }
+                        $next[] = $childId;
+                    }
+                }
+                $queue = $next;
+            }
+            return $out;
+        };
+
+        // Critical path leve = longest path no DAG FS por horas planejadas.
+        // Topo-sort + DP, depois reconstrói o(s) caminho(s).
+        $criticalSet = [];
+        if (!empty($titleById)) {
+            $inDeg = [];
+            foreach ($titleById as $id => $_) {
+                $inDeg[$id] = 0;
+            }
+            foreach ($adj as $_parent => $children) {
+                foreach ($children as $c) {
+                    if (isset($inDeg[$c])) $inDeg[$c]++;
+                }
+            }
+            $queue = [];
+            foreach ($inDeg as $id => $deg) {
+                if ($deg === 0) $queue[] = $id;
+            }
+            // Tie-break por order_index
+            usort($queue, fn ($a, $b) => ($orderById[$a] ?? 0) <=> ($orderById[$b] ?? 0));
+            $topo = [];
+            $deg = $inDeg;
+            while (!empty($queue)) {
+                $n = array_shift($queue);
+                $topo[] = $n;
+                $newReady = [];
+                foreach ($adj[$n] ?? [] as $c) {
+                    $deg[$c]--;
+                    if ($deg[$c] === 0) $newReady[] = $c;
+                }
+                usort($newReady, fn ($a, $b) => ($orderById[$a] ?? 0) <=> ($orderById[$b] ?? 0));
+                foreach ($newReady as $c) $queue[] = $c;
+            }
+            $dist = [];
+            $pred = [];
+            foreach ($topo as $n) {
+                $dist[$n] = $hoursById[$n] ?? 0;
+                $pred[$n] = null;
+            }
+            foreach ($topo as $n) {
+                foreach ($adj[$n] ?? [] as $c) {
+                    $candidate = $dist[$n] + ($hoursById[$c] ?? 0);
+                    if ($candidate > $dist[$c]) {
+                        $dist[$c] = $candidate;
+                        $pred[$c] = $n;
+                    }
+                }
+            }
+            if (!empty($dist)) {
+                arsort($dist);
+                $end = array_key_first($dist);
+                while ($end !== null) {
+                    $criticalSet[$end] = true;
+                    $end = $pred[$end] ?? null;
+                }
+            }
+        }
+
+        // Calendário de negócio pra duration_business_days (singleton via container)
+        $calendar = app(\App\Services\BusinessCalendarService::class);
+
+        // Enriquecer cada delivery com os 4 campos derivados
+        foreach ($stages as $st) {
+            foreach ($st->deliveries as $d) {
+                if ($d->depends_on_delivery_id && $d->dependency_type === 'FS') {
+                    $predStatus = $statusById[$d->depends_on_delivery_id] ?? null;
                     $state = $predStatus === \App\Models\StageDelivery::STATUS_DONE ? 'done' : 'pending';
+                    $d->setAttribute('predecessor', [
+                        'id'    => (int) $d->depends_on_delivery_id,
+                        'title' => $titleById[$d->depends_on_delivery_id] ?? '',
+                    ]);
                 } else {
                     $state = 'none';
+                    $d->setAttribute('predecessor', null);
                 }
                 $d->setAttribute('predecessor_state', $state);
+                $d->setAttribute('impacted_titles', $impactedFor($d->id));
+                $d->setAttribute('is_critical', isset($criticalSet[$d->id]));
+
+                if ($d->planned_start_at && $d->due_date) {
+                    $d->setAttribute(
+                        'duration_business_days',
+                        $calendar->businessDaysBetween($d->planned_start_at, $d->due_date)
+                    );
+                } else {
+                    $d->setAttribute('duration_business_days', null);
+                }
             }
         }
 

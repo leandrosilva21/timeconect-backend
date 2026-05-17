@@ -34,8 +34,18 @@ class UserCapacityController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        // Filtro opcional ?ids=12,17,23 — pra páginas como Cronograma que só
+        // precisam dos responsáveis listados (evita iterar todos os consultores).
+        $idsParam = (string) $request->query('ids', '');
+        $ids = collect(explode(',', $idsParam))
+            ->map(fn ($s) => (int) trim($s))
+            ->filter()
+            ->values()
+            ->all();
+
         $users = User::query()
             ->where('type', 'consultor')
+            ->when(!empty($ids), fn ($q) => $q->whereIn('id', $ids))
             ->orderBy('name')
             ->get(['id', 'name', 'email', 'capacity_hours']);
 

@@ -62,6 +62,24 @@ class BusinessCalendarService
     }
 
     /**
+     * Conta dias úteis entre $start e $end (inclusivo). Skip sábado/domingo/feriado.
+     * Retorna 0 se $end < $start. Retorna 1 se mesmo dia e dia útil.
+     */
+    public function businessDaysBetween(CarbonInterface $start, CarbonInterface $end): int
+    {
+        $a = $start instanceof Carbon ? $start->copy()->startOfDay() : Carbon::parse($start)->startOfDay();
+        $b = $end instanceof Carbon ? $end->copy()->startOfDay() : Carbon::parse($end)->startOfDay();
+        if ($b->lt($a)) return 0;
+        $count = 0;
+        $cursor = $a->copy();
+        while ($cursor->lte($b)) {
+            if ($this->isBusinessDay($cursor)) $count++;
+            $cursor->addDay();
+        }
+        return $count;
+    }
+
+    /**
      * Distribui $hours horas a partir de $start usando $dailyHours por dia útil.
      * Retorna o datetime do término (último dia útil consumido, no horário
      * em que a última fração de hora caiu).

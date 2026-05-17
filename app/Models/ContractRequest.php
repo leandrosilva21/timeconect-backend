@@ -86,4 +86,9 @@ class ContractRequest extends Model
     {
         return $this->hasMany(ContractRequestMessage::class);
     }
+
+    public function watchers(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(ContractRequestWatcher::class);
+    }
 }

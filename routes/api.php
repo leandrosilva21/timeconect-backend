@@ -4,10 +4,17 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AusterIndicatorsController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\MeController;
+use App\Http\Controllers\UserCapacityController;
 use App\Http\Controllers\ContractTypeController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\PasswordResetController;
 use App\Http\Controllers\ProjectController;
+use App\Http\Controllers\ProjectStageController;
+use App\Http\Controllers\StageDeliveryController;
+use App\Http\Controllers\DeliveryEventController;
+use App\Http\Controllers\StageAllocationController;
+use App\Http\Controllers\StageHourAporteController;
 use App\Http\Controllers\ServiceTypeController;
 use App\Http\Controllers\TimesheetController;
 use App\Http\Controllers\ExpenseController;
@@ -31,6 +38,7 @@ use App\Http\Controllers\PartnerController;
 use App\Http\Controllers\PartnerReportController;
 use App\Http\Controllers\ConsultantHourBankController;
 use App\Http\Controllers\HolidayController;
+use App\Http\Controllers\ClientActivityController;
 use App\Http\Controllers\ClientPortalController;
 use App\Http\Controllers\FechadoController;
 use App\Http\Controllers\ProjectMessageController;
@@ -42,6 +50,7 @@ use App\Http\Controllers\SkillController;
 use App\Http\Controllers\ConsultantSkillController;
 use App\Http\Controllers\GapController;
 use App\Http\Controllers\CandidateController;
+use App\Http\Controllers\SearchController;
 
 /*
 |--------------------------------------------------------------------------
@@ -119,6 +128,11 @@ Route::prefix('v1')->group(function () {
         Route::get('/user', [AuthController::class, 'user'])->name('user.profile');
         Route::put('/user/profile', [AuthController::class, 'updateProfile'])->name('user.update');
         Route::put('/user/theme-preference', [AuthController::class, 'updateThemePreference'])->name('user.theme-preference');
+
+        // Cards atribuídos ao usuário corrente (visão consultor — Bloco F)
+        Route::get('/me/cards', [MeController::class, 'cards'])->middleware('block.cliente')->name('me.cards');
+        // Comentários onde o usuário foi mencionado (refactor 2026-05-15)
+        Route::get('/me/mentions', [MeController::class, 'mentions'])->middleware('block.cliente')->name('me.mentions');
 
         // Autenticação
         Route::post('/auth/logout', [AuthController::class, 'logout'])->name('auth.logout');
@@ -310,6 +324,12 @@ Route::prefix('v1')->group(function () {
         Route::get('/client/portal/projects/{projectId}/operational-summary', [ClientPortalController::class, 'operationalSummary'])
             ->name('client.portal.project-operational-summary');
 
+        // 🤝 Cliente envolvido em atividade pontual (acesso contextual, ADR 0009 appendix)
+        Route::get('/client/activities', [ClientActivityController::class, 'index'])->name('client.activities.index');
+        Route::get('/client/activities/{delivery}', [ClientActivityController::class, 'show'])->name('client.activities.show');
+        Route::get('/client/activities/{delivery}/timeline', [ClientActivityController::class, 'timeline'])->name('client.activities.timeline');
+        Route::post('/client/activities/{delivery}/comments', [ClientActivityController::class, 'storeComment'])->name('client.activities.comments.store');
+
         // 👥 CUSTOMERS - Protegido por permissões específicas (Admins sempre têm acesso)
         Route::middleware('permission.or.admin:customers.view')->group(function () {
             Route::get('/customers', [CustomerController::class, 'index'])->name('customers.index');
@@ -430,6 +450,50 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:projects.delete')->group(function () {
             Route::delete('/projects/{project}', [ProjectController::class, 'destroy'])->name('projects.destroy');
+        });
+
+        // 🧱 PROJECT STAGES + STAGE DELIVERIES + DELIVERY EVENTS
+        // Etapas (frentes paralelas) e entregas (cards do kanban operacional).
+        // Autorização granular via Policy do Project (read/update do Project).
+        Route::middleware(['permission.or.admin:projects.view', 'block.cliente'])->group(function () {
+            Route::get('/projects/{project}/stages', [ProjectStageController::class, 'index'])->name('stages.index');
+            Route::get('/projects/{project}/delay-risk', [ProjectStageController::class, 'delayRisk'])->name('projects.delay-risk');
+            Route::get('/projects/{project}/consolidated-team', [ProjectController::class, 'consolidatedTeam'])->name('projects.consolidated-team');
+            Route::get('/projects/{project}/schedule', [ProjectController::class, 'schedule'])->name('projects.schedule');
+            Route::get('/stages/{stage}', [ProjectStageController::class, 'show'])->name('stages.show');
+            Route::get('/stages/{stage}/activity', [ProjectStageController::class, 'activity'])->name('stages.activity');
+            Route::get('/stages/{stage}/deliveries', [StageDeliveryController::class, 'index'])->name('deliveries.index');
+            Route::get('/deliveries/{delivery}', [StageDeliveryController::class, 'show'])->name('deliveries.show');
+            Route::get('/deliveries/{delivery}/events', [DeliveryEventController::class, 'index'])->name('deliveries.events');
+            Route::get('/stages/{stage}/allocations', [StageAllocationController::class, 'index'])->name('stages.allocations.index');
+            Route::get('/stages/{stage}/aportes', [StageHourAporteController::class, 'index'])->name('stages.aportes.index');
+            // Comentário operacional (Pilar 3) — write permitido para qualquer um que possa ver (consultor alocado, coord, admin)
+            Route::post('/stages/{stage}/comments', [ProjectStageController::class, 'storeComment'])->name('stages.comments.store');
+
+            // Atividade como unidade de execução (Pilar A do refactor 2026-05-15)
+            Route::get('/activities/{delivery}/activity', [StageDeliveryController::class, 'activity'])->name('activities.activity');
+            Route::post('/activities/{delivery}/comments', [StageDeliveryController::class, 'storeComment'])->name('activities.comments.store');
+            Route::get('/activities/{delivery}/aportes', [StageHourAporteController::class, 'indexForActivity'])->name('activities.aportes.index');
+            Route::get('/activities/{delivery}/allocations', [StageAllocationController::class, 'indexForActivity'])->name('activities.allocations.index');
+        });
+        Route::middleware(['permission.or.admin:projects.update', 'block.cliente'])->group(function () {
+            Route::post('/projects/{project}/stages', [ProjectStageController::class, 'store'])->name('stages.store');
+            Route::patch('/stages/{stage}', [ProjectStageController::class, 'update'])->name('stages.update');
+            Route::delete('/stages/{stage}', [ProjectStageController::class, 'destroy'])->name('stages.destroy');
+            Route::post('/projects/{project}/stages/reorder', [ProjectStageController::class, 'reorder'])->name('stages.reorder');
+
+            Route::post('/stages/{stage}/deliveries', [StageDeliveryController::class, 'store'])->name('deliveries.store');
+            Route::patch('/deliveries/{delivery}', [StageDeliveryController::class, 'update'])->name('deliveries.update');
+            Route::delete('/deliveries/{delivery}', [StageDeliveryController::class, 'destroy'])->name('deliveries.destroy');
+            Route::post('/deliveries/{delivery}/move', [StageDeliveryController::class, 'move'])->name('deliveries.move');
+            Route::post('/deliveries/{delivery}/recalc-dependents', [StageDeliveryController::class, 'recalcDependents'])->name('deliveries.recalc-dependents');
+            Route::post('/stages/{stage}/allocations', [StageAllocationController::class, 'store'])->name('stages.allocations.store');
+            Route::post('/stages/{stage}/aportes', [StageHourAporteController::class, 'store'])->name('stages.aportes.store');
+            // Aporte no nível da atividade (Pilar C do refactor 2026-05-15)
+            Route::post('/activities/{delivery}/aportes', [StageHourAporteController::class, 'storeForActivity'])->name('activities.aportes.store');
+            Route::post('/activities/{delivery}/allocations', [StageAllocationController::class, 'storeForActivity'])->name('activities.allocations.store');
+            Route::patch('/allocations/{allocation}', [StageAllocationController::class, 'update'])->name('allocations.update');
+            Route::delete('/allocations/{allocation}', [StageAllocationController::class, 'destroy'])->name('allocations.destroy');
         });
 
         // 💰 HOUR CONTRIBUTIONS - Aportes de Horas (vinculados a projetos)
@@ -618,6 +682,12 @@ Route::prefix('v1')->group(function () {
 
         // Histórico de alterações de valor hora
         Route::get('/users/{user}/hourly-rate-history', [UserController::class, 'getHourlyRateHistory'])->name('users.hourly-rate-history');
+
+        // Capacidade global do consultor (Bloco E)
+        Route::middleware('block.cliente')->group(function () {
+            Route::get('/users/capacity', [UserCapacityController::class, 'index'])->name('users.capacity.index');
+            Route::get('/users/{user}/capacity', [UserCapacityController::class, 'show'])->name('users.capacity.show');
+        });
 
         // 📊 INDICADORES — Auster (admin only via check no controller; inclui projetos congelados)
         Route::get('/indicadores/auster/projects',      [AusterIndicatorsController::class, 'projects'])->name('indicadores.auster.projects');
@@ -832,6 +902,7 @@ Route::prefix('v1')->group(function () {
 
         // 📋 REQUISIÇÕES DE CONTRATO (clientes enviam necessidades)
         Route::get('/contract-requests/options',              [\App\Http\Controllers\ContractRequestController::class, 'options'])->name('contract-requests.options');
+        Route::post('/contract-requests/resolve-emails',      [\App\Http\Controllers\ContractRequestController::class, 'resolveEmails'])->name('contract-requests.resolve-emails');
         Route::get('/contract-requests',                      [\App\Http\Controllers\ContractRequestController::class, 'index'])->name('contract-requests.index');
         Route::post('/contract-requests',                     [\App\Http\Controllers\ContractRequestController::class, 'store'])->name('contract-requests.store');
         Route::get('/contract-requests/{contractRequest}',    [\App\Http\Controllers\ContractRequestController::class, 'show'])->name('contract-requests.show');
@@ -922,6 +993,10 @@ Route::prefix('v1')->group(function () {
         // 📋 KANBAN DE CANDIDATOS
         Route::get('/candidates',                      [CandidateController::class, 'index'])->name('candidates.index');
         Route::get('/candidates/triage-queue',         [CandidateController::class, 'triageQueue'])->name('candidates.triage-queue');
+
+        // 🔍 BUSCA GLOBAL
+        Route::get('/search',                          [SearchController::class, 'search'])->name('search.global');
+        Route::get('/search/advanced',                 [SearchController::class, 'advanced'])->name('search.advanced');
         Route::patch('/candidates/{id}',               [CandidateController::class, 'update'])->name('candidates.update');
         Route::patch('/candidates/{id}/status',        [CandidateController::class, 'updateStatus'])->name('candidates.status.update');
 
@@ -931,6 +1006,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/critical-skills',               [GapController::class, 'storeCriticalSkill'])->name('critical-skills.store');
         Route::post('/projects/{id}/required-skills', [GapController::class, 'storeProjectRequiredSkill'])->name('projects.required-skills.store');
         Route::get('/projects/{id}/recommendations',  [GapController::class, 'recommendations'])->name('projects.recommendations');
+        Route::get('/projects/{id}/candidate-match',  [GapController::class, 'candidateMatch'])->name('projects.candidate-match');
         Route::post('/projects/{id}/allocate',        [GapController::class, 'allocate'])->name('projects.allocate');
         Route::get('/projects/{id}/team-recommendation', [GapController::class, 'teamRecommendation'])->name('projects.team-recommendation');
         Route::post('/projects/{id}/allocate-team',    [GapController::class, 'allocateTeam'])->name('projects.allocate-team');

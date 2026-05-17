@@ -650,7 +650,13 @@ class ContractController extends Controller
                 $contract->load(['customer', 'contacts', 'attachments']);
 
                 DB::transaction(function () use ($contract, $coordinatorId, $request) {
-                    $project = $this->createProjectFromContract($contract, $coordinatorId);
+                    // Coordenador alocado ⇒ projeto entra em BACKLOG operacional (ADR 0002).
+                    // Quem move pra "EM EXECUÇÃO" depois é o kanban operacional /projetos/kanban.
+                    $project = $this->createProjectFromContract(
+                        $contract,
+                        $coordinatorId,
+                        Project::STATUS_BACKLOG
+                    );
 
                     $contract->update([
                         'project_id'            => $project->id,
@@ -731,7 +737,7 @@ class ContractController extends Controller
     public function projectMove(Request $request, \App\Models\Project $project): JsonResponse
     {
         $validated = $request->validate([
-            'status'              => 'nullable|string|in:awaiting_start,started,liberado_para_testes,paused,cancelled,finished',
+            'status'              => 'nullable|string|in:awaiting_start,backlog,planning,started,liberado_para_testes,paused,cancelled,finished',
             'coordinator_id'      => 'nullable|integer|exists:users,id',
             'from_coordinator_id' => 'nullable|integer|exists:users,id',
         ]);
@@ -1161,7 +1167,13 @@ class ContractController extends Controller
         ];
     }
 
-    private function createProjectFromContract(Contract $contract, ?int $coordinatorId): Project
+    /**
+     * @param string $initialStatus Status inicial do projeto criado. Default `awaiting_start`.
+     *                              Quando chamado via kanbanMove → coordenador, deve ser `backlog`
+     *                              (ver ADR 0002 — coordenador alocado significa BACKLOG operacional,
+     *                              não execução).
+     */
+    private function createProjectFromContract(Contract $contract, ?int $coordinatorId, string $initialStatus = Project::STATUS_AWAITING_START): Project
     {
         $codeService   = new ProjectCodeService();
         $parentProject = $contract->parent_project_id ? Project::find($contract->parent_project_id) : null;
@@ -1181,7 +1193,7 @@ class ContractController extends Controller
             'coordinator_hours'      => $contract->pct_horas_coordenador !== null ? (int) $contract->pct_horas_coordenador : null,
             'consultant_hours'       => $contract->horas_consultor,
             'start_date'             => $contract->expectativa_inicio,
-            'status'                 => Project::STATUS_AWAITING_START,
+            'status'                 => $initialStatus,
             'contract_id'            => $contract->id,
             'tipo_alocacao'          => $contract->tipo_alocacao,
             'architect_id'           => $contract->architect_id,

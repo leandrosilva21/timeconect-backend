@@ -667,6 +667,8 @@ class TimesheetController extends Controller
             'observation' => 'nullable|string|max:5000',
             'ticket' => 'nullable',
             'attachment' => 'nullable|file|mimes:pdf,jpg,jpeg,png,doc,docx|max:5120',
+            'stage_id' => 'nullable|integer|exists:project_stages,id',
+            'stage_delivery_id' => 'nullable|integer|exists:stage_deliveries,id',
         ];
 
         // Se é administrador ou coordenador, pode especificar user_id
@@ -945,6 +947,59 @@ class TimesheetController extends Controller
             $timesheet = new Timesheet($validatedData);
             $timesheet->user_id = $timesheetUserId;
             $timesheet->customer_id = $project->customer_id;
+
+            // Inferência de stage_id quando não veio no request e não há delivery (que já popularia
+            // via mutator). 1 alocação → auto; N → mantém NULL (frontend mostra dropdown); 0 → NULL.
+            // Persiste a escolha final em project_consultants.last_stage_id pra pré-selecionar.
+            if (empty($timesheet->stage_id) && empty($timesheet->stage_delivery_id)) {
+                $allocations = \App\Models\StageAllocation::query()
+                    ->whereHas('stage', fn ($q) => $q->where('project_id', $project->id))
+                    ->where('user_id', $timesheetUserId)
+                    ->get(['stage_id']);
+
+                if ($allocations->count() === 1) {
+                    $timesheet->stage_id = $allocations->first()->stage_id;
+                }
+                // N alocações: deixa frontend escolher via dropdown (não preenche)
+                // 0 alocações: stage_id fica NULL (apontamento "geral do projeto")
+            }
+
+            // Guard de saldo: se há stage_id e projeto operacional, bloqueia se o
+            // apontamento estourar a alocação do consultor naquela etapa.
+            // Ver ADR 0004.
+            if (
+                $timesheet->stage_id
+                && $project->isOperational()
+            ) {
+                $allocation = \App\Models\StageAllocation::where('stage_id', $timesheet->stage_id)
+                    ->where('user_id', $timesheetUserId)
+                    ->first();
+
+                if ($allocation) {
+                    $consumedMinutes = (int) Timesheet::where('stage_id', $timesheet->stage_id)
+                        ->where('user_id', $timesheetUserId)
+                        ->whereNull('deleted_at')
+                        ->whereIn('status', [Timesheet::STATUS_APPROVED, Timesheet::STATUS_RELEASED, Timesheet::STATUS_PENDING])
+                        ->sum('effort_minutes');
+
+                    $plannedMinutes = (int) round(((float) $allocation->planned_hours) * 60);
+                    $afterMinutes = $consumedMinutes + (int) $timesheet->effort_minutes;
+
+                    if ($plannedMinutes > 0 && $afterMinutes > $plannedMinutes) {
+                        DB::rollBack();
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Sem saldo disponível. Verifique com o coordenador.',
+                            'detail'  => sprintf(
+                                'Esta etapa tem %.1fh planejadas pra você; já consumiu/pendentes %.1fh; este apontamento somaria %.1fh.',
+                                $plannedMinutes / 60,
+                                $consumedMinutes / 60,
+                                $afterMinutes / 60
+                            ),
+                        ], 422);
+                    }
+                }
+            }
             $timesheet->status = $hasConflict ? Timesheet::STATUS_CONFLICTED : Timesheet::STATUS_PENDING;
             $timesheet->origin = 'web'; // Origem: criação manual via webapp
             $timesheet->is_billable_only = $user->isAdmin()
@@ -971,8 +1026,19 @@ class TimesheetController extends Controller
 
             $timesheet->save();
 
-            // Auto-transição: se o projeto está "Aguardando início", marcar como "Iniciado"
-            if ($project->status === Project::STATUS_AWAITING_START) {
+            // Persiste "última etapa usada" pra pré-selecionar no próximo apontamento.
+            // Só atualiza quando stage_id ficou definido (auto-inferido ou veio do request).
+            if ($timesheet->stage_id) {
+                DB::table('project_consultants')
+                    ->where('project_id', $project->id)
+                    ->where('user_id', $timesheetUserId)
+                    ->update(['last_stage_id' => $timesheet->stage_id]);
+            }
+
+            // Auto-transição: apontar hora real significa execução começou. Sai de
+            // awaiting_start (sem coord) ou backlog (com coord, aguardando início) e vai
+            // direto pra started. Ver ADR 0002.
+            if (in_array($project->status, [Project::STATUS_AWAITING_START, Project::STATUS_BACKLOG, Project::STATUS_PLANNING], true)) {
                 $project->status = Project::STATUS_STARTED;
                 $project->save();
                 $this->invalidateListCache('projects');

@@ -805,6 +805,24 @@ class ProjectController extends Controller
         $consultantGroupIds = $validated['consultant_group_ids'] ?? [];
         unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['consultant_group_ids']);
 
+        // Pilar 1: projeto operacional não aceita alocação direta (consultants)
+        // — aloca via /stages/{id}/allocations. ADR 0007.
+        if (!empty($consultantIds) && !empty($validated['service_type_id'])) {
+            $st = \App\Models\ServiceType::find($validated['service_type_id']);
+            $name = strtolower((string) ($st?->name ?? ''));
+            $isOperational = $name === '' || (
+                !str_contains($name, 'sustenta')
+                && !str_contains($name, 'cloud')
+                && !str_contains($name, 'bizify')
+            );
+            if ($isOperational) {
+                return response()->json([
+                    'message' => 'Projeto operacional aloca via etapas — use /stages/{id}/allocations.',
+                    'detail'  => 'A alocação direta de consultores no projeto é permitida apenas em projetos de sustentação. Em projetos operacionais, equipe é derivada das alocações de cada etapa.',
+                ], 422);
+            }
+        }
+
         if (!Schema::hasColumn('projects', 'allow_negative_balance')) {
             unset($validated['allow_negative_balance']);
         }
@@ -1221,6 +1239,18 @@ class ProjectController extends Controller
         $consultantIds      = $validated['consultant_ids'] ?? null;
         $coordinatorIds     = $validated['coordinator_ids'] ?? $validated['approver_ids'] ?? null;
         $consultantGroupIds = array_key_exists('consultant_group_ids', $validated) ? $validated['consultant_group_ids'] : false;
+
+        // Pilar 1: bloqueia alocação direta em projeto operacional (ADR 0007).
+        // Linhas existentes não são deletadas — apenas writes novos são rejeitados.
+        if (!empty($consultantIds)) {
+            $project->loadMissing('serviceType');
+            if ($project->isOperational()) {
+                return response()->json([
+                    'message' => 'Projeto operacional aloca via etapas — use /stages/{id}/allocations.',
+                    'detail'  => 'A alocação direta de consultores no projeto é permitida apenas em projetos de sustentação. Em projetos operacionais, equipe é derivada das alocações de cada etapa.',
+                ], 422);
+            }
+        }
         $soldHoursEffectiveFrom = isset($validated['sold_hours_effective_from'])
             ? Carbon::parse($validated['sold_hours_effective_from'])->startOfMonth()->toDateString()
             : Carbon::now()->startOfMonth()->toDateString();
@@ -1915,6 +1945,203 @@ class ProjectController extends Controller
             'contract_types' => ContractType::getActiveOptions(),
             'statuses' => Project::getStatuses(),
             'expense_responsible_parties' => Project::getExpenseResponsiblePartyOptions(),
+        ]);
+    }
+
+    /**
+     * Cronograma operacional do projeto (ADR 0009).
+     *
+     * Retorna estrutura para o cronograma em 1 query (eager load): stages
+     * + deliveries com campos planejados (start, end, hours) e reais
+     * (actual_start_at, completed_at, depends_on_delivery_id).
+     *
+     * Cronograma e Board são duas views da mesma entidade — sem dual store.
+     */
+    public function schedule(Project $project): JsonResponse
+    {
+        $project->loadMissing(['serviceType', 'coordinators:id,name,email']);
+
+        if (!$project->isOperational()) {
+            return response()->json([
+                'is_operational' => false,
+                'stages'         => [],
+                'project_window' => null,
+            ]);
+        }
+
+        $stages = $project->stages()
+            ->with([
+                'responsible:id,name,email',
+                'deliveries:id,stage_id,title,responsible_user_id,hours_planned,priority,status,due_date,order_index,planned_start_at,actual_start_at,completed_at,depends_on_delivery_id,dependency_type',
+                'deliveries.responsible:id,name,email',
+            ])
+            ->orderBy('order_index')
+            ->get();
+
+        // Estado do predecessor (FS) por atividade — usado pelo cronograma e board.
+        // O frontend renderiza 🔒 Aguardando quando state === 'pending'.
+        $predecessorById = [];
+        foreach ($stages as $st) {
+            foreach ($st->deliveries as $d) {
+                $predecessorById[$d->id] = $d->status;
+            }
+        }
+        foreach ($stages as $st) {
+            foreach ($st->deliveries as $d) {
+                if ($d->depends_on_delivery_id && $d->dependency_type === 'FS') {
+                    $predStatus = $predecessorById[$d->depends_on_delivery_id] ?? null;
+                    $state = $predStatus === \App\Models\StageDelivery::STATUS_DONE ? 'done' : 'pending';
+                } else {
+                    $state = 'none';
+                }
+                $d->setAttribute('predecessor_state', $state);
+            }
+        }
+
+        // Calcula a janela do cronograma (min start, max end) — usado pelo Gantt
+        $minDate = null;
+        $maxDate = null;
+        foreach ($stages as $st) {
+            foreach ([$st->stage_start_at, $st->expected_end_date] as $d) {
+                if (!$d) continue;
+                $minDate = $minDate === null || $d->lt($minDate) ? $d : $minDate;
+                $maxDate = $maxDate === null || $d->gt($maxDate) ? $d : $maxDate;
+            }
+            foreach ($st->deliveries as $del) {
+                foreach ([$del->planned_start_at, $del->due_date] as $d) {
+                    if (!$d) continue;
+                    $minDate = $minDate === null || $d->lt($minDate) ? $d : $minDate;
+                    $maxDate = $maxDate === null || $d->gt($maxDate) ? $d : $maxDate;
+                }
+            }
+        }
+
+        // Feriados ativos dentro da janela do cronograma — frontend usa pra replicar
+        // BusinessCalendarService::addBusinessHours client-side (sugestão de fim).
+        $holidays = \App\Models\Holiday::active()
+            ->when($minDate, fn ($q) => $q->whereDate('date', '>=', $minDate->copy()->subMonths(1)))
+            ->when($maxDate, fn ($q) => $q->whereDate('date', '<=', $maxDate->copy()->addMonths(6)))
+            ->pluck('date')
+            ->map(fn ($d) => \Carbon\Carbon::parse($d)->toDateString())
+            ->values();
+
+        return response()->json([
+            'is_operational' => true,
+            'project_window' => [
+                'start' => $minDate?->toDateString(),
+                'end'   => $maxDate?->toDateString(),
+            ],
+            'holidays' => $holidays,
+            'project' => [
+                'id'                  => $project->id,
+                'name'                => $project->name,
+                'sold_hours'          => (float) ($project->sold_hours ?? 0),
+                'start_date'          => $project->start_date?->toDateString(),
+                'expected_end_date'   => $project->expected_end_date?->toDateString(),
+                'coordinators'        => $project->coordinators->map(fn ($u) => [
+                    'id'    => $u->id,
+                    'name'  => $u->name,
+                    'email' => $u->email,
+                ])->values(),
+            ],
+            'stages' => $stages,
+        ]);
+    }
+
+    /**
+     * Equipe consolidada do projeto operacional (Pilar 1).
+     *
+     * Agrega `stage_allocations` por usuário, somando planejado/consumido entre
+     * todas as etapas ativas do projeto. Em projetos de sustentação, retorna
+     * lista vazia — equipe é direta via `project_consultants` lá.
+     *
+     * View derivada — nada persiste (ADR 0007).
+     */
+    public function consolidatedTeam(Project $project): JsonResponse
+    {
+        $project->loadMissing('serviceType');
+
+        if (!$project->isOperational()) {
+            return response()->json(['items' => [], 'is_operational' => false]);
+        }
+
+        // Soma de horas consumidas por (user_id, stage_id) — só approved+released
+        $tsSum = \DB::table('timesheets')
+            ->whereNull('deleted_at')
+            ->whereIn('status', [\App\Models\Timesheet::STATUS_APPROVED, \App\Models\Timesheet::STATUS_RELEASED])
+            ->groupBy('user_id', 'stage_id')
+            ->selectRaw('user_id, stage_id, COALESCE(SUM(effort_minutes), 0) / 60.0 AS actual_hours');
+
+        $rows = \DB::table('stage_allocations as a')
+            ->join('project_stages as ps', 'ps.id', '=', 'a.stage_id')
+            ->join('users as u', 'u.id', '=', 'a.user_id')
+            ->leftJoinSub($tsSum, 'ts', function ($j) {
+                $j->on('ts.user_id', '=', 'a.user_id')
+                  ->on('ts.stage_id', '=', 'a.stage_id');
+            })
+            ->where('ps.project_id', $project->id)
+            ->whereNull('ps.deleted_at')
+            ->where('ps.status', '!=', 'done')
+            ->selectRaw('
+                u.id AS user_id,
+                u.name AS user_name,
+                u.email AS user_email,
+                ps.id AS stage_id,
+                ps.name AS stage_name,
+                a.planned_hours,
+                COALESCE(ts.actual_hours, 0) AS actual_hours
+            ')
+            ->orderBy('u.name')
+            ->orderBy('ps.order_index')
+            ->get();
+
+        // Agrupa por usuário
+        $byUser = [];
+        foreach ($rows as $r) {
+            $uid = (int) $r->user_id;
+            if (!isset($byUser[$uid])) {
+                $byUser[$uid] = [
+                    'user' => [
+                        'id'    => $uid,
+                        'name'  => $r->user_name,
+                        'email' => $r->user_email,
+                    ],
+                    'total_planned'   => 0.0,
+                    'total_actual'    => 0.0,
+                    'total_remaining' => 0.0,
+                    'stages'          => [],
+                ];
+            }
+            $planned = (float) $r->planned_hours;
+            $actual  = (float) $r->actual_hours;
+            $byUser[$uid]['stages'][] = [
+                'stage_id'   => (int) $r->stage_id,
+                'stage_name' => (string) $r->stage_name,
+                'planned'    => $planned,
+                'actual'     => round($actual, 2),
+            ];
+            $byUser[$uid]['total_planned'] += $planned;
+            $byUser[$uid]['total_actual']  += $actual;
+        }
+
+        $items = array_values(array_map(function ($u) {
+            $u['total_planned']   = round($u['total_planned'], 2);
+            $u['total_actual']    = round($u['total_actual'], 2);
+            $u['total_remaining'] = round($u['total_planned'] - $u['total_actual'], 2);
+            return $u;
+        }, $byUser));
+
+        // Ordena por total_planned desc (consultor com mais carga primeiro)
+        usort($items, fn ($a, $b) => $b['total_planned'] <=> $a['total_planned']);
+
+        return response()->json([
+            'items'          => $items,
+            'is_operational' => true,
+            'totals'         => [
+                'consultant_count' => count($items),
+                'total_planned'    => array_sum(array_column($items, 'total_planned')),
+                'total_actual'     => array_sum(array_column($items, 'total_actual')),
+            ],
         ]);
     }
 

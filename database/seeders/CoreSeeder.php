@@ -11,9 +11,10 @@ class CoreSeeder extends Seeder
      */
     public function run(): void
     {
+        // PermissionSeeder e RoleSeeder removidos: o projeto deixou de usar
+        // Spatie/laravel-permission — permissões vêm de PermissionService (arrays
+        // PHP por perfil) e roles foram substituídos por users.type.
         $this->call([
-            PermissionSeeder::class,
-            RoleSeeder::class,
             UserSeeder::class,
             ExpenseCategorySeeder::class,
             SystemSettingSeeder::class,

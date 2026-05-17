@@ -702,4 +702,205 @@ class GapController extends Controller
             'allocated_ids'   => $toInsert,
         ], 201);
     }
+
+    /**
+     * Match candidato → projeto.
+     * match_score = skill_score * 0.7 + availability * 0.2 + (triage/100) * 0.1
+     *   skill_score = média per-skill de min(1, actual_weight/required_weight) — contínuo, sem bucket
+     * Penalizações:
+     *  - falta de critical_skill global → -0.3
+     *  - availability < 0.5 → -0.2
+     * Filtros:
+     *  - status=approved OU (status in new/screening AND triage >= 80)
+     *  - exclui triage < 50
+     * Tiebreakers (em ordem): status approved → protheus_years → avg_skill_weight → availability → name
+     */
+    public function candidateMatch(int $projectId): JsonResponse
+    {
+        $project = Project::findOrFail($projectId);
+
+        // Required skills do projeto
+        $required = DB::table('project_required_skills as prs')
+            ->join('skills as s', 's.id', '=', 'prs.skill_id')
+            ->join('skill_levels as sl', 'sl.id', '=', 'prs.min_level_id')
+            ->where('prs.project_id', $projectId)
+            ->select('prs.skill_id', 's.name as skill_name', 's.category as skill_category',
+                     'sl.name as level_name', 'sl.weight as req_weight')
+            ->get()
+            ->keyBy('skill_id');
+
+        if ($required->isEmpty()) {
+            return response()->json([
+                'project'    => ['id' => $project->id, 'name' => $project->name],
+                'matches'    => [],
+                'message'    => 'Projeto sem skills exigidas cadastradas.',
+            ]);
+        }
+
+        $reqSkillIds = $required->keys();
+        $reqByWeight = $required->mapWithKeys(fn($r) => [$r->skill_id => (int) $r->req_weight]);
+
+        // Critical skills globais (pra penalização)
+        $critical = CriticalSkill::with('minLevel:id,weight')->get();
+        $criticalByWeight = $critical->mapWithKeys(fn($c) => [$c->skill_id => (int) $c->minLevel?->weight]);
+
+        // Já alocados ao projeto (excluir)
+        $allocatedIds = DB::table('project_consultants')->where('project_id', $projectId)->pluck('user_id');
+
+        // Candidatos elegíveis: approved OU (new/screening). Filtro de triage acontece depois.
+        $candidateProfiles = CandidateProfile::whereIn('status', ['approved', 'new', 'screening'])
+            ->get()->keyBy('user_id');
+
+        $candidateIds = $candidateProfiles->keys()->diff($allocatedIds);
+
+        $users = User::whereIn('id', $candidateIds)
+            ->where('consultant_type', 'candidate')
+            ->select('id', 'name', 'email', 'capacity_hours', 'allocated_hours', 'created_at',
+                     'protheus_years_experience')
+            ->get();
+
+        // Pré-carrega skills relevantes (required + critical) de uma só vez
+        $allSkillIds = $reqSkillIds->merge($criticalByWeight->keys())->unique();
+        $userSkillsAll = ConsultantSkill::with('level:id,weight')
+            ->whereIn('consultant_id', $users->pluck('id'))
+            ->whereIn('skill_id', $allSkillIds)
+            ->get()
+            ->groupBy('consultant_id');
+
+        $today = now();
+        $totalCritical = $criticalByWeight->count();
+
+        $matches = $users->map(function ($u) use ($candidateProfiles, $required, $reqByWeight, $criticalByWeight, $userSkillsAll, $totalCritical, $today) {
+            $profile = $candidateProfiles->get($u->id);
+            $userSkills = $userSkillsAll->get($u->id, collect())->keyBy('skill_id');
+
+            $cap = (int) ($u->capacity_hours ?? 160);
+            $alc = (int) ($u->allocated_hours ?? 0);
+            $avail = $cap > 0 ? max(0.0, min(1.0, ($cap - $alc) / $cap)) : 1.0;
+
+            // Recência (mesmo método do CandidateController)
+            if ($u->created_at) {
+                $days = max(0, $u->created_at->diffInDays($today, false));
+                $recency = max(0.0, min(1.0, 1.0 - ($days / 30.0)));
+            } else { $recency = 0.0; }
+
+            // Fit crítico (cobertura % de critical_skills)
+            $missingCritical = false;
+            if ($totalCritical > 0) {
+                $coveredCrit = 0;
+                foreach ($criticalByWeight as $sid => $w) {
+                    $cs = $userSkills->get($sid);
+                    if ($cs && $cs->level && $cs->level->weight >= $w) { $coveredCrit++; }
+                }
+                $fitCritico = $coveredCrit / $totalCritical;
+                $missingCritical = $coveredCrit < $totalCritical;
+            } else {
+                $fitCritico = 1.0;
+            }
+
+            $scoreNorm = min(1.0, max(0.0, (float) ($profile->score_initial ?? 0)));
+            $triage = round(($scoreNorm * 50.0) + ($avail * 20.0) + ($recency * 15.0) + ($fitCritico * 15.0), 1);
+
+            // Skill score CONTÍNUO: média de min(1, actual/required) por skill exigida.
+            // Dá crédito parcial e cria desempate natural (um cara com Avançado pesa diferente de Básico).
+            $totalReq = $reqByWeight->count();
+            $coveredReq = 0;
+            $perSkillScores = [];
+            $avgSkillWeight = 0.0;   // soma de actual weights / total — tiebreaker
+            $sumActualWeight = 0;
+            $gaps = [];
+            foreach ($reqByWeight as $sid => $w) {
+                $cs = $userSkills->get($sid);
+                $actualW = $cs && $cs->level ? (int) $cs->level->weight : 0;
+                $sumActualWeight += $actualW;
+                $perSkill = $w > 0 ? min(1.0, $actualW / $w) : 1.0;
+                $perSkillScores[] = $perSkill;
+                if ($actualW >= $w) {
+                    $coveredReq++;
+                } else {
+                    $gaps[] = [
+                        'skill'          => ['id' => (int) $sid, 'name' => $required[$sid]->skill_name, 'category' => $required[$sid]->skill_category],
+                        'required_level' => $required[$sid]->level_name,
+                        'actual_level'   => $cs && $cs->level ? $cs->level->name : null,
+                        'type'           => $actualW === 0 ? 'missing' : 'below',
+                    ];
+                }
+            }
+            $coverageRatio = $totalReq > 0 ? $coveredReq / $totalReq : 0;
+            $skillScore = $totalReq > 0 ? array_sum($perSkillScores) / $totalReq : 0.0;
+            $avgSkillWeight = $totalReq > 0 ? $sumActualWeight / $totalReq : 0.0;
+
+            // Match: skill(0.7) + avail(0.2) + triage(0.1) — reduz peso da triagem
+            $rawMatch = ($skillScore * 0.7) + ($avail * 0.2) + (($triage / 100.0) * 0.1);
+
+            // Penalizações
+            $penalties = [];
+            if ($missingCritical) { $rawMatch -= 0.3; $penalties[] = 'critical-skill-missing'; }
+            if ($avail < 0.5)     { $rawMatch -= 0.2; $penalties[] = 'low-availability'; }
+            $matchScore = max(0.0, min(1.5, $rawMatch));
+
+            // Fit categórico
+            $fit = $matchScore >= 0.8 ? 'Alto'
+                 : ($matchScore >= 0.5 ? 'Médio' : 'Baixo');
+
+            $isPending = in_array($profile->status, ['new', 'screening']);
+
+            return [
+                'consultant_id' => (int) $u->id,
+                'name'          => $u->name,
+                'email'         => $u->email,
+                'status'        => $profile->status,
+                'is_pending'    => $isPending,
+                'triage_score'  => $triage,
+                'availability'  => round($avail, 3),
+                'match_score'   => round($matchScore, 3),
+                'fit'           => $fit,
+                'coverage'      => [
+                    'covered' => $coveredReq,
+                    'total'   => $totalReq,
+                    'ratio'   => round($coverageRatio, 3),
+                ],
+                'skill_score'   => round($skillScore, 3),
+                'avg_skill_weight'           => round($avgSkillWeight, 3),
+                'protheus_years_experience'  => $u->protheus_years_experience,
+                'penalties'     => $penalties,
+                'missing_critical' => $missingCritical,
+                'gaps'          => $gaps,
+                'status_priority' => $profile->status === 'approved' ? 0 : 1,
+            ];
+        });
+
+        // Filtros pós-cálculo:
+        //  1. exclui triage < 50
+        //  2. pending só passa se triage >= 80
+        $filtered = $matches->filter(function ($m) {
+            if ($m['triage_score'] < 50) return false;
+            if ($m['is_pending'] && $m['triage_score'] < 80) return false;
+            return true;
+        });
+
+        // Sort com tiebreakers (ordem de prioridade):
+        //   1. match_score DESC
+        //   2. status approved antes de pending (priority ASC)
+        //   3. protheus_years_experience DESC (mais experiente vence empate de match)
+        //   4. avg_skill_weight DESC (cobertura mais profunda — diferencia mesmo coverage)
+        //   5. availability DESC
+        //   6. name ASC (último critério estável)
+        $sorted = $filtered->sort(function ($a, $b) {
+            if ($a['match_score'] !== $b['match_score']) return $b['match_score'] <=> $a['match_score'];
+            if ($a['status_priority'] !== $b['status_priority']) return $a['status_priority'] <=> $b['status_priority'];
+            $aY = (int) ($a['protheus_years_experience'] ?? 0);
+            $bY = (int) ($b['protheus_years_experience'] ?? 0);
+            if ($aY !== $bY) return $bY <=> $aY;
+            if ($a['avg_skill_weight'] !== $b['avg_skill_weight']) return $b['avg_skill_weight'] <=> $a['avg_skill_weight'];
+            if ($a['availability'] !== $b['availability']) return $b['availability'] <=> $a['availability'];
+            return strcmp($a['name'], $b['name']);
+        })->take(15)->values();
+
+        return response()->json([
+            'project'  => ['id' => $project->id, 'name' => $project->name],
+            'required_count' => $required->count(),
+            'matches'  => $sorted,
+        ]);
+    }
 }

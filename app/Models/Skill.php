@@ -25,6 +25,11 @@ class Skill extends Model
         return $this->hasMany(self::class, 'parent_id');
     }
 
+    public function aliases(): HasMany
+    {
+        return $this->hasMany(SkillAlias::class);
+    }
+
     public function consultantSkills(): HasMany
     {
         return $this->hasMany(ConsultantSkill::class);

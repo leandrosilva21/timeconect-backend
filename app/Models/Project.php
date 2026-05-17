@@ -23,9 +23,12 @@ class Project extends Model
     // Contract type constants removidos - agora vem da tabela contract_types
 
     /**
-     * Status constants
+     * Status constants — lifecycle real (single source of truth).
+     * Derivações de coluna/visão usam App\Services\ProjectWorkflowService. Ver ADR 0002.
      */
     public const STATUS_AWAITING_START       = 'awaiting_start';
+    public const STATUS_BACKLOG              = 'backlog';
+    public const STATUS_PLANNING             = 'planning';
     public const STATUS_STARTED              = 'started';
     public const STATUS_LIBERADO_PARA_TESTES = 'liberado_para_testes';
     public const STATUS_PAUSED               = 'paused';
@@ -37,6 +40,24 @@ class Project extends Model
      */
     public const EXPENSE_RESPONSIBLE_CONSULTANCY = 'consultancy';
     public const EXPENSE_RESPONSIBLE_CLIENT = 'client';
+
+    /**
+     * Kanban executivo — desacoplado do status técnico.
+     * Status técnico (awaiting_start/started/...) ≠ stage executivo (backlog/planning/...).
+     */
+    public const KANBAN_STAGE_BACKLOG      = 'backlog';
+    public const KANBAN_STAGE_PLANNING     = 'planning';
+    public const KANBAN_STAGE_EXECUTION    = 'execution';
+    public const KANBAN_STAGE_HOMOLOGATION = 'homologation';
+    public const KANBAN_STAGE_CLOSED       = 'closed';
+
+    public const KANBAN_STAGES = [
+        self::KANBAN_STAGE_BACKLOG,
+        self::KANBAN_STAGE_PLANNING,
+        self::KANBAN_STAGE_EXECUTION,
+        self::KANBAN_STAGE_HOMOLOGATION,
+        self::KANBAN_STAGE_CLOSED,
+    ];
 
     /**
      * The attributes that are mass assignable.
@@ -84,6 +105,7 @@ class Project extends Model
         'service_type_id',
         'contract_type_id',
         'status',
+        'kanban_stage',
         'allow_negative_balance',
         'proj_sequence',
         'proj_year',
@@ -99,7 +121,7 @@ class Project extends Model
     /**
      * Atributos calculados incluídos automaticamente no JSON.
      */
-    protected $appends = ['status_display', 'contract_type_display', 'is_auster_frozen'];
+    protected $appends = ['status_display', 'contract_type_display', 'is_operational', 'is_auster_frozen'];
 
     public function getIsAusterFrozenAttribute(): bool
     {
@@ -187,6 +209,14 @@ class Project extends Model
         }
 
         return self::getStatuses()[$this->status] ?? $this->status;
+    }
+
+    /**
+     * Espelha isOperational() pro JSON — frontend usa pra decidir UI dual.
+     */
+    public function getIsOperationalAttribute(): bool
+    {
+        return $this->isOperational();
     }
 
     /**
@@ -313,6 +343,11 @@ class Project extends Model
         return $this->hasMany(Timesheet::class);
     }
 
+    public function stages(): HasMany
+    {
+        return $this->hasMany(ProjectStage::class)->orderBy('order_index');
+    }
+
     /**
      * Relacionamento com despesas
      */
@@ -396,6 +431,16 @@ class Project extends Model
     }
 
     /**
+     * Scope para projetos em execução REAL — produtividade, SLA, consumo operacional.
+     * Exclui backlog (autorizado mas ainda não executando) e awaiting_start (sem coord).
+     * Ver ProjectWorkflowService::IN_EXECUTION e ADR 0002.
+     */
+    public function scopeInExecution($query)
+    {
+        return $query->whereIn('status', \App\Services\ProjectWorkflowService::IN_EXECUTION);
+    }
+
+    /**
      * Verifica se o projeto está ativo (permite novos lançamentos)
      */
     public function isActive(): bool
@@ -410,6 +455,25 @@ class Project extends Model
     public function isOpen(): bool
     {
         return !in_array($this->status, [self::STATUS_CANCELLED, self::STATUS_FINISHED]);
+    }
+
+    /**
+     * Verifica se o projeto usa modelo OPERACIONAL (etapas + alocação por etapa + cards).
+     * Modelo alternativo: sustentação (alocação direta no projeto, sem etapas).
+     *
+     * Regra (mesma do CLAUDE.md): categoria=sustentacao ⇔ serviceType.name contém
+     * "cloud", "bizify" ou "sustentacao". Demais são projeto operacional.
+     *
+     * Ver ADR 0004.
+     */
+    public function isOperational(): bool
+    {
+        $name = strtolower((string) ($this->serviceType?->name ?? ''));
+        if ($name === '') return true; // sem serviceType, default operacional
+        if (str_contains($name, 'sustenta')) return false;
+        if (str_contains($name, 'cloud'))    return false;
+        if (str_contains($name, 'bizify'))   return false;
+        return true;
     }
 
     /**

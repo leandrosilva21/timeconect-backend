@@ -23,8 +23,6 @@ DevDemoSeeder::class
 **Execução**: Sempre (produção, homologação, desenvolvimento)
 
 **Seeders incluídos**:
-- `PermissionSeeder` - Todas as permissões do sistema
-- `RoleSeeder` - Roles padrão (Administrator, Project Manager, Consultant)
 - `UserSeeder` - Usuários iniciais com credenciais padrão
 - `ExpenseCategorySeeder` - Taxonomia de categorias de despesas
 - `SystemSettingSeeder` - Configurações do sistema
@@ -123,7 +121,7 @@ docker-compose exec app php artisan db:seed --class=DevDemoSeeder
 ### Executar seeder específico
 
 ```bash
-docker-compose exec app php artisan db:seed --class=PermissionSeeder
+docker-compose exec app php artisan db:seed --class=UserSeeder
 docker-compose exec app php artisan db:seed --class=ServiceAndContractTypeSeeder
 ```
 

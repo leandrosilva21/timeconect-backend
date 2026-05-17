@@ -1074,6 +1074,8 @@ class ProjectController extends Controller
             'expense_responsible_party' => ['nullable', Rule::in(['consultancy', 'client'])],
             'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
             'allow_negative_balance' => 'nullable|boolean',
+            'allow_weekend_work' => 'nullable|boolean',
+            'allow_holiday_work' => 'nullable|boolean',
             'sold_hours_effective_from' => 'nullable|date',
             'hourly_rate_effective_from' => 'nullable|date',
             'consultant_ids' => 'nullable|array',
@@ -2084,7 +2086,12 @@ class ProjectController extends Controller
         }
 
         // Calendário de negócio pra duration_business_days (singleton via container)
+        // Opts contextuais do projeto (Fase 7): permite sábado/feriado por projeto.
         $calendar = app(\App\Services\BusinessCalendarService::class);
+        $calOpts = [
+            'allow_weekend' => (bool) $project->allow_weekend_work,
+            'allow_holiday' => (bool) $project->allow_holiday_work,
+        ];
 
         // Enriquecer cada delivery com os 4 campos derivados
         foreach ($stages as $st) {
@@ -2107,7 +2114,7 @@ class ProjectController extends Controller
                 if ($d->planned_start_at && $d->due_date) {
                     $d->setAttribute(
                         'duration_business_days',
-                        $calendar->businessDaysBetween($d->planned_start_at, $d->due_date)
+                        $calendar->businessDaysBetween($d->planned_start_at, $d->due_date, $calOpts)
                     );
                 } else {
                     $d->setAttribute('duration_business_days', null);
@@ -2155,6 +2162,8 @@ class ProjectController extends Controller
                 'sold_hours'          => (float) ($project->sold_hours ?? 0),
                 'start_date'          => $project->start_date?->toDateString(),
                 'expected_end_date'   => $project->expected_end_date?->toDateString(),
+                'allow_weekend_work'  => (bool) $project->allow_weekend_work,
+                'allow_holiday_work'  => (bool) $project->allow_holiday_work,
                 'coordinators'        => $project->coordinators->map(fn ($u) => [
                     'id'    => $u->id,
                     'name'  => $u->name,

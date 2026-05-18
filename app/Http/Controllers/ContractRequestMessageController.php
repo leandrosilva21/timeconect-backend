@@ -183,9 +183,18 @@ class ContractRequestMessageController extends Controller
             return response()->json([], 403);
         }
 
-        $users = User::whereIn('type', ['admin', 'coordenador'])
+        // Inclui clientes do mesmo customer da requisição (eles podem ser
+        // mencionados enquanto req_decided_at IS NULL).
+        $users = User::query()
+            ->select('id', 'name', 'type')
             ->where('enabled', true)
-            ->select('id', 'name')
+            ->where(function ($q) use ($contractRequest) {
+                $q->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo']);
+                if ($contractRequest->customer_id) {
+                    $q->orWhere(fn ($q2) => $q2->where('type', 'cliente')
+                        ->where('customer_id', $contractRequest->customer_id));
+                }
+            })
             ->orderBy('name')
             ->get();
 

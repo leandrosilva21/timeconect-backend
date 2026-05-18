@@ -184,7 +184,7 @@ class MeController extends Controller
             ->with([
                 'message:id,contract_request_id,user_id,message,created_at',
                 'message.author:id,name',
-                'message.request:id,customer_id,req_decided_at',
+                'message.request:id,customer_id,req_decided_at,project_name,linked_project_id',
                 'message.request.customer:id,name',
             ])
             ->whereHas('message');
@@ -197,6 +197,7 @@ class MeController extends Controller
 
         $reqMentions = $reqMentionsQuery->orderByDesc('id')->limit(100)->get();
         foreach ($reqMentions as $m) {
+            $req = $m->message?->request;
             $items->push([
                 'source'      => 'request_chat',
                 'id'          => "rm-{$m->id}",
@@ -204,7 +205,8 @@ class MeController extends Controller
                 'actor'       => $m->message?->author ? ['id' => $m->message->author->id, 'name' => $m->message->author->name] : null,
                 'text'        => $m->message?->message,
                 'request_id'  => $m->message?->contract_request_id,
-                'customer'    => $m->message?->request?->customer?->name,
+                'customer'    => $req?->customer?->name,
+                'project_name' => $req?->project_name, // texto livre da requisição
             ]);
         }
 
@@ -216,7 +218,7 @@ class MeController extends Controller
                 ->with([
                     'message:id,contract_id,user_id,message,visibility,created_at',
                     'message.author:id,name',
-                    'message.contract:id,customer_id',
+                    'message.contract:id,customer_id,project_name',
                     'message.contract.customer:id,name',
                 ])
                 ->whereHas('message')
@@ -233,6 +235,7 @@ class MeController extends Controller
                 'text'        => $m->message?->message,
                 'contract_id' => $m->message?->contract_id,
                 'customer'    => $m->message?->contract?->customer?->name,
+                'project_name' => $m->message?->contract?->project_name,
             ]);
         }
 

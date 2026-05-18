@@ -54,7 +54,7 @@ class CardPhaseMovementDispatcher
      */
     private function resolveCardInfo(string $cardType, int $cardId): array
     {
-        $base = rtrim((string) config('app.url'), '/');
+        $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
 
         if ($cardType === CardEnvolvido::TYPE_REQUEST) {
             $r = ContractRequest::find($cardId);

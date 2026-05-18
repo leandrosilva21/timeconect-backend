@@ -105,7 +105,7 @@ class ContractRequestMessageController extends Controller
 
         if ($recipients->isEmpty()) return;
 
-        $base = rtrim((string) config('app.url'), '/');
+        $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
         $cardUrl = $base . '/contratos/pipeline?req=' . $req->id;
         $openUrl = $cardUrl . '#chat';
         $code = $req->code ?? ('REQ-' . str_pad((string) $req->id, 6, '0', STR_PAD_LEFT));

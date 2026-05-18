@@ -129,7 +129,7 @@ class ProjectMessageController extends Controller
 
         if ($recipients->isEmpty()) return;
 
-        $base = rtrim((string) config('app.url'), '/');
+        $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
         $cardUrl = $base . '/contratos/pipeline?project=' . $project->id;
         $openUrl = $cardUrl . '#chat';
         $code = $project->code ?? ('PRJ-' . str_pad((string) $project->id, 6, '0', STR_PAD_LEFT));

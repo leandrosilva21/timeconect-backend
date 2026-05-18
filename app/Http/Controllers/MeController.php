@@ -128,7 +128,7 @@ class MeController extends Controller
                 'delivery.stage.project:id,name',
             ])
             ->orderByDesc('created_at')
-            ->limit(50)
+            ->limit(100)
             ->get();
         foreach ($events as $ev) {
             $items->push([
@@ -154,7 +154,7 @@ class MeController extends Controller
             ])
             ->whereHas('message')
             ->orderByDesc('id')
-            ->limit(50)
+            ->limit(100)
             ->get();
         foreach ($projectMentions as $m) {
             $items->push([
@@ -179,7 +179,7 @@ class MeController extends Controller
             ])
             ->whereHas('message')
             ->orderByDesc('id')
-            ->limit(50)
+            ->limit(100)
             ->get();
         foreach ($reqMentions as $m) {
             $items->push([
@@ -204,7 +204,7 @@ class MeController extends Controller
             ])
             ->whereHas('message')
             ->orderByDesc('id')
-            ->limit(50)
+            ->limit(100)
             ->get();
         foreach ($contractMentions as $m) {
             $items->push([
@@ -218,10 +218,10 @@ class MeController extends Controller
             ]);
         }
 
-        // Ordena tudo por created_at desc, limit 50
+        // Ordena tudo por created_at desc, limit 100 (FE separa não-lidas + 10 lidas)
         $final = $items
             ->sortByDesc(fn ($it) => $it['created_at'] ?? '')
-            ->take(50)
+            ->take(100)
             ->values();
 
         return response()->json([

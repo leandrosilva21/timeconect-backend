@@ -75,16 +75,11 @@ class ContractMessageController extends Controller
 
         $msg->load(['author:id,name', 'attachments']);
 
-        // Parser @-mention (canônico + fallback plain-text via MentionParser)
-        $contract = $msg->contract ?? \App\Models\Contract::find($msg->contract_id);
+        // Parser @-mention (canônico + fallback plain-text via MentionParser).
+        // Cliente NUNCA recebe mention de chat de contrato — não tem acesso a esse chat.
         $candidates = \App\Models\User::query()
             ->select('id', 'name')
-            ->where(function ($q) use ($contract) {
-                $q->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo']);
-                if ($contract?->customer_id) {
-                    $q->orWhere(fn ($q2) => $q2->where('type', 'cliente')->where('customer_id', $contract->customer_id));
-                }
-            })
+            ->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo'])
             ->get();
         foreach (\App\Services\MentionParser::extract((string) $msg->message, $candidates) as $uid) {
             ContractMessageMention::firstOrCreate([

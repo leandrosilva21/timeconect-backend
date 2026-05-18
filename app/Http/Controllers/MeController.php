@@ -208,22 +208,22 @@ class MeController extends Controller
             ]);
         }
 
-        // 4) Chat de contrato — cliente só vê msgs com visibility=client
-        $contractMentionsQuery = \App\Models\ContractMessageMention::query()
-            ->where('mentioned_user_id', $user->id)
-            ->with([
-                'message:id,contract_id,user_id,message,visibility,created_at',
-                'message.author:id,name',
-                'message.contract:id,customer_id',
-                'message.contract.customer:id,name',
-            ])
-            ->whereHas('message');
-
-        if ($isClient) {
-            $contractMentionsQuery->whereHas('message', fn ($q) => $q->where('visibility', 'client'));
+        // 4) Chat de contrato — cliente NUNCA recebe (não tem acesso ao chat de contrato)
+        $contractMentions = collect();
+        if (!$isClient) {
+            $contractMentions = \App\Models\ContractMessageMention::query()
+                ->where('mentioned_user_id', $user->id)
+                ->with([
+                    'message:id,contract_id,user_id,message,visibility,created_at',
+                    'message.author:id,name',
+                    'message.contract:id,customer_id',
+                    'message.contract.customer:id,name',
+                ])
+                ->whereHas('message')
+                ->orderByDesc('id')
+                ->limit(100)
+                ->get();
         }
-
-        $contractMentions = $contractMentionsQuery->orderByDesc('id')->limit(100)->get();
         foreach ($contractMentions as $m) {
             $items->push([
                 'source'      => 'contract_chat',

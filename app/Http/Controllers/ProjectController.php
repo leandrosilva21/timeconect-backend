@@ -2310,25 +2310,8 @@ class ProjectController extends Controller
             usort($teamLoad, fn ($a, $b) => $b['usage_pct'] <=> $a['usage_pct']);
         }
 
-        $executiveSummary = [
-            'progress_pct'         => $totalDeliveries > 0 ? round(($doneDeliveries / $totalDeliveries) * 100, 1) : 0.0,
-            'total_deliveries'     => $totalDeliveries,
-            'done_deliveries'      => $doneDeliveries,
-            'in_progress_count'    => $inProgressCount,
-            'review_count'         => $reviewCount,
-            'blocked_count'        => $blockedCount,
-            'waiting_client_count' => $waitingClientCount,
-            'overdue_count'        => $lateCount,
-            'hours_planned'        => round($hoursPlannedTotal, 2),
-            'hours_actual'         => round($hoursActualTotal, 2),
-            'hours_balance'        => round($hoursPlannedTotal - $hoursActualTotal, 2),
-            'overall_risk'         => $overallRisk,
-            'high_risk_stages'     => $highStages,
-            'medium_risk_stages'   => $medStages,
-            'estimated_delay_days' => $maxDaysLate,
-        ];
-
         // Calcula a janela do cronograma (min start, max end) — usado pelo Gantt
+        // e pelo card "Prazo Final" no executive header.
         $minDate = null;
         $maxDate = null;
         foreach ($stages as $st) {
@@ -2345,6 +2328,35 @@ class ProjectController extends Controller
                 }
             }
         }
+
+        // Diferença em dias entre prazo planejado (project.expected_end_date)
+        // e prazo estimado real (maxDate das deliveries) — positivo = atraso projetado.
+        $plannedEnd = $project->expected_end_date;
+        $endDelta = ($plannedEnd && $maxDate)
+            ? (int) $plannedEnd->startOfDay()->diffInDays($maxDate->startOfDay(), false)
+            : null;
+
+        $executiveSummary = [
+            'progress_pct'         => $totalDeliveries > 0 ? round(($doneDeliveries / $totalDeliveries) * 100, 1) : 0.0,
+            'total_deliveries'     => $totalDeliveries,
+            'done_deliveries'      => $doneDeliveries,
+            'in_progress_count'    => $inProgressCount,
+            'review_count'         => $reviewCount,
+            'blocked_count'        => $blockedCount,
+            'waiting_client_count' => $waitingClientCount,
+            'overdue_count'        => $lateCount,
+            'hours_planned'        => round($hoursPlannedTotal, 2),
+            'hours_actual'         => round($hoursActualTotal, 2),
+            'hours_balance'        => round($hoursPlannedTotal - $hoursActualTotal, 2),
+            'overall_risk'         => $overallRisk,
+            'high_risk_stages'     => $highStages,
+            'medium_risk_stages'   => $medStages,
+            'estimated_delay_days' => $maxDaysLate,
+            // Card "Prazo Final": data prevista do projeto baseada nas deliveries
+            'estimated_end_date'   => $maxDate?->toDateString(),
+            'planned_end_date'     => $plannedEnd?->toDateString(),
+            'end_date_delta_days'  => $endDelta,
+        ];
 
         // Feriados ativos dentro da janela do cronograma — frontend usa pra replicar
         // BusinessCalendarService::addBusinessHours client-side (sugestão de fim).

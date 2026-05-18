@@ -2384,6 +2384,187 @@ class ProjectController extends Controller
     }
 
     /**
+     * Preview de recálculo do Cronograma (Fase 10.1).
+     *
+     * Aceita 2 tipos de trigger:
+     *  - delivery_field: simula mudança em delivery (hours_planned, planned_start_at,
+     *    due_date, depends_on_delivery_id) e devolve cascade FS.
+     *  - project_calendar: simula mudança nas flags allow_weekend_work / allow_holiday_work
+     *    e lista deliveries cuja duration_business_days muda.
+     *
+     * Retorna { summary, impact, affected[], conflicts[] }. Sem persistência —
+     * frontend usa pra mostrar modal de confirmação antes do PATCH real.
+     */
+    public function recalcPreview(\Illuminate\Http\Request $request, Project $project): \Illuminate\Http\JsonResponse
+    {
+        $trigger = $request->input('trigger');
+        $simulate = $request->input('simulate', []);
+
+        if (!in_array($trigger, ['delivery_field', 'project_calendar'], true)) {
+            return response()->json(['message' => 'trigger inválido'], 422);
+        }
+
+        $calendar = app(\App\Services\BusinessCalendarService::class);
+        $currentEnd = $this->projectScheduleMaxEnd($project);
+
+        if ($trigger === 'delivery_field') {
+            $deliveryId = (int) $request->input('delivery_id');
+            $delivery = \App\Models\StageDelivery::find($deliveryId);
+            if (!$delivery) {
+                return response()->json(['message' => 'delivery não encontrado'], 404);
+            }
+            if ($delivery->stage->project_id !== $project->id) {
+                return response()->json(['message' => 'delivery não pertence ao projeto'], 422);
+            }
+
+            // Snapshot ANTES do cascade — recalcDependents muta $delivery em memória
+            // quando simulate é passado. Sem snapshot, change_description fica "X → X".
+            $origHours  = $delivery->hours_planned;
+            $origStart  = $delivery->planned_start_at?->toDateString();
+            $origDue    = $delivery->due_date?->toDateString();
+            $origPredId = $delivery->depends_on_delivery_id;
+            $origTitle  = $delivery->title;
+
+            // Cascade FS via método existente (com simulate)
+            $cascadeRequest = new \Illuminate\Http\Request();
+            $cascadeRequest->merge(['apply' => false, 'simulate' => $simulate]);
+            $cascadeResp = app(\App\Http\Controllers\StageDeliveryController::class)
+                ->recalcDependents($cascadeRequest, $delivery);
+            $chain = $cascadeResp->getData(true)['chain'] ?? [];
+
+            // Descrição amigável da mudança (usa snapshot ANTES do cascade)
+            $changes = [];
+            if (array_key_exists('hours_planned', $simulate))    $changes[] = "Horas: {$origHours}h → {$simulate['hours_planned']}h";
+            if (array_key_exists('planned_start_at', $simulate)) $changes[] = "Início: " . ($origStart ?? '—') . " → " . ($simulate['planned_start_at'] ?? '—');
+            if (array_key_exists('due_date', $simulate))         $changes[] = "Fim: "    . ($origDue   ?? '—') . " → " . ($simulate['due_date']         ?? '—');
+            if (array_key_exists('depends_on_delivery_id', $simulate)) {
+                $oldPredTitle = $origPredId
+                    ? (\App\Models\StageDelivery::find($origPredId)?->title ?? '?')
+                    : 'sem predecessor';
+                $newPredId = $simulate['depends_on_delivery_id'];
+                $newPredTitle = $newPredId
+                    ? (\App\Models\StageDelivery::find($newPredId)?->title ?? '?')
+                    : 'sem predecessor';
+                $changes[] = "Predecessor: {$oldPredTitle} → {$newPredTitle}";
+            }
+
+            // Calcula novo project_end estimado a partir das suggested_end da chain
+            $newMaxEnd = $currentEnd;
+            $stageIds = [];
+            foreach ($chain as $c) {
+                if (!empty($c['suggested_end']) && (!$newMaxEnd || $c['suggested_end'] > $newMaxEnd)) {
+                    $newMaxEnd = $c['suggested_end'];
+                }
+                $dep = \App\Models\StageDelivery::find($c['id']);
+                if ($dep) $stageIds[$dep->stage_id] = true;
+            }
+            // Se a própria delivery editada empurra prazo, considera due_date simulado
+            $ownSimulatedEnd = $simulate['due_date'] ?? null;
+            if ($ownSimulatedEnd && (!$newMaxEnd || $ownSimulatedEnd > $newMaxEnd)) {
+                $newMaxEnd = $ownSimulatedEnd;
+            }
+
+            $daysDiff = $this->datesDiff($currentEnd, $newMaxEnd);
+
+            return response()->json([
+                'summary' => [
+                    'change_description' => implode(' · ', $changes) ?: 'Sem mudanças detectadas',
+                    'trigger_label' => "Alteração em '{$origTitle}'",
+                ],
+                'impact' => [
+                    'affected_deliveries_count' => count($chain),
+                    'affected_stages_count'     => count($stageIds),
+                    'project_end_current'       => $currentEnd,
+                    'project_end_new'           => $newMaxEnd,
+                    'days_diff'                 => $daysDiff,
+                    'has_conflicts'             => false,
+                ],
+                'affected' => $chain,
+                'conflicts' => [],
+            ]);
+        }
+
+        // trigger=project_calendar
+        $allowWeekend = $simulate['allow_weekend_work'] ?? (bool) $project->allow_weekend_work;
+        $allowHoliday = $simulate['allow_holiday_work'] ?? (bool) $project->allow_holiday_work;
+        $newOpts = ['allow_weekend' => (bool) $allowWeekend, 'allow_holiday' => (bool) $allowHoliday];
+        $oldOpts = [
+            'allow_weekend' => (bool) $project->allow_weekend_work,
+            'allow_holiday' => (bool) $project->allow_holiday_work,
+        ];
+
+        $deliveries = \App\Models\StageDelivery::whereHas('stage', fn ($q) => $q->where('project_id', $project->id))
+            ->whereNotNull('planned_start_at')
+            ->whereNotNull('due_date')
+            ->get();
+
+        $affected = [];
+        $stageIds = [];
+        foreach ($deliveries as $d) {
+            $durOld = $calendar->businessDaysBetween($d->planned_start_at, $d->due_date, $oldOpts);
+            $durNew = $calendar->businessDaysBetween($d->planned_start_at, $d->due_date, $newOpts);
+            if ($durOld !== $durNew) {
+                $affected[] = [
+                    'id'              => $d->id,
+                    'title'           => $d->title,
+                    'current_start'   => $d->planned_start_at?->toDateString(),
+                    'current_end'     => $d->due_date?->toDateString(),
+                    'suggested_start' => $d->planned_start_at?->toDateString(),  // calendar não move datas
+                    'suggested_end'   => $d->due_date?->toDateString(),
+                    'duration_old'    => $durOld,
+                    'duration_new'    => $durNew,
+                ];
+                $stageIds[$d->stage_id] = true;
+            }
+        }
+
+        $changes = [];
+        if (array_key_exists('allow_weekend_work', $simulate)) {
+            $changes[] = "Sábado/domingo: " . ((bool) $project->allow_weekend_work ? 'SIM' : 'NÃO') . " → " . ($simulate['allow_weekend_work'] ? 'SIM' : 'NÃO');
+        }
+        if (array_key_exists('allow_holiday_work', $simulate)) {
+            $changes[] = "Feriados: " . ((bool) $project->allow_holiday_work ? 'SIM' : 'NÃO') . " → " . ($simulate['allow_holiday_work'] ? 'SIM' : 'NÃO');
+        }
+
+        return response()->json([
+            'summary' => [
+                'change_description' => implode(' · ', $changes) ?: 'Sem mudanças detectadas',
+                'trigger_label' => 'Alteração no calendário operacional',
+            ],
+            'impact' => [
+                'affected_deliveries_count' => count($affected),
+                'affected_stages_count'     => count($stageIds),
+                'project_end_current'       => $currentEnd,
+                'project_end_new'           => $currentEnd,  // datas não movem, só durações
+                'days_diff'                 => 0,
+                'has_conflicts'             => false,
+            ],
+            'affected'  => $affected,
+            'conflicts' => [],
+        ]);
+    }
+
+    /** Maior due_date / expected_end_date do projeto operacional. Fase 10.1. */
+    private function projectScheduleMaxEnd(Project $project): ?string
+    {
+        $maxStage = $project->stages()->max('expected_end_date');
+        $maxDeliv = \App\Models\StageDelivery::whereHas('stage', fn ($q) => $q->where('project_id', $project->id))
+            ->max('due_date');
+        $max = null;
+        foreach ([$maxStage, $maxDeliv] as $d) {
+            if ($d && (!$max || $d > $max)) $max = $d;
+        }
+        return $max instanceof \Carbon\Carbon ? $max->toDateString() : (is_string($max) ? substr($max, 0, 10) : null);
+    }
+
+    /** Diferença em dias (positivo = atraso, negativo = adiantamento). Fase 10.1. */
+    private function datesDiff(?string $current, ?string $new): int
+    {
+        if (!$current || !$new) return 0;
+        return \Carbon\Carbon::parse($current)->diffInDays(\Carbon\Carbon::parse($new), false);
+    }
+
+    /**
      * Equipe consolidada do projeto operacional (Pilar 1).
      *
      * Agrega `stage_allocations` por usuário, somando planejado/consumido entre

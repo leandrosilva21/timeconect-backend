@@ -69,13 +69,38 @@
               </tr>
             </table>
             <div style="margin-top:14px;font-size:13px;color:#D4D4D8;line-height:1.7;">
-              @if($toColumnLabel === 'Novo Projeto')
-                A requisição entrou em <b style="color:#22D3EE;">"Novo Projeto"</b> — a ERPServ inicia agora
-                o levantamento e a análise técnica. Acompanhe os próximos avanços por este canal.
-              @else
-                Acompanhe o avanço da requisição pelo painel. Quando estiver pronta pra iniciar,
-                arraste o card pra coluna <b style="color:#22D3EE;">"Novo Projeto"</b> — a ERPServ inicia o levantamento.
-              @endif
+              @switch($toColumnLabel)
+                @case('Backlog')
+                  Sua requisição voltou pro <b>Backlog</b>. Quando achar que está pronta pra iniciar,
+                  arraste o card pra coluna <b style="color:#22D3EE;">"Novo Projeto"</b> — a ERPServ inicia o levantamento.
+                @break
+                @case('Novo Projeto')
+                  A requisição entrou em <b style="color:#22D3EE;">"Novo Projeto"</b>. A ERPServ inicia
+                  agora o <b>levantamento e a análise técnica</b>. Acompanhe os próximos avanços por este canal.
+                @break
+                @case('Em Planejamento')
+                  A ERPServ está <b>definindo o escopo, esforço e cronograma</b> da requisição. Em breve o card
+                  avança pra <b style="color:#22D3EE;">"Em Validação"</b>, onde você revisa o que foi planejado.
+                @break
+                @case('Em Validação')
+                  O planejamento ficou pronto e está aguardando sua validação. Abra a requisição,
+                  revise as informações e <b style="color:#22D3EE;">aprove ou solicite ajustes</b>.
+                @break
+                @case('Em Revisão')
+                  Você solicitou ajustes — a equipe da ERPServ está atualizando o planejamento.
+                  Em breve o card volta pra <b style="color:#22D3EE;">"Em Validação"</b>.
+                @break
+                @case('Aprovado')
+                  A requisição foi <b style="color:#22D3EE;">aprovada</b>. A ERPServ vai gerar o contrato e
+                  iniciar o projeto. Você receberá atualizações conforme as próximas fases.
+                @break
+                @case('Aguardando Início (Req.)')
+                  Contrato pronto e aguardando o sinal pra iniciar. A partir daqui passamos a notificar
+                  diretamente pelo card do projeto.
+                @break
+                @default
+                  Acompanhe o avanço da requisição pelo painel.
+              @endswitch
             </div>
           </div>
         </td>

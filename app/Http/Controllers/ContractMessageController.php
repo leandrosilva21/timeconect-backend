@@ -75,12 +75,21 @@ class ContractMessageController extends Controller
 
         $msg->load(['author:id,name', 'attachments']);
 
-        // Parser @-mention (espelha ProjectMessageController)
-        preg_match_all('/@\[(\d+):([^\]]+)\]/', (string) $msg->message, $matches);
-        foreach (array_unique($matches[1] ?? []) as $mentionedId) {
+        // Parser @-mention (canônico + fallback plain-text via MentionParser)
+        $contract = $msg->contract ?? \App\Models\Contract::find($msg->contract_id);
+        $candidates = \App\Models\User::query()
+            ->select('id', 'name')
+            ->where(function ($q) use ($contract) {
+                $q->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo']);
+                if ($contract?->customer_id) {
+                    $q->orWhere(fn ($q2) => $q2->where('type', 'cliente')->where('customer_id', $contract->customer_id));
+                }
+            })
+            ->get();
+        foreach (\App\Services\MentionParser::extract((string) $msg->message, $candidates) as $uid) {
             ContractMessageMention::firstOrCreate([
                 'message_id'        => $msg->id,
-                'mentioned_user_id' => (int) $mentionedId,
+                'mentioned_user_id' => $uid,
             ]);
         }
 

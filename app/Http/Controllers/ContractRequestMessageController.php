@@ -104,11 +104,23 @@ class ContractRequestMessageController extends Controller
 
     private function persistMentions(ContractRequestMessage $msg): void
     {
-        preg_match_all('/@\[(\d+):([^\]]+)\]/', (string) $msg->message, $matches);
-        foreach (array_unique($matches[1] ?? []) as $mentionedId) {
+        // Candidatos = usuários com acesso à req (cliente da req + admins/coords)
+        $req = $msg->request ?? \App\Models\ContractRequest::find($msg->contract_request_id);
+        $candidates = \App\Models\User::query()
+            ->select('id', 'name')
+            ->where(function ($q) use ($req) {
+                $q->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo']);
+                if ($req?->customer_id) {
+                    $q->orWhere(fn ($q2) => $q2->where('type', 'cliente')->where('customer_id', $req->customer_id));
+                }
+            })
+            ->get();
+
+        $userIds = \App\Services\MentionParser::extract((string) $msg->message, $candidates);
+        foreach ($userIds as $uid) {
             ContractRequestMessageMention::firstOrCreate([
                 'message_id'        => $msg->id,
-                'mentioned_user_id' => (int) $mentionedId,
+                'mentioned_user_id' => $uid,
             ]);
         }
     }

@@ -85,12 +85,15 @@ class ProjectMessageController extends Controller
             'visibility' => $visibility,
         ]);
 
-        // Parse mention tokens @[id:Name]
-        preg_match_all('/@\[(\d+):([^\]]+)\]/', $text, $matches);
-        foreach (array_unique($matches[1]) as $mentionedId) {
+        // Parse mention tokens @[id:Name] + fallback plain-text via MentionParser
+        $candidates = User::query()
+            ->select('id', 'name')
+            ->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo', 'cliente'])
+            ->get();
+        foreach (\App\Services\MentionParser::extract($text, $candidates) as $mentionedId) {
             ProjectMessageMention::firstOrCreate([
                 'message_id'        => $msg->id,
-                'mentioned_user_id' => (int) $mentionedId,
+                'mentioned_user_id' => $mentionedId,
             ]);
         }
 

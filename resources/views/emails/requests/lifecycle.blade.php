@@ -40,10 +40,10 @@
         <td style="padding:18px 40px 0;background:#000000;">
           <div style="background-color:#15151A;border:1px solid #3F3F46;border-radius:12px;padding:22px;">
             <div style="color:#FFFFFF;font-size:14px;line-height:1.7;">
-              Sua requisição foi registrada com sucesso e está no <b>Backlog</b> do nosso pipeline.
+              Sua requisição foi registrada com sucesso e está no <b>Backlog</b> do pipeline.
               <br><br>
-              Quando achar que ela está pronta pra iniciar, <b style="color:#22D3EE;">arraste o card para a coluna "Pronto pra virar projeto"</b>
-              no seu painel. A partir daí o time da <b style="color:#FFFFFF;">ERPServ</b> começa o levantamento
+              Quando estiver pronta pra iniciar, <b style="color:#22D3EE;">arraste o card para a coluna "Novo Projeto"</b>
+              no seu painel. A partir daí o time da <b style="color:#FFFFFF;">ERPServ</b> inicia o levantamento
               e segue com a análise técnica.
               <br><br>
               Você receberá um email a cada mudança de fase enquanto a requisição estiver ativa,
@@ -69,8 +69,13 @@
               </tr>
             </table>
             <div style="margin-top:14px;font-size:13px;color:#D4D4D8;line-height:1.7;">
-              Quando a requisição estiver pronta pra virar projeto, arraste pra coluna "Pronto pra virar projeto"
-              e a ERPServ inicia o levantamento.
+              @if($toColumnLabel === 'Novo Projeto')
+                A requisição entrou em <b style="color:#22D3EE;">"Novo Projeto"</b> — a ERPServ inicia agora
+                o levantamento e a análise técnica. Acompanhe os próximos avanços por este canal.
+              @else
+                Acompanhe o avanço da requisição pelo painel. Quando estiver pronta pra iniciar,
+                arraste o card pra coluna <b style="color:#22D3EE;">"Novo Projeto"</b> — a ERPServ inicia o levantamento.
+              @endif
             </div>
           </div>
         </td>

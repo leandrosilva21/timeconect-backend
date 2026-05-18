@@ -1106,6 +1106,15 @@ class ContractController extends Controller
             'moved_by_id'         => auth()->id(),
         ]);
 
+        // Notifica cliente + executivo da conta + watchers a cada movimentação,
+        // até a requisição virar projeto/contrato (req_decided_at preenchido).
+        try {
+            app(\App\Services\ContractRequestNotifier::class)
+                ->moved($contractRequest->fresh(['customer', 'createdBy', 'watchers.user']), $fromColumn, $toColumn);
+        } catch (\Throwable $e) {
+            \Log::warning('req lifecycle (moved) falhou', ['req_id' => $contractRequest->id, 'err' => $e->getMessage()]);
+        }
+
         return response()->json(['ok' => true]);
     }
 

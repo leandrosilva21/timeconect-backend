@@ -115,15 +115,21 @@ class ContractRequestController extends Controller
             return $req;
         });
 
-        return response()->json(
-            $req->load([
-                'customer:id,name',
-                'createdBy:id,name',
-                'watchers:id,contract_request_id,user_id,email',
-                'watchers.user:id,name,email',
-            ]),
-            201
-        );
+        $req = $req->load([
+            'customer:id,name,executive_id',
+            'createdBy:id,name,email',
+            'watchers:id,contract_request_id,user_id,email',
+            'watchers.user:id,name,email',
+        ]);
+
+        // Notifica cliente + executivo da conta + watchers (best-effort)
+        try {
+            app(\App\Services\ContractRequestNotifier::class)->created($req);
+        } catch (\Throwable $e) {
+            \Log::warning('req lifecycle (created) falhou', ['req_id' => $req->id, 'err' => $e->getMessage()]);
+        }
+
+        return response()->json($req, 201);
     }
 
     public function show(ContractRequest $contractRequest): JsonResponse

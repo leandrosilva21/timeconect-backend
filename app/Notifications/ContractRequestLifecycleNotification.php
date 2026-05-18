@@ -1,0 +1,76 @@
+<?php
+
+namespace App\Notifications;
+
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Notifications\Messages\MailMessage;
+use Illuminate\Notifications\Notification;
+
+/**
+ * Notifica ciclo de vida da requisição: criação + movimentação no kanban.
+ * Dois estágios:
+ *  - 'created' → tom acolhedor, explica próximo passo (arrastar pra novo projeto)
+ *  - 'moved'   → notificação simples de avanço de fase
+ *
+ * Para de enviar quando vira projeto/contrato (req_decided_at preenchido) —
+ * a partir daí o pipeline de movimentação de card assume.
+ */
+class ContractRequestLifecycleNotification extends Notification implements ShouldQueue
+{
+    use Queueable;
+
+    public function __construct(
+        public string $stage,            // 'created' | 'moved'
+        public string $reqCode,
+        public string $reqTitle,
+        public string $customerName,
+        public ?string $fromColumn,
+        public string $toColumn,
+        public string $cardUrl,
+        public string $recipientName,
+        public string $recipientRole,    // 'Solicitante' | 'Executivo da conta' | 'Acompanhando'
+    ) {}
+
+    public function via($notifiable): array
+    {
+        return ['mail'];
+    }
+
+    public function toMail($notifiable): MailMessage
+    {
+        $subject = $this->stage === 'created'
+            ? "[Minutor] Requisição {$this->reqCode} criada — próximos passos"
+            : "[Minutor] Requisição {$this->reqCode} avançou para " . $this->prettyColumn($this->toColumn);
+
+        return (new MailMessage)
+            ->subject($subject)
+            ->view('emails.requests.lifecycle', [
+                'stage'         => $this->stage,
+                'reqCode'       => $this->reqCode,
+                'reqTitle'      => $this->reqTitle,
+                'customerName'  => $this->customerName,
+                'fromColumnLabel' => $this->fromColumn ? $this->prettyColumn($this->fromColumn) : null,
+                'toColumnLabel' => $this->prettyColumn($this->toColumn),
+                'cardUrl'       => $this->cardUrl,
+                'recipientName' => $this->recipientName,
+                'recipientRole' => $this->recipientRole,
+            ]);
+    }
+
+    private function prettyColumn(string $col): string
+    {
+        return match ($col) {
+            'backlog'               => 'Backlog',
+            'em_planejamento'       => 'Em planejamento',
+            'em_analise'            => 'Em análise',
+            'em_revisao'            => 'Em revisão',
+            'req_inicio_autorizado' => 'Pronto pra virar projeto',
+            'inicio_autorizado'     => 'Início autorizado',
+            'aprovada'              => 'Aprovada',
+            'recusada'              => 'Recusada',
+            'cancelada'             => 'Cancelada',
+            default => ucfirst(str_replace('_', ' ', $col)),
+        };
+    }
+}

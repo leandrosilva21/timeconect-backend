@@ -214,26 +214,34 @@ class MovideskService
             ];
         }
 
-        $defaultUserId = $this->getDefaultUserId();
-        $changes       = [];
+        $changes = [];
 
-        // Tenta resolver o usuário pelo e-mail do createdBy da ação.
-        // Se não encontrar no Minutor (equipe externa/cliente), usa o owner do ticket como fallback.
-        $resolvedEmail = strtolower(trim($targetAction['createdBy']['email'] ?? ''));
-        $resolvedUser  = $resolvedEmail
-            ? User::where('email', $resolvedEmail)->where('enabled', true)->first()
-            : null;
+        // Resolve user usando a MESMA cascata do extractUserId: email da action,
+        // depois nome exato, depois Usuário Padrão. NUNCA cai no owner do ticket
+        // — owner é o responsável administrativo, não o autor do apontamento.
+        // Caso real (Anderson Promax ticket 48186) onde o owner-fallback atribuía
+        // indevidamente ao consultor responsável (William Campana).
+        $resolvedUserId = $this->extractUserId($targetAction);
+        $cameFromFallback = $this->lastUserIdWasFallback;
 
-        if (!$resolvedUser) {
-            $ownerEmail   = strtolower(trim($ticket['owner']['email'] ?? ''));
-            $resolvedUser = $ownerEmail
-                ? User::where('email', $ownerEmail)->where('enabled', true)->first()
-                : null;
-        }
+        if ($resolvedUserId && $resolvedUserId !== $timesheet->user_id) {
+            // Não sobrescreve um user real anterior caindo no Usuário Padrão —
+            // se a resolução nova é fallback E o timesheet atual já tem user
+            // diferente do padrão (provavelmente reatribuição manual prévia),
+            // preserva. Evita anular triagens feitas via UI.
+            $defaultUserId = $this->getDefaultUserId();
+            $alreadyManuallyAssigned = $cameFromFallback
+                && $timesheet->user_id !== null
+                && $timesheet->user_id !== $defaultUserId;
 
-        if ($resolvedUser && $resolvedUser->id !== $timesheet->user_id) {
-            $changes['user_id'] = ['from' => $timesheet->user_id, 'to' => $resolvedUser->id];
-            $timesheet->user_id = $resolvedUser->id;
+            if (!$alreadyManuallyAssigned) {
+                $changes['user_id'] = ['from' => $timesheet->user_id, 'to' => $resolvedUserId];
+                $timesheet->user_id = $resolvedUserId;
+                if ($cameFromFallback && $timesheet->origin !== 'movidesk_fallback') {
+                    $changes['origin'] = ['from' => $timesheet->origin, 'to' => 'movidesk_fallback'];
+                    $timesheet->origin = 'movidesk_fallback';
+                }
+            }
         }
 
         // Trava manual: se o usuário editou qualquer campo de conteúdo via UI

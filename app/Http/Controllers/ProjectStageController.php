@@ -297,12 +297,26 @@ class ProjectStageController extends Controller
             ? \Carbon\Carbon::parse($project->expected_end_date)->startOfDay()
             : null;
 
-        $latest = $project->stages()
+        $latestStage = $project->stages()
             ->whereNotNull('expected_end_date')
             ->where('status', '!=', ProjectStage::STATUS_DONE)
             ->max('expected_end_date');
 
-        $latestStageEnd = $latest ? \Carbon\Carbon::parse($latest)->startOfDay() : null;
+        // Considera também due_date das atividades não-concluídas — coord pode
+        // ter atividade indo além do fim da etapa-pai. Sem isso, sugestão de
+        // prazo no header subestima.
+        $latestDelivery = \App\Models\StageDelivery::whereHas('stage', fn ($q) =>
+                $q->where('project_id', $project->id))
+            ->whereNotNull('due_date')
+            ->where('status', '!=', \App\Models\StageDelivery::STATUS_DONE)
+            ->max('due_date');
+
+        $latestStageEnd = null;
+        foreach ([$latestStage, $latestDelivery] as $d) {
+            if (!$d) continue;
+            $c = \Carbon\Carbon::parse($d)->startOfDay();
+            if (!$latestStageEnd || $c->gt($latestStageEnd)) $latestStageEnd = $c;
+        }
 
         $delayDays = ($projectEnd && $latestStageEnd && $latestStageEnd->gt($projectEnd))
             ? (int) $projectEnd->diffInDays($latestStageEnd)

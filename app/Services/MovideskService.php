@@ -570,7 +570,10 @@ class MovideskService
 
         $email = $action['createdBy']['email'] ?? null;
         if ($email) $email = strtolower(trim($email));
+        $name  = isset($action['createdBy']['businessName']) ? trim($action['createdBy']['businessName']) : null;
+        $name  = $name ?: (isset($action['createdBy']['name']) ? trim($action['createdBy']['name']) : null);
 
+        // 1. Match por email (caminho preferido — chave única real).
         if ($email) {
             $user = User::where('email', $email)->where('enabled', true)->first();
             if ($user) return $user->id;
@@ -587,16 +590,39 @@ class MovideskService
                 ]);
                 return null;
             }
-
-            Log::warning('⚠️ [MOVIDESK] Usuário não encontrado — caindo no Usuário Padrão pra triagem', [
-                'email'     => $email,
-                'action_id' => $action['id'] ?? null,
-            ]);
-        } else {
-            Log::warning('⚠️ [MOVIDESK] Email ausente na ação — caindo no Usuário Padrão pra triagem', [
-                'action_id' => $action['id'] ?? null,
-            ]);
         }
+
+        // 2. Fallback por nome — Movidesk às vezes omite email no payload do
+        //    createdBy (caso Antonio Nunes ticket 48104). Só usa se o nome for
+        //    inequívoco (exatamente 1 User enabled). Múltiplos matches cairiam
+        //    em ambiguidade — vai pro Usuário Padrão pra triagem manual.
+        if ($name) {
+            $matches = User::whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+                ->where('enabled', true)
+                ->limit(2)
+                ->get();
+            if ($matches->count() === 1) {
+                Log::info('ℹ️ [MOVIDESK] Usuário resolvido por nome (email ausente no createdBy)', [
+                    'name'      => $name,
+                    'user_id'   => $matches->first()->id,
+                    'action_id' => $action['id'] ?? null,
+                ]);
+                return $matches->first()->id;
+            }
+            if ($matches->count() > 1) {
+                Log::warning('⚠️ [MOVIDESK] Nome ambíguo — Usuário Padrão pra triagem manual', [
+                    'name'      => $name,
+                    'matches'   => $matches->pluck('id')->all(),
+                    'action_id' => $action['id'] ?? null,
+                ]);
+            }
+        }
+
+        Log::warning('⚠️ [MOVIDESK] Usuário não encontrado — caindo no Usuário Padrão pra triagem', [
+            'email'     => $email,
+            'name'      => $name,
+            'action_id' => $action['id'] ?? null,
+        ]);
 
         $defaultId = $this->getDefaultUserId();
         if ($defaultId) $this->lastUserIdWasFallback = true;

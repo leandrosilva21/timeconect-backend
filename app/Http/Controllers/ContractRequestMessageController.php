@@ -2,13 +2,18 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\CardEnvolvido;
 use App\Models\ContractRequest;
 use App\Models\ContractRequestMessage;
 use App\Models\ContractRequestMessageAttachment;
 use App\Models\User;
+use App\Notifications\CardChatMessageNotification;
+use App\Services\CardEnvolvidoService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class ContractRequestMessageController extends Controller
 {
@@ -82,7 +87,53 @@ class ContractRequestMessageController extends Controller
 
         $msg->load(['author:id,name', 'attachments']);
 
+        // Fase card-envolvidos: notifica envolvidos do card (cliente sai automaticamente
+        // se req_decided_at preenchido). Best-effort — falha em mail não bloqueia chat.
+        try {
+            $this->dispatchChatNotification($contractRequest, $msg, $user);
+        } catch (\Throwable $e) {
+            \Log::warning('chat notif req falhou', ['req_id' => $contractRequest->id, 'err' => $e->getMessage()]);
+        }
+
         return response()->json($msg, 201);
+    }
+
+    private function dispatchChatNotification(ContractRequest $req, ContractRequestMessage $msg, User $author): void
+    {
+        $recipients = app(CardEnvolvidoService::class)
+            ->recipientsForChat(CardEnvolvido::TYPE_REQUEST, $req->id, $author->id);
+
+        if ($recipients->isEmpty()) return;
+
+        $base = rtrim((string) config('app.url'), '/');
+        $cardUrl = $base . '/contratos/pipeline?req=' . $req->id;
+        $openUrl = $cardUrl . '#chat';
+        $code = $req->code ?? ('REQ-' . str_pad((string) $req->id, 6, '0', STR_PAD_LEFT));
+        $title = $req->title ?? ($req->subject ?? 'Requisição');
+        $excerpt = Str::limit($msg->message ?? '', 280);
+
+        foreach ($recipients as $r) {
+            Notification::route('mail', $r['email'])->notify(new CardChatMessageNotification(
+                cardType:       CardEnvolvido::TYPE_REQUEST,
+                cardCode:       $code,
+                cardTitle:      $title,
+                authorName:     $author->name,
+                authorRole:     $this->userRoleLabel($author),
+                messageExcerpt: $excerpt,
+                openUrl:        $openUrl,
+                cardUrl:        $cardUrl,
+                recipientName:  $r['display_name'],
+            ));
+        }
+    }
+
+    private function userRoleLabel(User $u): string
+    {
+        return match ($u->type) {
+            'admin' => 'Admin', 'coordenador' => 'Coordenador', 'consultor' => 'Consultor',
+            'cliente' => 'Cliente', 'parceiro_admin' => 'Parceiro', 'administrativo' => 'Administrativo',
+            default => 'Equipe',
+        };
     }
 
     public function downloadAttachment(Request $request, ContractRequestMessage $message, ContractRequestMessageAttachment $attachment): mixed

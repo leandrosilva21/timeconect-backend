@@ -930,6 +930,21 @@ Route::prefix('v1')->group(function () {
         Route::get('/contract-messages/unread-contracts',         [\App\Http\Controllers\ContractMessageController::class, 'unreadContracts'])->name('contract-messages.unread-contracts');
         Route::get('/contract-messages/{message}/attachments/{attachment}/download', [\App\Http\Controllers\ContractMessageController::class, 'downloadAttachment'])->name('contract-messages.attachment-download');
 
+        // 👥 ENVOLVIDOS DO CARD — quem recebe notificações e pode ser @mencionado
+        // cardType: contract-requests | projects
+        Route::get('/{cardType}/{cardId}/envolvidos',           [\App\Http\Controllers\CardEnvolvidoController::class, 'index'])
+            ->where(['cardType' => 'contract-requests|projects', 'cardId' => '[0-9]+'])
+            ->name('card-envolvidos.index');
+        Route::post('/{cardType}/{cardId}/envolvidos',          [\App\Http\Controllers\CardEnvolvidoController::class, 'store'])
+            ->where(['cardType' => 'contract-requests|projects', 'cardId' => '[0-9]+'])
+            ->name('card-envolvidos.store');
+        Route::delete('/{cardType}/{cardId}/envolvidos/{id}',   [\App\Http\Controllers\CardEnvolvidoController::class, 'destroy'])
+            ->where(['cardType' => 'contract-requests|projects', 'cardId' => '[0-9]+', 'id' => '[0-9]+'])
+            ->name('card-envolvidos.destroy');
+        Route::get('/{cardType}/{cardId}/mention-candidates',   [\App\Http\Controllers\CardEnvolvidoController::class, 'mentionCandidates'])
+            ->where(['cardType' => 'contract-requests|projects', 'cardId' => '[0-9]+'])
+            ->name('card-envolvidos.mention-candidates');
+
         // 🛡️ PORTAL DE SUSTENTAÇÃO - Admins e coordenadores do tipo "sustentacao"
         Route::prefix('sustentacao')->group(function () {
             Route::get('/kpis',         [SustentacaoController::class, 'kpis'])->name('sustentacao.kpis');

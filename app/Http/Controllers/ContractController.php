@@ -730,7 +730,58 @@ class ContractController extends Controller
             'coordinator_id' => $coordinatorId ?? null,
         ]);
 
-        return response()->json($this->formatKanbanCard($contract->fresh(['customer', 'contractType', 'serviceType', 'kanbanCoordinator', 'project'])));
+        // Fase card-envolvidos: notifica envolvidos do projeto vinculado quando contrato
+        // já tem project_id (movimentação visível pro time/cliente).
+        $freshContract = $contract->fresh(['customer', 'contractType', 'serviceType', 'kanbanCoordinator', 'project']);
+        if ($freshContract && $freshContract->project_id) {
+            try {
+                app(\App\Services\CardPhaseMovementDispatcher::class)->dispatch(
+                    cardType:   \App\Models\CardEnvolvido::TYPE_PROJECT,
+                    cardId:     $freshContract->project_id,
+                    fromColumn: $this->prettyKanbanColumn($fromColumn),
+                    toColumn:   $this->prettyKanbanColumn($toColumn),
+                    movedBy:    auth()->user(),
+                    note:       null,
+                );
+            } catch (\Throwable $e) {
+                \Log::warning('phase notif kanbanMove falhou', ['contract_id' => $contract->id, 'err' => $e->getMessage()]);
+            }
+        }
+
+        return response()->json($this->formatKanbanCard($freshContract));
+    }
+
+    /**
+     * Converte slug interno do kanban em label legível para emails.
+     */
+    private function prettyKanbanColumn(string $col): string
+    {
+        return match ($col) {
+            'backlog'                 => 'Backlog',
+            'em_planejamento'         => 'Em planejamento',
+            'inicio_autorizado'       => 'Início autorizado',
+            'req_inicio_autorizado'   => 'Início autorizado',
+            'em_execucao'             => 'Em execução',
+            'em_entrega'              => 'Em entrega',
+            'em_homologacao'          => 'Em homologação',
+            'concluido'               => 'Concluído',
+            'cancelado'               => 'Cancelado',
+            'pausado'                 => 'Pausado',
+            'alocado'                 => 'Alocado',
+            'planning'                => 'Em planejamento',
+            'awaiting_start'          => 'Aguardando início',
+            'started'                 => 'Em execução',
+            'liberado_para_testes'    => 'Liberado para testes',
+            'finished'                => 'Concluído',
+            'paused'                  => 'Pausado',
+            'cancelled'               => 'Cancelado',
+            'sust_bh_fixo'            => 'Sustentação · Banco de Horas Fixo',
+            'sust_bh_mensal'          => 'Sustentação · Banco de Horas Mensal',
+            'sust_on_demand'          => 'Sustentação · On Demand',
+            'sust_cloud'              => 'Sustentação · Cloud',
+            'sust_bizify'             => 'Sustentação · Bizify',
+            default => ucfirst(str_replace('_', ' ', $col)),
+        };
     }
 
     // Mover projeto de fase de execução (em_andamento → liberado_para_testes → encerrado)
@@ -801,6 +852,20 @@ class ContractController extends Controller
             \App\Models\Contract::where('id', $project->contract_id)
                 ->whereNotNull('sustentacao_column')
                 ->update(['sustentacao_column' => null]);
+        }
+
+        // Fase card-envolvidos: notifica envolvidos da movimentação de fase do projeto.
+        try {
+            app(\App\Services\CardPhaseMovementDispatcher::class)->dispatch(
+                cardType:   \App\Models\CardEnvolvido::TYPE_PROJECT,
+                cardId:     $project->id,
+                fromColumn: $this->prettyKanbanColumn((string) $fromStatus),
+                toColumn:   $this->prettyKanbanColumn((string) $newStatus),
+                movedBy:    auth()->user(),
+                note:       null,
+            );
+        } catch (\Throwable $e) {
+            \Log::warning('phase notif projectMove falhou', ['project_id' => $project->id, 'err' => $e->getMessage()]);
         }
 
         return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'consultants'])));

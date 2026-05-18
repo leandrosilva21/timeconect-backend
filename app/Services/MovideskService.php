@@ -14,11 +14,24 @@ use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class MovideskService
 {
+    /**
+     * Identificadores fixos das entidades de fallback. Eliminam a
+     * dependência de cadastrar manualmente em /settings — se a config
+     * estiver vazia ou apontar pra entidade ausente, o firstOrCreate
+     * resolve criando/retornando uma entidade marcada como fallback.
+     */
+    private const FALLBACK_USER_EMAIL    = 'movidesk-fallback@minutor.local';
+    private const FALLBACK_CUSTOMER_CGC  = '00000000000000';
+    private const FALLBACK_PROJECT_CODE  = 'MOVIDESK-FALLBACK';
+    private const FALLBACK_NAME          = 'Padrão Movidesk (Fallback)';
+
     private bool $lastUserIdWasFallback = false;
 
     private function token(): ?string
@@ -592,12 +605,32 @@ class MovideskService
 
     private function getDefaultUserId(): ?int
     {
-        $id = SystemSetting::get('movidesk_default_user_id');
-        if (!$id) {
-            Log::error('🚨 [MOVIDESK] movidesk_default_user_id não configurado — apontamento descartado');
-            return null;
+        // 1. Config explícita em /settings tem precedência (mantém compat).
+        $configured = SystemSetting::get('movidesk_default_user_id');
+        if ($configured && User::where('id', $configured)->where('enabled', true)->exists()) {
+            return (int) $configured;
         }
-        return (int) $id;
+
+        // 2. Auto-provisionamento por email reservado — não exige cadastro manual.
+        return $this->ensureDefaultUser()->id;
+    }
+
+    /**
+     * Cria (ou recupera) o User reservado para o fallback do Movidesk.
+     * Senha aleatória torna o login impossível — entidade serve apenas
+     * como destino de triagem.
+     */
+    private function ensureDefaultUser(): User
+    {
+        return User::firstOrCreate(
+            ['email' => self::FALLBACK_USER_EMAIL],
+            [
+                'name'     => self::FALLBACK_NAME,
+                'password' => Hash::make(Str::random(64)),
+                'enabled'  => true,
+                'type'     => 'consultor',
+            ]
+        );
     }
 
     private function extractCustomerId(array $ticket): ?int
@@ -754,14 +787,28 @@ class MovideskService
 
     private function getDefaultCustomerId(): ?int
     {
-        $id = SystemSetting::get('movidesk_default_customer_id');
-
-        if (!$id) {
-            Log::error('🚨 [MOVIDESK] movidesk_default_customer_id não configurado');
-            return null;
+        $configured = SystemSetting::get('movidesk_default_customer_id');
+        if ($configured && Customer::where('id', $configured)->where('active', true)->exists()) {
+            return (int) $configured;
         }
+        return $this->ensureDefaultCustomer()->id;
+    }
 
-        return (int) $id;
+    /**
+     * Cria (ou recupera) o Customer reservado para fallback do Movidesk.
+     * CGC 14×0 é um identificador placeholder unique que não colide com
+     * CNPJs reais.
+     */
+    private function ensureDefaultCustomer(): Customer
+    {
+        return Customer::firstOrCreate(
+            ['cgc' => self::FALLBACK_CUSTOMER_CGC],
+            [
+                'name'         => self::FALLBACK_NAME,
+                'company_name' => self::FALLBACK_NAME,
+                'active'       => true,
+            ]
+        );
     }
 
     private function extractProjectId(?int $customerId): ?int
@@ -838,27 +885,59 @@ class MovideskService
 
     private function resolveDefaultProject(): ?int
     {
-        $defaultId = SystemSetting::get('movidesk_default_project_id');
+        $configured = SystemSetting::get('movidesk_default_project_id');
+        if ($configured) {
+            $project = Project::find($configured);
+            if ($project) {
+                Log::info('ℹ️ [MOVIDESK] Usando projeto padrão configurado', [
+                    'project_id'   => $project->id,
+                    'project_name' => $project->name,
+                    'status'       => $project->status,
+                ]);
+                return $project->id;
+            }
+            Log::warning('⚠️ [MOVIDESK] movidesk_default_project_id aponta pra projeto inexistente — caindo no auto-provisionado', ['id' => $configured]);
+        }
 
-        if (!$defaultId) {
-            Log::error('🚨 [MOVIDESK] movidesk_default_project_id não configurado — apontamento descartado');
+        $project = $this->ensureDefaultProject();
+        return $project?->id;
+    }
+
+    /**
+     * Cria (ou recupera) o Project reservado para fallback. Linkado ao
+     * Customer fallback. Service type: prefere "sustentacao" se existir,
+     * senão o primeiro disponível.
+     */
+    private function ensureDefaultProject(): ?Project
+    {
+        $serviceTypeId = ServiceType::query()
+            ->orderByRaw("CASE WHEN code = 'sustentacao' THEN 0 ELSE 1 END")
+            ->orderBy('id')
+            ->value('id');
+
+        $contractTypeId = \App\Models\ContractType::query()
+            ->orderByRaw("CASE WHEN code = 'on_demand' THEN 0 ELSE 1 END")
+            ->orderBy('id')
+            ->value('id');
+
+        if (!$serviceTypeId || !$contractTypeId) {
+            Log::error('🚨 [MOVIDESK] Faltam ServiceType/ContractType cadastrados — impossível criar projeto fallback', [
+                'service_type_id'  => $serviceTypeId,
+                'contract_type_id' => $contractTypeId,
+            ]);
             return null;
         }
 
-        $project = Project::find($defaultId);
-
-        if (!$project) {
-            Log::error('🚨 [MOVIDESK] Projeto padrão não encontrado', ['id' => $defaultId]);
-            return null;
-        }
-
-        Log::info('ℹ️ [MOVIDESK] Usando projeto padrão', [
-            'project_id'   => $project->id,
-            'project_name' => $project->name,
-            'status'       => $project->status,
-        ]);
-
-        return $project->id;
+        return Project::firstOrCreate(
+            ['code' => self::FALLBACK_PROJECT_CODE],
+            [
+                'name'             => self::FALLBACK_NAME,
+                'customer_id'      => $this->ensureDefaultCustomer()->id,
+                'service_type_id'  => $serviceTypeId,
+                'contract_type_id' => $contractTypeId,
+                'status'           => Project::STATUS_STARTED,
+            ]
+        );
     }
 
     private function extractDate(array $appointment): ?string

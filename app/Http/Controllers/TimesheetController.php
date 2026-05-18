@@ -2790,7 +2790,7 @@ class TimesheetController extends Controller
         }
 
         $ids             = $request->input('ids', []);
-        $movideskOrigins = ['movidesk', 'webhook'];
+        $movideskOrigins = ['movidesk', 'webhook', 'movidesk_fallback'];
 
         // Sem IDs: roda o MESMO fluxo do cron (movidesk:sync) — fetch tickets
         // atualizados desde o último sync, importa novos, atualiza existentes

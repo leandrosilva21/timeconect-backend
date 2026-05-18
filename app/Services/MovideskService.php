@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Customer;
+use App\Models\MovideskAgent;
 use App\Models\MovideskOrganization;
 use App\Models\MovideskTicket;
 use App\Models\Project;
@@ -18,6 +19,8 @@ use Illuminate\Support\Facades\Log;
 
 class MovideskService
 {
+    private bool $lastUserIdWasFallback = false;
+
     private function token(): ?string
     {
         return config('services.movidesk.token') ?: null;
@@ -498,8 +501,9 @@ class MovideskService
                 }
             }
 
-            $userId = $this->extractUserId($action);
+            $userId     = $this->extractUserId($action);
             if (!$userId) return false;
+            $isFallback = $this->lastUserIdWasFallback;
 
             $customerId = $this->extractCustomerId($ticket);
             if (!$customerId) return false;
@@ -529,6 +533,7 @@ class MovideskService
                 'movidesk_appointment_id' => $appointmentId,
                 'is_internal_action'      => $isInternal,
                 'status'                  => $isInternal ? 'internal' : 'pending',
+                'origin'                  => $isFallback ? 'movidesk_fallback' : 'webhook',
             ]);
 
             return true;
@@ -548,27 +553,41 @@ class MovideskService
 
     private function extractUserId(array $action): ?int
     {
+        $this->lastUserIdWasFallback = false;
+
         $email = $action['createdBy']['email'] ?? null;
         if ($email) $email = strtolower(trim($email));
 
         if ($email) {
             $user = User::where('email', $email)->where('enabled', true)->first();
             if ($user) return $user->id;
-            Log::info('⏭️ [MOVIDESK] Apontamento descartado — agente não é consultor do Minutor', [
+
+            // Agente da Promax (cadastrado em movidesk_agents com team contendo
+            // "promax") continua sendo descartado — historicamente esses lançamentos
+            // eram a principal fonte de poluição quando o fallback era cego.
+            $agent = MovideskAgent::where('email', $email)->first();
+            if ($agent && stripos((string) $agent->team, 'promax') !== false) {
+                Log::info('⏭️ [MOVIDESK] Apontamento descartado — agente Promax', [
+                    'email'     => $email,
+                    'team'      => $agent->team,
+                    'action_id' => $action['id'] ?? null,
+                ]);
+                return null;
+            }
+
+            Log::warning('⚠️ [MOVIDESK] Usuário não encontrado — caindo no Usuário Padrão pra triagem', [
                 'email'     => $email,
                 'action_id' => $action['id'] ?? null,
             ]);
         } else {
-            Log::warning('⚠️ [MOVIDESK] Apontamento descartado — email ausente na ação', [
+            Log::warning('⚠️ [MOVIDESK] Email ausente na ação — caindo no Usuário Padrão pra triagem', [
                 'action_id' => $action['id'] ?? null,
             ]);
         }
 
-        // Retorna null = caller (processAppointment) descarta o apontamento.
-        // Antes caía em getDefaultUserId() que atribuía a um usuário padrão —
-        // poluía estatísticas dos consultores quando agentes externos (ex:
-        // Promax) faziam ações no mesmo ticket.
-        return null;
+        $defaultId = $this->getDefaultUserId();
+        if ($defaultId) $this->lastUserIdWasFallback = true;
+        return $defaultId;
     }
 
     private function getDefaultUserId(): ?int
@@ -1007,7 +1026,7 @@ class MovideskService
             $timesheet->ticket                  = $data['ticket'];
             $timesheet->movidesk_appointment_id = $data['movidesk_appointment_id'] ?? null;
             $timesheet->is_internal_action      = $data['is_internal_action'] ?? false;
-            $timesheet->origin = 'webhook';
+            $timesheet->origin                  = $data['origin'] ?? 'webhook';
 
             if ($data['is_internal_action'] ?? false) {
                 $timesheet->status = Timesheet::STATUS_INTERNAL;

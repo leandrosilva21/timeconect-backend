@@ -473,7 +473,12 @@ class TimesheetController extends Controller
                     // somando apontamentos já soft-deletados (ex.: limpeza dos <5min).
                     $totalsQ = \Illuminate\Support\Facades\DB::table('timesheets')
                         ->whereNull('deleted_at')
-                        ->where('status', '!=', 'rejected')
+                        ->whereNotIn('status', [
+                            Timesheet::STATUS_REJECTED,
+                            Timesheet::STATUS_CONFLICTED,
+                            Timesheet::STATUS_ADJUSTMENT_REQUESTED,
+                            Timesheet::STATUS_INTERNAL,
+                        ])
                         ->whereRaw("ticket ~ '^[0-9]{5}$'");
                     $totalsQ->where(function ($q) use ($ticketsByCustomer) {
                         foreach ($ticketsByCustomer as $cid => $tickets) {

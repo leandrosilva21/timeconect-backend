@@ -474,7 +474,7 @@ class Project extends Model
      */
     public function getTotalLoggedMinutes(bool $includeChildProjects = false, ?int $excludeTimesheetId = null): int
     {
-        $query = $this->timesheets()->where('status', '!=', 'rejected');
+        $query = $this->timesheets()->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_INTERNAL]);
 
         if ($excludeTimesheetId) {
             $query->where('id', '!=', $excludeTimesheetId);
@@ -484,7 +484,7 @@ class Project extends Model
 
         if ($includeChildProjects && $this->hasChildProjects()) {
             foreach ($this->childProjects as $childProject) {
-                $childQuery = $childProject->timesheets()->where('status', '!=', 'rejected');
+                $childQuery = $childProject->timesheets()->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_INTERNAL]);
                 if ($excludeTimesheetId) {
                     $childQuery->where('id', '!=', $excludeTimesheetId);
                 }
@@ -528,7 +528,7 @@ class Project extends Model
 
         $query = $this->timesheets()
             ->whereIn('user_id', $consultantIds)
-            ->where('status', '!=', 'rejected');
+            ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_INTERNAL]);
 
         if ($excludeTimesheetId) {
             $query->where('id', '!=', $excludeTimesheetId);
@@ -540,7 +540,7 @@ class Project extends Model
             foreach ($this->childProjects as $childProject) {
                 $childQuery = $childProject->timesheets()
                     ->whereIn('user_id', $consultantIds)
-                    ->where('status', '!=', 'rejected');
+                    ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_INTERNAL]);
                 if ($excludeTimesheetId) {
                     $childQuery->where('id', '!=', $excludeTimesheetId);
                 }
@@ -586,7 +586,7 @@ class Project extends Model
 
         $query = $this->timesheets()
             ->whereIn('user_id', $coordinatorIds)
-            ->where('status', '!=', 'rejected');
+            ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_INTERNAL]);
 
         if ($excludeTimesheetId) {
             $query->where('id', '!=', $excludeTimesheetId);
@@ -598,7 +598,7 @@ class Project extends Model
             foreach ($this->childProjects as $childProject) {
                 $childQuery = $childProject->timesheets()
                     ->whereIn('user_id', $coordinatorIds)
-                    ->where('status', '!=', 'rejected');
+                    ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_INTERNAL]);
                 if ($excludeTimesheetId) {
                     $childQuery->where('id', '!=', $excludeTimesheetId);
                 }
@@ -697,7 +697,7 @@ class Project extends Model
         $contributionHours = $totalAvailableHours - ($this->sold_hours ?? 0);
 
         // Horas apontadas (excluindo rejeitados)
-        $query = $this->timesheets()->where('status', '!=', 'rejected');
+        $query = $this->timesheets()->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_INTERNAL]);
         if ($excludeTimesheetId) {
             $query->where('id', '!=', $excludeTimesheetId);
         }
@@ -741,7 +741,7 @@ class Project extends Model
                     $childTotalAvailable = $childProject->getTotalAvailableHours();
                     $childContributionHours = $childTotalAvailable - ($childProject->sold_hours ?? 0);
 
-                    $childQuery = $childProject->timesheets()->where('status', '!=', 'rejected');
+                    $childQuery = $childProject->timesheets()->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_INTERNAL]);
                     if ($excludeTimesheetId) {
                         $childQuery->where('id', '!=', $excludeTimesheetId);
                     }
@@ -755,7 +755,7 @@ class Project extends Model
                     $balance -= $childBalance;
                 } else {
                     // Demais tipos: subtrai apenas o efetivamente apontado + initial_consumed
-                    $childQuery = $childProject->timesheets()->where('status', '!=', 'rejected');
+                    $childQuery = $childProject->timesheets()->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_INTERNAL]);
                     if ($excludeTimesheetId) {
                         $childQuery->where('id', '!=', $excludeTimesheetId);
                     }
@@ -802,7 +802,7 @@ class Project extends Model
 
         // Calcular horas apontadas excluindo o mês atual (até o final do mês anterior)
         $query = $this->timesheets()
-            ->where('status', '!=', 'rejected')
+            ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_INTERNAL])
             ->where('date', '<=', $endOfLastMonth->format('Y-m-d'));
 
         if ($excludeTimesheetId) {
@@ -849,7 +849,7 @@ class Project extends Model
                     
                     // Calcular horas apontadas do filho excluindo o mês atual
                     $childQuery = $childProject->timesheets()
-                        ->where('status', '!=', 'rejected')
+                        ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_INTERNAL])
                         ->where('date', '<=', $endOfLastMonth->format('Y-m-d'));
 
                     if ($excludeTimesheetId) {
@@ -866,7 +866,7 @@ class Project extends Model
                 } else {
                     // Para outros tipos (inclui Banco de Horas Fixo): subtrair apontadas + initial_hours_consumed
                     $childQuery = $childProject->timesheets()
-                        ->where('status', '!=', 'rejected')
+                        ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_INTERNAL])
                         ->where('date', '<=', $endOfLastMonth->format('Y-m-d'));
 
                     if ($excludeTimesheetId) {

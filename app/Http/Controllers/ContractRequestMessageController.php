@@ -134,7 +134,8 @@ class ContractRequestMessageController extends Controller
 
         $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
         $cardUrl = $base . '/contratos/pipeline?req=' . $req->id;
-        $openUrl = $cardUrl . '#chat';
+        // tab=chat (query) é mais confiável que hash #chat em client-side nav (Next 16)
+        $openUrl = $cardUrl . '&tab=chat';
         $code = $req->code ?? ('REQ-' . str_pad((string) $req->id, 6, '0', STR_PAD_LEFT));
         $title = $req->title ?? ($req->subject ?? 'Requisição');
         $excerpt = Str::limit($msg->message ?? '', 280);

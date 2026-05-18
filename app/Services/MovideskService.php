@@ -583,41 +583,43 @@ class MovideskService
         $name        = isset($createdBy['businessName']) ? trim($createdBy['businessName']) : null;
         $name        = $name ?: (isset($createdBy['name']) ? trim($createdBy['name']) : null);
 
-        // 1. Match por movidesk_id (mais robusto — vem em TODO payload, ID estável,
-        //    permite detectar Promax mesmo quando o Movidesk omite o email).
+        // Resolve agente cacheado (id tem prioridade, email é fallback). Usado pra
+        // descobrir o email real do agente quando o payload omite (Movidesk às
+        // vezes não inclui email no createdBy mesmo pedindo via $expand).
+        $cachedAgent = null;
         if ($movideskId) {
-            $agent = MovideskAgent::where('movidesk_id', $movideskId)->first();
-            if ($agent) {
-                if (stripos((string) $agent->team, 'promax') !== false) {
-                    Log::info('⏭️ [MOVIDESK] Apontamento descartado — agente Promax (via movidesk_id)', [
-                        'movidesk_id' => $movideskId,
-                        'team'        => $agent->team,
-                        'action_id'   => $action['id'] ?? null,
-                    ]);
-                    return null;
-                }
-                if ($agent->user_id) {
-                    $user = User::where('id', $agent->user_id)->where('enabled', true)->first();
-                    if ($user) return $user->id;
-                }
-            }
+            $cachedAgent = MovideskAgent::where('movidesk_id', $movideskId)->first();
+        }
+        if (!$cachedAgent && $email) {
+            $cachedAgent = MovideskAgent::where('email', $email)->first();
+        }
+        $effectiveEmail = $email ?: ($cachedAgent ? strtolower((string) $cachedAgent->email) : null);
+
+        // Promax check via DOMÍNIO do email (Movidesk não devolve o campo `team`
+        // pela API /persons, então team em movidesk_agents fica vazio — domínio
+        // é o sinal único confiável: @promax.bardahl.com.br, @promax.com.br, etc).
+        // Também olha team como cinto-e-suspensório caso algum cadastro venha
+        // preenchido manualmente no futuro.
+        if ($this->isPromaxAgent($effectiveEmail, $cachedAgent->team ?? null)) {
+            Log::info('⏭️ [MOVIDESK] Apontamento descartado — agente Promax', [
+                'movidesk_id' => $movideskId,
+                'email'       => $effectiveEmail,
+                'team'        => $cachedAgent->team ?? null,
+                'action_id'   => $action['id'] ?? null,
+            ]);
+            return null;
         }
 
-        // 2. Match por email (caminho secundário — pode resolver se movidesk_agents
-        //    ainda não cacheou esse agente).
-        if ($email) {
-            $user = User::where('email', $email)->where('enabled', true)->first();
+        // 1. Match via agente cacheado linkado a User
+        if ($cachedAgent && $cachedAgent->user_id) {
+            $user = User::where('id', $cachedAgent->user_id)->where('enabled', true)->first();
             if ($user) return $user->id;
+        }
 
-            $agent = MovideskAgent::where('email', $email)->first();
-            if ($agent && stripos((string) $agent->team, 'promax') !== false) {
-                Log::info('⏭️ [MOVIDESK] Apontamento descartado — agente Promax (via email)', [
-                    'email'     => $email,
-                    'team'      => $agent->team,
-                    'action_id' => $action['id'] ?? null,
-                ]);
-                return null;
-            }
+        // 2. Match por email direto (payload ou cache)
+        if ($effectiveEmail) {
+            $user = User::where('email', $effectiveEmail)->where('enabled', true)->first();
+            if ($user) return $user->id;
         }
 
         // 3. Match por nome — último recurso. Só atribui se for inequívoco
@@ -654,6 +656,20 @@ class MovideskService
         $defaultId = $this->getDefaultUserId();
         if ($defaultId) $this->lastUserIdWasFallback = true;
         return $defaultId;
+    }
+
+    /**
+     * Detecta se o agente é da Promax (não deve gerar timesheet local).
+     * Critério principal: domínio do email (@promax.*). Critério secundário:
+     * `team` em movidesk_agents contém "promax" — não confiável hoje porque o
+     * Movidesk omite team na API /persons, mas mantemos pro caso de cadastro
+     * manual no futuro.
+     */
+    private function isPromaxAgent(?string $email, ?string $team): bool
+    {
+        if ($email && stripos($email, '@promax.') !== false) return true;
+        if ($team && stripos($team, 'promax') !== false) return true;
+        return false;
     }
 
     private function getDefaultUserId(): ?int

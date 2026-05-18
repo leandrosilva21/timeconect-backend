@@ -56,7 +56,7 @@ class MovideskService
             $response = Http::timeout(5)->get("{$this->baseUrl()}/tickets", [
                 'token'   => $this->token(),
                 'id'      => $ticketId,
-                '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments;$select=id,type,isPublic,htmlDescription,createdBy,timeAppointments)',
+                '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments,createdBy($select=id,businessName,email);$select=id,type,isPublic,htmlDescription,timeAppointments)',
             ]);
 
             if ($response->successful()) {
@@ -88,7 +88,7 @@ class MovideskService
         $response = Http::timeout(30)->get("{$this->baseUrl()}/tickets", [
             'token'   => $this->token(),
             'id'      => $ticketId,
-            '$expand' => 'actions($expand=timeAppointments;$select=id,type,isPublic,htmlDescription,createdBy,timeAppointments)',
+            '$expand' => 'actions($expand=timeAppointments,createdBy($select=id,businessName,email);$select=id,type,isPublic,htmlDescription,timeAppointments)',
         ]);
 
         if (!$response->successful()) {
@@ -576,22 +576,42 @@ class MovideskService
     {
         $this->lastUserIdWasFallback = false;
 
-        $email = $action['createdBy']['email'] ?? null;
+        $createdBy   = $action['createdBy'] ?? [];
+        $movideskId  = isset($createdBy['id']) && $createdBy['id'] !== '' ? (string) $createdBy['id'] : null;
+        $email       = $createdBy['email'] ?? null;
         if ($email) $email = strtolower(trim($email));
-        $name  = isset($action['createdBy']['businessName']) ? trim($action['createdBy']['businessName']) : null;
-        $name  = $name ?: (isset($action['createdBy']['name']) ? trim($action['createdBy']['name']) : null);
+        $name        = isset($createdBy['businessName']) ? trim($createdBy['businessName']) : null;
+        $name        = $name ?: (isset($createdBy['name']) ? trim($createdBy['name']) : null);
 
-        // 1. Match por email (caminho preferido — chave única real).
+        // 1. Match por movidesk_id (mais robusto — vem em TODO payload, ID estável,
+        //    permite detectar Promax mesmo quando o Movidesk omite o email).
+        if ($movideskId) {
+            $agent = MovideskAgent::where('movidesk_id', $movideskId)->first();
+            if ($agent) {
+                if (stripos((string) $agent->team, 'promax') !== false) {
+                    Log::info('⏭️ [MOVIDESK] Apontamento descartado — agente Promax (via movidesk_id)', [
+                        'movidesk_id' => $movideskId,
+                        'team'        => $agent->team,
+                        'action_id'   => $action['id'] ?? null,
+                    ]);
+                    return null;
+                }
+                if ($agent->user_id) {
+                    $user = User::where('id', $agent->user_id)->where('enabled', true)->first();
+                    if ($user) return $user->id;
+                }
+            }
+        }
+
+        // 2. Match por email (caminho secundário — pode resolver se movidesk_agents
+        //    ainda não cacheou esse agente).
         if ($email) {
             $user = User::where('email', $email)->where('enabled', true)->first();
             if ($user) return $user->id;
 
-            // Agente da Promax (cadastrado em movidesk_agents com team contendo
-            // "promax") continua sendo descartado — historicamente esses lançamentos
-            // eram a principal fonte de poluição quando o fallback era cego.
             $agent = MovideskAgent::where('email', $email)->first();
             if ($agent && stripos((string) $agent->team, 'promax') !== false) {
-                Log::info('⏭️ [MOVIDESK] Apontamento descartado — agente Promax', [
+                Log::info('⏭️ [MOVIDESK] Apontamento descartado — agente Promax (via email)', [
                     'email'     => $email,
                     'team'      => $agent->team,
                     'action_id' => $action['id'] ?? null,
@@ -600,17 +620,15 @@ class MovideskService
             }
         }
 
-        // 2. Fallback por nome — Movidesk às vezes omite email no payload do
-        //    createdBy (caso Antonio Nunes ticket 48104). Só usa se o nome for
-        //    inequívoco (exatamente 1 User enabled). Múltiplos matches cairiam
-        //    em ambiguidade — vai pro Usuário Padrão pra triagem manual.
+        // 3. Match por nome — último recurso. Só atribui se for inequívoco
+        //    (exatamente 1 User enabled com o nome exato, case-insensitive).
         if ($name) {
             $matches = User::whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
                 ->where('enabled', true)
                 ->limit(2)
                 ->get();
             if ($matches->count() === 1) {
-                Log::info('ℹ️ [MOVIDESK] Usuário resolvido por nome (email ausente no createdBy)', [
+                Log::info('ℹ️ [MOVIDESK] Usuário resolvido por nome', [
                     'name'      => $name,
                     'user_id'   => $matches->first()->id,
                     'action_id' => $action['id'] ?? null,
@@ -627,9 +645,10 @@ class MovideskService
         }
 
         Log::warning('⚠️ [MOVIDESK] Usuário não encontrado — caindo no Usuário Padrão pra triagem', [
-            'email'     => $email,
-            'name'      => $name,
-            'action_id' => $action['id'] ?? null,
+            'movidesk_id' => $movideskId,
+            'email'       => $email,
+            'name'        => $name,
+            'action_id'   => $action['id'] ?? null,
         ]);
 
         $defaultId = $this->getDefaultUserId();

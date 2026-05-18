@@ -85,10 +85,12 @@ class ProjectMessageController extends Controller
             'visibility' => $visibility,
         ]);
 
-        // Parse mention tokens @[id:Name] + fallback plain-text via MentionParser
+        // Parse mention tokens @[id:Name] + fallback plain-text via MentionParser.
+        // Cliente NUNCA pode ser mencionado em chat de projeto (regra ADR cards —
+        // chat de projeto é interno; cliente não tem acesso).
         $candidates = User::query()
             ->select('id', 'name')
-            ->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo', 'cliente'])
+            ->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo'])
             ->get();
         foreach (\App\Services\MentionParser::extract($text, $candidates) as $mentionedId) {
             ProjectMessageMention::firstOrCreate([

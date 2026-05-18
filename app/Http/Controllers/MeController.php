@@ -117,7 +117,14 @@ class MeController extends Controller
         $user = $request->user();
         $items = collect();
 
-        // 1) Stage activity events (timeline operacional)
+        // Cliente NUNCA vê chat de projeto (regra cards) — pula 2 fontes ligadas a projeto
+        $isClient = $user->isCliente();
+
+        // 1) Stage activity events (timeline operacional — chat por atividade dentro de projeto)
+        // Cliente nunca tem visão de atividade → pula
+        if ($isClient) {
+            // pula bloco
+        } else {
         $events = StageActivityEvent::query()
             ->where('type', StageActivityEvent::TYPE_COMMENT)
             ->whereRaw("payload->'mentioned_user_ids' @> ?::jsonb", [json_encode([$user->id])])
@@ -143,8 +150,10 @@ class MeController extends Controller
                 'delivery'    => $ev->delivery?->title,
             ]);
         }
+        } // close non-client guard
 
-        // 2) Chat de projeto
+        // 2) Chat de projeto — cliente nunca recebe
+        if (!$isClient) {
         $projectMentions = \App\Models\ProjectMessageMention::query()
             ->where('mentioned_user_id', $user->id)
             ->with([
@@ -167,20 +176,26 @@ class MeController extends Controller
                 'project'    => $m->message?->project?->name,
             ]);
         }
+        } // close non-client guard
 
-        // 3) Chat de requisição
-        $reqMentions = \App\Models\ContractRequestMessageMention::query()
+        // 3) Chat de requisição — cliente vê SÓ até req_decided_at (regra ADR cards)
+        $reqMentionsQuery = \App\Models\ContractRequestMessageMention::query()
             ->where('mentioned_user_id', $user->id)
             ->with([
                 'message:id,contract_request_id,user_id,message,created_at',
                 'message.author:id,name',
-                'message.request:id,customer_id',
+                'message.request:id,customer_id,req_decided_at',
                 'message.request.customer:id,name',
             ])
-            ->whereHas('message')
-            ->orderByDesc('id')
-            ->limit(100)
-            ->get();
+            ->whereHas('message');
+
+        if ($isClient) {
+            $reqMentionsQuery->whereHas('message.request', function ($q) {
+                $q->whereNull('req_decided_at');
+            });
+        }
+
+        $reqMentions = $reqMentionsQuery->orderByDesc('id')->limit(100)->get();
         foreach ($reqMentions as $m) {
             $items->push([
                 'source'      => 'request_chat',
@@ -193,19 +208,22 @@ class MeController extends Controller
             ]);
         }
 
-        // 4) Chat de contrato
-        $contractMentions = \App\Models\ContractMessageMention::query()
+        // 4) Chat de contrato — cliente só vê msgs com visibility=client
+        $contractMentionsQuery = \App\Models\ContractMessageMention::query()
             ->where('mentioned_user_id', $user->id)
             ->with([
-                'message:id,contract_id,user_id,message,created_at',
+                'message:id,contract_id,user_id,message,visibility,created_at',
                 'message.author:id,name',
                 'message.contract:id,customer_id',
                 'message.contract.customer:id,name',
             ])
-            ->whereHas('message')
-            ->orderByDesc('id')
-            ->limit(100)
-            ->get();
+            ->whereHas('message');
+
+        if ($isClient) {
+            $contractMentionsQuery->whereHas('message', fn ($q) => $q->where('visibility', 'client'));
+        }
+
+        $contractMentions = $contractMentionsQuery->orderByDesc('id')->limit(100)->get();
         foreach ($contractMentions as $m) {
             $items->push([
                 'source'      => 'contract_chat',

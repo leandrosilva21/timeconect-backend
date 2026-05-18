@@ -6,6 +6,7 @@ use App\Models\CardEnvolvido;
 use App\Models\ContractRequest;
 use App\Models\ContractRequestMessage;
 use App\Models\ContractRequestMessageAttachment;
+use App\Models\ContractRequestMessageMention;
 use App\Models\User;
 use App\Notifications\CardChatMessageNotification;
 use App\Services\CardEnvolvidoService;
@@ -87,6 +88,9 @@ class ContractRequestMessageController extends Controller
 
         $msg->load(['author:id,name', 'attachments']);
 
+        // Parser @-mention token @[id:Nome] (espelha ProjectMessageController)
+        $this->persistMentions($msg);
+
         // Fase card-envolvidos: notifica envolvidos do card (cliente sai automaticamente
         // se req_decided_at preenchido). Best-effort — falha em mail não bloqueia chat.
         try {
@@ -96,6 +100,17 @@ class ContractRequestMessageController extends Controller
         }
 
         return response()->json($msg, 201);
+    }
+
+    private function persistMentions(ContractRequestMessage $msg): void
+    {
+        preg_match_all('/@\[(\d+):([^\]]+)\]/', (string) $msg->message, $matches);
+        foreach (array_unique($matches[1] ?? []) as $mentionedId) {
+            ContractRequestMessageMention::firstOrCreate([
+                'message_id'        => $msg->id,
+                'mentioned_user_id' => (int) $mentionedId,
+            ]);
+        }
     }
 
     private function dispatchChatNotification(ContractRequest $req, ContractRequestMessage $msg, User $author): void

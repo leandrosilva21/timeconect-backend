@@ -104,54 +104,129 @@ class MeController extends Controller
 
     /**
      * Comentários onde o usuário corrente foi mencionado via `@[id:Name]`.
+     * Agrega 4 fontes em uma lista única ordenada por data:
+     *  - stage_activity_events (timeline operacional de atividade — payload->mentioned_user_ids)
+     *  - project_message_mentions (chat de projeto)
+     *  - contract_request_message_mentions (chat de requisição)
+     *  - contract_message_mentions (chat de contrato)
      *
-     * Read tracking é client-side (localStorage `minutor.mentions_last_seen`).
-     * Endpoint retorna últimas 50 mentions ordenadas decrescente.
+     * Cada item carrega contexto pra deep link no FE (project_id, request_id, contract_id, delivery_id).
      */
     public function mentions(Request $request): JsonResponse
     {
         $user = $request->user();
+        $items = collect();
 
-        // payload->mentioned_user_ids é jsonb array. @> consulta containment.
+        // 1) Stage activity events (timeline operacional)
         $events = StageActivityEvent::query()
             ->where('type', StageActivityEvent::TYPE_COMMENT)
             ->whereRaw("payload->'mentioned_user_ids' @> ?::jsonb", [json_encode([$user->id])])
             ->with([
-                'actor:id,name,email',
+                'actor:id,name',
                 'delivery:id,title,stage_id',
                 'delivery.stage:id,name,project_id',
-                'delivery.stage.project:id,name,customer_id',
+                'delivery.stage.project:id,name',
             ])
             ->orderByDesc('created_at')
             ->limit(50)
             ->get();
+        foreach ($events as $ev) {
+            $items->push([
+                'source'      => 'activity',
+                'id'          => "act-{$ev->id}",
+                'created_at'  => $ev->created_at?->toIso8601String(),
+                'actor'       => $ev->actor ? ['id' => $ev->actor->id, 'name' => $ev->actor->name] : null,
+                'text'        => $ev->payload['text'] ?? null,
+                'project_id'  => $ev->delivery?->stage?->project?->id,
+                'project'     => $ev->delivery?->stage?->project?->name,
+                'delivery_id' => $ev->delivery?->id,
+                'delivery'    => $ev->delivery?->title,
+            ]);
+        }
 
-        $items = $events->map(function ($ev) {
-            $delivery = $ev->delivery;
-            $stage    = $delivery?->stage;
-            $project  = $stage?->project;
-            $payload  = $ev->payload ?? [];
+        // 2) Chat de projeto
+        $projectMentions = \App\Models\ProjectMessageMention::query()
+            ->where('mentioned_user_id', $user->id)
+            ->with([
+                'message:id,project_id,user_id,message,created_at',
+                'message.author:id,name',
+                'message.project:id,name',
+            ])
+            ->whereHas('message')
+            ->orderByDesc('id')
+            ->limit(50)
+            ->get();
+        foreach ($projectMentions as $m) {
+            $items->push([
+                'source'     => 'project_chat',
+                'id'         => "pm-{$m->id}",
+                'created_at' => $m->message?->created_at?->toIso8601String(),
+                'actor'      => $m->message?->author ? ['id' => $m->message->author->id, 'name' => $m->message->author->name] : null,
+                'text'       => $m->message?->message,
+                'project_id' => $m->message?->project?->id,
+                'project'    => $m->message?->project?->name,
+            ]);
+        }
 
-            return [
-                'id'           => $ev->id,
-                'created_at'   => $ev->created_at?->toIso8601String(),
-                'actor'        => $ev->actor ? [
-                    'id'   => $ev->actor->id,
-                    'name' => $ev->actor->name,
-                ] : null,
-                'text'         => $payload['text'] ?? null,
-                'delivery_id'  => $delivery?->id,
-                'delivery'     => $delivery?->title,
-                'stage_id'     => $stage?->id,
-                'stage'        => $stage?->name,
-                'project_id'   => $project?->id,
-                'project'      => $project?->name,
-            ];
-        });
+        // 3) Chat de requisição
+        $reqMentions = \App\Models\ContractRequestMessageMention::query()
+            ->where('mentioned_user_id', $user->id)
+            ->with([
+                'message:id,contract_request_id,user_id,message,created_at',
+                'message.author:id,name',
+                'message.request:id,customer_id',
+                'message.request.customer:id,name',
+            ])
+            ->whereHas('message')
+            ->orderByDesc('id')
+            ->limit(50)
+            ->get();
+        foreach ($reqMentions as $m) {
+            $items->push([
+                'source'      => 'request_chat',
+                'id'          => "rm-{$m->id}",
+                'created_at'  => $m->message?->created_at?->toIso8601String(),
+                'actor'       => $m->message?->author ? ['id' => $m->message->author->id, 'name' => $m->message->author->name] : null,
+                'text'        => $m->message?->message,
+                'request_id'  => $m->message?->contract_request_id,
+                'customer'    => $m->message?->request?->customer?->name,
+            ]);
+        }
+
+        // 4) Chat de contrato
+        $contractMentions = \App\Models\ContractMessageMention::query()
+            ->where('mentioned_user_id', $user->id)
+            ->with([
+                'message:id,contract_id,user_id,message,created_at',
+                'message.author:id,name',
+                'message.contract:id,customer_id',
+                'message.contract.customer:id,name',
+            ])
+            ->whereHas('message')
+            ->orderByDesc('id')
+            ->limit(50)
+            ->get();
+        foreach ($contractMentions as $m) {
+            $items->push([
+                'source'      => 'contract_chat',
+                'id'          => "cm-{$m->id}",
+                'created_at'  => $m->message?->created_at?->toIso8601String(),
+                'actor'       => $m->message?->author ? ['id' => $m->message->author->id, 'name' => $m->message->author->name] : null,
+                'text'        => $m->message?->message,
+                'contract_id' => $m->message?->contract_id,
+                'customer'    => $m->message?->contract?->customer?->name,
+            ]);
+        }
+
+        // Ordena tudo por created_at desc, limit 50
+        $final = $items
+            ->sortByDesc(fn ($it) => $it['created_at'] ?? '')
+            ->take(50)
+            ->values();
 
         return response()->json([
-            'items' => $items,
-            'count' => $items->count(),
+            'items' => $final,
+            'count' => $final->count(),
         ]);
     }
 }

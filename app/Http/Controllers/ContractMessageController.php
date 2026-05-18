@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Contract;
 use App\Models\ContractMessage;
 use App\Models\ContractMessageAttachment;
+use App\Models\ContractMessageMention;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -73,6 +74,15 @@ class ContractMessageController extends Controller
         }
 
         $msg->load(['author:id,name', 'attachments']);
+
+        // Parser @-mention (espelha ProjectMessageController)
+        preg_match_all('/@\[(\d+):([^\]]+)\]/', (string) $msg->message, $matches);
+        foreach (array_unique($matches[1] ?? []) as $mentionedId) {
+            ContractMessageMention::firstOrCreate([
+                'message_id'        => $msg->id,
+                'mentioned_user_id' => (int) $mentionedId,
+            ]);
+        }
 
         return response()->json($msg, 201);
     }

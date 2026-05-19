@@ -1130,7 +1130,7 @@ class MovideskService
         if ($html === '' || !preg_match_all('/<img[^>]+src=["\']([^"\']+)["\']/i', $html, $m)) {
             return [];
         }
-        $urls = array_unique($m[1]);
+        $urls = array_unique(array_map("html_entity_decode", $m[1]));
         $movidesk = [];
         foreach ($urls as $url) {
             if (preg_match('~^https?://[^/]*s3[.-][^/]*amazonaws\.com/[^?]*movidesk~i', $url)) {

@@ -786,6 +786,22 @@ class ContractController extends Controller
                     ]);
                 });
             }
+
+            // Card entrou em "Alocado" (qualquer coordenador) vindo de fora →
+            // notifica executivo + coordenador + diretor + contatos. Skip se já
+            // estava em alocado (reatribuição de coordenador não re-dispara).
+            $wasAlocado = $fromColumn === Contract::KANBAN_ALOCADO
+                || str_starts_with($fromColumn, 'coordinator:');
+            if (!$wasAlocado) {
+                $freshContract = $contract->fresh(['customer', 'contacts']);
+                if ($freshContract && $freshContract->project_id) {
+                    $project = \App\Models\Project::find($freshContract->project_id);
+                    if ($project) {
+                        $coordIds = $coordinatorId ? [$coordinatorId] : [];
+                        $this->notifyProjectGenerated($freshContract, $project, $coordIds);
+                    }
+                }
+            }
         } elseif (str_starts_with($toColumn, 'sust_')) {
             if ($err = $this->validateSustentacaoContractType($contract, $toColumn)) {
                 return $err;

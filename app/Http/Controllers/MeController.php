@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Customer;
 use App\Models\Project;
 use App\Models\StageActivityEvent;
 use App\Models\StageDelivery;
@@ -249,5 +250,24 @@ class MeController extends Controller
             'items' => $final,
             'count' => $final->count(),
         ]);
+    }
+
+    /**
+     * Customer vinculado ao usuário corrente. Substitui /customers/{id} pro
+     * header do cliente, que não tem permissão `customers.view`.
+     * Retorna 204 quando o usuário não tem customer_id.
+     */
+    public function customer(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user->customer_id) {
+            return response()->json(null);
+        }
+
+        $customer = Customer::query()
+            ->where('id', $user->customer_id)
+            ->first(['id', 'name']);
+
+        return response()->json($customer);
     }
 }

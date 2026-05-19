@@ -131,8 +131,12 @@ Route::prefix('v1')->group(function () {
 
         // Cards atribuídos ao usuário corrente (visão consultor — Bloco F)
         Route::get('/me/cards', [MeController::class, 'cards'])->middleware('block.cliente')->name('me.cards');
-        // Comentários onde o usuário foi mencionado (refactor 2026-05-15)
-        Route::get('/me/mentions', [MeController::class, 'mentions'])->middleware('block.cliente')->name('me.mentions');
+        // Comentários onde o usuário foi mencionado (refactor 2026-05-15).
+        // Cliente recebe mentions de req chat — controller já filtra por isCliente.
+        Route::get('/me/mentions', [MeController::class, 'mentions'])->name('me.mentions');
+        // Customer do próprio usuário (substitui /customers/{id} pro header do cliente,
+        // que não tem permissão customers.view).
+        Route::get('/me/customer', [MeController::class, 'customer'])->name('me.customer');
 
         // Autenticação
         Route::post('/auth/logout', [AuthController::class, 'logout'])->name('auth.logout');

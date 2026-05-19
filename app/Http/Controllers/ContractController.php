@@ -159,6 +159,54 @@ class ContractController extends Controller
         }
     }
 
+    private function notifyInicioAutorizado(Contract $contract): void
+    {
+        try {
+            $executiveId = $contract->executivo_conta_id
+                ?: optional($contract->customer)->executive_id;
+
+            $recipientIds = collect([$executiveId, $this->projectDirectorUserId()])
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            if (empty($recipientIds)) {
+                \Log::info('InicioAutorizado: nenhum destinatário', ['contract_id' => $contract->id]);
+                return;
+            }
+
+            $recipients = \App\Models\User::query()
+                ->whereIn('id', $recipientIds)
+                ->where('enabled', true)
+                ->get();
+
+            foreach ($recipients as $user) {
+                $user->notify(new \App\Notifications\ContractInicioAutorizadoNotification($contract));
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('ContractInicioAutorizado notification falhou', [
+                'contract_id' => $contract->id,
+                'err'         => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Diretor de Projetos — recebe e-mail em TODA fase pós-Novo Contrato
+     * (Início Autorizado, Projeto Gerado). Hoje: Ricardo Badawi.
+     * Em Novo Contrato só recebe se for o executivo do cliente.
+     */
+    private function projectDirectorUserId(): ?int
+    {
+        $email = 'ricardo.badawi@erpserv.com.br';
+        $id = \App\Models\User::query()
+            ->where('email', $email)
+            ->where('enabled', true)
+            ->value('id');
+        return $id ? (int) $id : null;
+    }
+
     public function show(Contract $contract): JsonResponse
     {
         return response()->json(
@@ -364,8 +412,8 @@ class ContractController extends Controller
     private function notifyProjectGenerated(Contract $contract, Project $project, array $coordinatorIds): void
     {
         try {
-            // Internos: executivo da conta + coordenadores selecionados.
-            $internalIds = collect([$contract->executivo_conta_id])
+            // Internos: executivo da conta + coordenadores selecionados + diretor de projetos.
+            $internalIds = collect([$contract->executivo_conta_id, $this->projectDirectorUserId()])
                 ->merge($coordinatorIds)
                 ->filter()
                 ->unique()
@@ -775,6 +823,11 @@ class ContractController extends Controller
             \App\Models\ContractRequest::where('linked_contract_id', $contract->id)
                 ->where('kanban_column', 'req_inicio_autorizado')
                 ->update(['kanban_column' => 'inicio_autorizado']);
+
+            // Notifica executivo da conta (entrou em "Início Autorizado").
+            if ($fromColumn !== Contract::KANBAN_INICIO_AUTORIZADO) {
+                $this->notifyInicioAutorizado($contract->fresh(['customer']));
+            }
         } elseif (in_array($toColumn, ['cancelado', 'pausado'])) {
             // Contrato sem projeto: cancelar ou pausar remove do kanban ativo
             $contract->update([

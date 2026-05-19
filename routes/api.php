@@ -88,6 +88,41 @@ Route::prefix('v1')->group(function () {
     Route::post('/webhooks/movidesk/ticket', [MovideskWebhookController::class, 'handleTicket'])
         ->name('webhooks.movidesk.ticket');
 
+    // 🧪 DEV: dispara e-mail de exemplo dos templates de contrato.
+    // Bloqueado em APP_ENV=production. Uso: GET /api/v1/__test/contract-email?to=...&kind=created|generated
+    Route::get('/__test/contract-email', function (\Illuminate\Http\Request $request) {
+        if (app()->environment('production')) {
+            return response()->json(['error' => 'bloqueado em produção'], 403);
+        }
+        $to = $request->query('to', 'ricardo.oliveira@erpserv.com.br');
+        $kind = $request->query('kind', 'created');
+
+        $contract = \App\Models\Contract::with(['customer:id,name','contacts'])->latest('id')->first();
+        if (!$contract) {
+            return response()->json(['error' => 'Sem contrato no DB pra usar como exemplo.'], 404);
+        }
+
+        try {
+            if ($kind === 'generated') {
+                $project = $contract->project_id
+                    ? \App\Models\Project::find($contract->project_id)
+                    : \App\Models\Project::latest('id')->first();
+                if (!$project) {
+                    return response()->json(['error' => 'Sem project no DB pra usar como exemplo.'], 404);
+                }
+                \Illuminate\Support\Facades\Notification::route('mail', $to)
+                    ->notifyNow(new \App\Notifications\ProjectFromContractGeneratedNotification($contract, $project));
+                return response()->json(['ok' => true, 'kind' => 'generated', 'to' => $to, 'contract_id' => $contract->id, 'project_id' => $project->id]);
+            }
+
+            \Illuminate\Support\Facades\Notification::route('mail', $to)
+                ->notifyNow(new \App\Notifications\ContractCreatedNotification($contract));
+            return response()->json(['ok' => true, 'kind' => 'created', 'to' => $to, 'contract_id' => $contract->id]);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    })->middleware('throttle:10,1')->name('test.contract-email');
+
     /**
      * @OA\Get(
      *     path="/api/v1/health",

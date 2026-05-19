@@ -129,7 +129,34 @@ class ContractController extends Controller
             return $contract;
         });
 
+        // Notifica área administrativa + criador. Cliente ainda NÃO recebe nessa fase.
+        $this->notifyContractCreated($contract);
+
         return response()->json($contract->load(['customer:id,name', 'contacts', 'attachments']), 201);
+    }
+
+    private function notifyContractCreated(Contract $contract): void
+    {
+        try {
+            $recipients = \App\Models\User::query()
+                ->where('enabled', true)
+                ->where(function ($q) use ($contract) {
+                    $q->where('type', 'administrativo');
+                    if ($contract->created_by_id) {
+                        $q->orWhere('id', $contract->created_by_id);
+                    }
+                })
+                ->get();
+
+            foreach ($recipients as $user) {
+                $user->notify(new \App\Notifications\ContractCreatedNotification($contract));
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('ContractCreated notification falhou', [
+                'contract_id' => $contract->id,
+                'err'         => $e->getMessage(),
+            ]);
+        }
     }
 
     public function show(Contract $contract): JsonResponse
@@ -324,11 +351,52 @@ class ContractController extends Controller
             return $project;
         });
 
+        // Notifica executivo da conta + coordenadores atribuídos + contatos do cliente.
+        $this->notifyProjectGenerated($contract->fresh(['customer', 'contacts']), $project, $coordinatorIds);
+
         return response()->json([
             'project_id'   => $project->id,
             'project_code' => $project->code,
             'message'      => 'Projeto gerado com sucesso.',
         ]);
+    }
+
+    private function notifyProjectGenerated(Contract $contract, Project $project, array $coordinatorIds): void
+    {
+        try {
+            // Internos: executivo da conta + coordenadores selecionados.
+            $internalIds = collect([$contract->executivo_conta_id])
+                ->merge($coordinatorIds)
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            if (!empty($internalIds)) {
+                $internals = \App\Models\User::query()
+                    ->whereIn('id', $internalIds)
+                    ->where('enabled', true)
+                    ->get();
+
+                foreach ($internals as $user) {
+                    $user->notify(new \App\Notifications\ProjectFromContractGeneratedNotification($contract, $project));
+                }
+            }
+
+            // Cliente: contatos do contrato com e-mail preenchido.
+            foreach ($contract->contacts as $contact) {
+                if (!empty($contact->email)) {
+                    \Illuminate\Support\Facades\Notification::route('mail', $contact->email)
+                        ->notify(new \App\Notifications\ProjectFromContractGeneratedNotification($contract, $project));
+                }
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('ProjectFromContractGenerated notification falhou', [
+                'contract_id' => $contract->id,
+                'project_id'  => $project->id,
+                'err'         => $e->getMessage(),
+            ]);
+        }
     }
 
     public function uploadAttachment(Request $request, Contract $contract): JsonResponse

@@ -22,7 +22,11 @@ class ContractRequestMessageController extends Controller
     {
         $user = auth()->user();
 
-        if (!$this->clienteCanAccess($user, $contractRequest)) {
+        // Cliente do mesmo customer da requisição acessa o chat — qualquer
+        // cliente da empresa pode participar enquanto for requisição. (Antes
+        // exigia criador OU watcher via clienteCanAccess, mas qualquer cliente
+        // da empresa já vê a req no kanban, então deve poder conversar.)
+        if ($user?->isCliente() && $user->customer_id !== $contractRequest->customer_id) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
@@ -43,7 +47,8 @@ class ContractRequestMessageController extends Controller
     {
         $user = auth()->user();
 
-        if (!$this->clienteCanAccess($user, $contractRequest)) {
+        // Mesmo critério do index: cliente do mesmo customer pode escrever.
+        if ($user?->isCliente() && $user->customer_id !== $contractRequest->customer_id) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 

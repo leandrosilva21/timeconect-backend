@@ -1095,7 +1095,7 @@ class MovideskService
                     return [
                         'url'      => $url,
                         'fileName' => basename(parse_url($url, PHP_URL_PATH) ?: 'image'),
-                        'mimeType' => null,
+                        'mimeType' => 'image/jpeg',  // OcrService re-valida via Content-Type da resposta
                     ];
                 }, $inlineUrls);
             }

@@ -216,9 +216,11 @@ class BankHoursMonthlyController extends Controller
         $hoursBalance = round($hoursBalance, 2);
         $hoursBalanceExcludingCurrentMonth = round($hoursBalanceExcludingCurrentMonth, 2);
 
-        // Calcular horas excedentes baseado no saldo excluindo o mês atual (apenas meses fechados)
-        // Valor absoluto do saldo quando negativo, ou 0 quando positivo/zero
-        $exceededHours = $hoursBalanceExcludingCurrentMonth < 0 ? abs($hoursBalanceExcludingCurrentMonth) : 0;
+        // Horas excedentes = valor absoluto do SALDO TOTAL (com mês atual incluído)
+        // — reflete o card "Saldo de Horas" exibido na UI. Antes usava
+        // hoursBalanceExcludingCurrentMonth, o que causava divergência com o que o
+        // usuário vê e gerava confusão (ex: saldo -85.4h mas excedentes 98.3h).
+        $exceededHours = $hoursBalance < 0 ? abs($hoursBalance) : 0;
 
         // Calcular valor hora PADRÃO (média do campo additional_hourly_rate dos projetos pais)
         // Este é o valor/hora INICIAL mostrado no card
@@ -283,6 +285,13 @@ class BankHoursMonthlyController extends Controller
         
         if ($exceededHours > 0 && $rateForPayment !== null) {
             $amountToPay = round($exceededHours * $rateForPayment, 2);
+        }
+
+        // Fallback do card "Valor Hora": se additional_hourly_rate não estiver setado,
+        // mostra a média ponderada (mesmo valor usado no cálculo do Valor a Pagar).
+        // Antes o card aparecia vazio mesmo quando havia valor real sendo usado.
+        if ($hourlyRate === null && $weightedHourlyRate !== null) {
+            $hourlyRate = $weightedHourlyRate;
         }
 
         // Buscar projetos para cálculo de aporte

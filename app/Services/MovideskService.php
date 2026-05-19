@@ -1081,11 +1081,32 @@ class MovideskService
         // tenta OCR para preencher a observation com o conteúdo da imagem.
         $isEmpty     = $this->isHtmlEffectivelyEmpty($clean);
         $attachments = $action['attachments'] ?? [];
+        $inlineUrls  = [];
+
+        // Plano B: Movidesk frequentemente NÃO devolve attachments[] mesmo com
+        // $expand=attachments. As imagens vão inline no htmlDescription como
+        // <img src="https://s3.amazonaws.com/movidesk-files-*">. Quando o
+        // attachments[] vier vazio mas houver imgs inline, sintetiza um array
+        // de "pseudo-attachments" só com a URL pra alimentar o OCR.
+        if (empty($attachments)) {
+            $inlineUrls = $this->extractMovideskImageUrls($html);
+            if (!empty($inlineUrls)) {
+                $attachments = array_map(function ($url) {
+                    return [
+                        'url'      => $url,
+                        'fileName' => basename(parse_url($url, PHP_URL_PATH) ?: 'image'),
+                        'mimeType' => null,
+                    ];
+                }, $inlineUrls);
+            }
+        }
+
         Log::info('📦 [MOVIDESK] buildObservation diagnóstico', [
             'action_id'            => $action['id'] ?? null,
             'html_len'             => strlen($clean),
             'is_effectively_empty' => $isEmpty,
             'attachments_count'    => count($attachments),
+            'inline_urls_count'    => count($inlineUrls),
             'first_att_keys'       => !empty($attachments) ? array_keys($attachments[0] ?? []) : [],
         ]);
         if ($isEmpty && !empty($attachments)) {
@@ -1097,6 +1118,27 @@ class MovideskService
         }
 
         return $clean;
+    }
+
+    /**
+     * Extrai URLs S3 Movidesk de <img src="..."> no HTML. Filtro:
+     * só URLs em domínio s3*.amazonaws.com com "movidesk" no path,
+     * evita logos/data URIs/imagens externas. Dedup + cap em 10.
+     */
+    private function extractMovideskImageUrls(string $html): array
+    {
+        if ($html === '' || !preg_match_all('/<img[^>]+src=["\']([^"\']+)["\']/i', $html, $m)) {
+            return [];
+        }
+        $urls = array_unique($m[1]);
+        $movidesk = [];
+        foreach ($urls as $url) {
+            if (preg_match('~^https?://[^/]*s3[.-][^/]*amazonaws\.com/[^?]*movidesk~i', $url)) {
+                $movidesk[] = $url;
+                if (count($movidesk) >= 10) break;
+            }
+        }
+        return $movidesk;
     }
 
     private function isHtmlEffectivelyEmpty(string $html): bool

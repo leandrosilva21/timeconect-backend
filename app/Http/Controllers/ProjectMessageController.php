@@ -24,17 +24,13 @@ class ProjectMessageController extends Controller
     {
         $user = $request->user();
 
-        if (!$user->isAdmin() && !$this->userCanAccessProject($user, $project)) {
+        // Cliente não tem acesso ao chat de projeto — fluxo dele encerra na requisição.
+        if ($user->isCliente()) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        // Cliente: vê apenas mensagens criadas até req_decided_at da contract_request
-        // que originou o projeto. Após virar projeto, novas trocas internas/visíveis
-        // não chegam mais a ele.
-        $clientCutoff = null;
-        if ($user->isCliente() && $project->contract_request_id) {
-            $cr = \App\Models\ContractRequest::find($project->contract_request_id);
-            $clientCutoff = $cr?->req_decided_at;
+        if (!$user->isAdmin() && !$this->userCanAccessProject($user, $project)) {
+            return response()->json(['message' => 'Sem permissão'], 403);
         }
 
         $messages = ProjectMessage::where('project_id', $project->id)
@@ -44,9 +40,6 @@ class ProjectMessageController extends Controller
                 'reads' => fn($q) => $q->where('user_id', $user->id),
             ])
             ->withExists(['mentions as is_mentioned' => fn($q) => $q->where('mentioned_user_id', $user->id)])
-            // Clientes só veem mensagens marcadas como visíveis
-            ->when($user->isCliente(), fn($q) => $q->where('visibility', 'client'))
-            ->when($clientCutoff, fn($q) => $q->where('created_at', '<=', $clientCutoff))
             ->latest()
             ->paginate(50);
 
@@ -57,6 +50,11 @@ class ProjectMessageController extends Controller
     {
         $user = $request->user();
 
+        // Cliente bloqueado — chat de projeto é interno-only.
+        if ($user->isCliente()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
         if (!$user->isAdmin() && !$this->userCanAccessProject($user, $project)) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
@@ -64,7 +62,6 @@ class ProjectMessageController extends Controller
         $request->validate([
             'message'    => 'nullable|string|max:5000',
             'priority'   => 'nullable|in:normal,high',
-            'visibility' => 'nullable|in:internal,client',
             'files'      => 'nullable|array|max:10',
             'files.*'    => 'file|max:20480', // 20 MB por arquivo
         ]);
@@ -74,8 +71,8 @@ class ProjectMessageController extends Controller
             return response()->json(['message' => 'Mensagem ou anexo obrigatório.'], 422);
         }
 
-        // Clientes só enviam mensagens visíveis; admins sempre postam interno
-        $visibility = $user->isCliente() ? 'client' : ($user->isAdmin() ? 'internal' : $request->input('visibility', 'internal'));
+        // Toda mensagem em chat de projeto é interna — opção "visível ao cliente" removida.
+        $visibility = 'internal';
 
         $msg = ProjectMessage::create([
             'project_id' => $project->id,
@@ -166,11 +163,11 @@ class ProjectMessageController extends Controller
     {
         $user = $request->user();
 
-        if (!$user->isAdmin() && !$this->userCanAccessProject($user, $message->project)) {
+        if ($user->isCliente()) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        if ($user->isCliente() && $message->visibility !== 'client') {
+        if (!$user->isAdmin() && !$this->userCanAccessProject($user, $message->project)) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
@@ -181,6 +178,10 @@ class ProjectMessageController extends Controller
     {
         $user = $request->user();
 
+        if ($user->isCliente()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
         if (!$user->isAdmin() && !$this->userCanAccessProject($user, $project)) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
@@ -188,10 +189,6 @@ class ProjectMessageController extends Controller
         $query = ProjectMessage::where('project_id', $project->id)
             ->where('user_id', '!=', $user->id)
             ->whereDoesntHave('reads', fn($q) => $q->where('user_id', $user->id));
-
-        if ($user->isCliente()) {
-            $query->where('visibility', 'client');
-        }
 
         $unreadIds = $query->pluck('id');
 
@@ -309,6 +306,11 @@ class ProjectMessageController extends Controller
     public function mentionableUsers(Request $request): JsonResponse
     {
         $user = $request->user();
+
+        // Cliente não tem acesso ao chat de projeto → sem picker.
+        if ($user->isCliente()) {
+            return response()->json([], 403);
+        }
 
         $projectId = $request->query('project_id');
 

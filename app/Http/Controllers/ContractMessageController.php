@@ -18,15 +18,16 @@ class ContractMessageController extends Controller
     {
         $user = $request->user();
 
+        // Cliente não tem acesso ao chat de contrato — fluxo dele encerra na requisição.
+        if ($user->isCliente()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
         if (!$this->canAccess($user, $contract)) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
         $query = $contract->messages()->with(['author:id,name', 'attachments'])->orderBy('created_at');
-
-        if ($user->isCliente()) {
-            $query->where('visibility', 'client');
-        }
 
         return response()->json(['data' => $query->get()]);
     }
@@ -34,6 +35,11 @@ class ContractMessageController extends Controller
     public function store(Request $request, Contract $contract): JsonResponse
     {
         $user = $request->user();
+
+        // Cliente bloqueado — chat de contrato é interno-only.
+        if ($user->isCliente()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
 
         if (!$this->canAccess($user, $contract)) {
             return response()->json(['message' => 'Sem permissão'], 403);
@@ -51,7 +57,9 @@ class ContractMessageController extends Controller
             return response()->json(['message' => 'Mensagem ou anexo obrigatório.'], 422);
         }
 
-        $visibility = $user->isCliente() ? 'client' : ($user->isAdmin() ? 'internal' : $request->input('visibility', 'internal'));
+        // Toda mensagem em chat de contrato é interna — não existe mais a opção
+        // de marcar visibility=client (cliente não acessa esse chat).
+        $visibility = 'internal';
 
         $msg = ContractMessage::create([
             'contract_id' => $contract->id,
@@ -95,11 +103,11 @@ class ContractMessageController extends Controller
     {
         $user = $request->user();
 
-        if (!$this->canAccess($user, $message->contract)) {
+        if ($user->isCliente()) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        if ($user->isCliente() && $message->visibility !== 'client') {
+        if (!$this->canAccess($user, $message->contract)) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
@@ -109,6 +117,11 @@ class ContractMessageController extends Controller
     public function mentionableUsers(Request $request, Contract $contract): JsonResponse
     {
         $user = $request->user();
+
+        // Cliente não tem acesso ao chat de contrato → sem picker.
+        if ($user->isCliente()) {
+            return response()->json([], 403);
+        }
 
         if (!$this->canAccess($user, $contract)) {
             return response()->json([], 403);
@@ -131,14 +144,7 @@ class ContractMessageController extends Controller
             $ids->push($contract->kanban_coordinator_id);
         }
 
-        // Usuários cliente vinculados ao cliente do contrato
-        if ($contract->customer_id) {
-            $clientUserIds = User::where('type', 'cliente')
-                ->where('customer_id', $contract->customer_id)
-                ->where('enabled', true)
-                ->pluck('id');
-            $ids = $ids->merge($clientUserIds);
-        }
+        // Cliente não entra no picker — chat de contrato é interno-only.
 
         // Exclui o próprio usuário da lista
         $ids = $ids->unique()->reject(fn($id) => $id === $user->id)->values();

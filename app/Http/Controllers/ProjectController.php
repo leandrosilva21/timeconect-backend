@@ -784,21 +784,28 @@ class ProjectController extends Controller
                 ], 422);
             }
 
-            // Validar horas vendidas + aportes do subprojeto
-            $subProjectSoldHours = $validated['sold_hours'] ?? 0;
-            $subProjectHourContribution = $validated['hour_contribution'] ?? 0;
-            $subProjectTotalHours = $subProjectSoldHours + $subProjectHourContribution;
+            // Validar horas vendidas + aportes do subprojeto.
+            // On Demand não controla saldo — não faz sentido validar limite de horas.
+            $parentProject?->loadMissing('contractType');
+            $parentIsOnDemand = $parentProject && $parentProject->contractType
+                && strtolower(trim($parentProject->contractType->name)) === 'on demand';
 
-            if ($subProjectTotalHours > 0) {
-                $availableHours = $this->calculateAvailableHours($parentProject);
+            if (!$parentIsOnDemand) {
+                $subProjectSoldHours = $validated['sold_hours'] ?? 0;
+                $subProjectHourContribution = $validated['hour_contribution'] ?? 0;
+                $subProjectTotalHours = $subProjectSoldHours + $subProjectHourContribution;
 
-                if ($subProjectTotalHours > $availableHours) {
-                    return response()->json([
-                        'code' => 'INVALID_SOLD_HOURS',
-                        'type' => 'error',
-                        'message' => 'Horas inválidas',
-                        'detailMessage' => "O subprojeto não pode ter mais horas (vendidas + aportes: {$subProjectTotalHours}h) do que as horas disponíveis no projeto pai ({$availableHours}h)."
-                    ], 422);
+                if ($subProjectTotalHours > 0) {
+                    $availableHours = $this->calculateAvailableHours($parentProject);
+
+                    if ($subProjectTotalHours > $availableHours) {
+                        return response()->json([
+                            'code' => 'INVALID_SOLD_HOURS',
+                            'type' => 'error',
+                            'message' => 'Horas inválidas',
+                            'detailMessage' => "O subprojeto não pode ter mais horas (vendidas + aportes: {$subProjectTotalHours}h) do que as horas disponíveis no projeto pai ({$availableHours}h)."
+                        ], 422);
+                    }
                 }
             }
         }
@@ -2119,13 +2126,23 @@ class ProjectController extends Controller
             return response()->json(['error' => 'Pai escolhido já é filho de outro projeto'], 422);
         }
 
-        $childCode = (string) ($child->contractType?->code ?? '');
-        $childName = strtolower(trim((string) ($child->contractType?->name ?? '')));
+        // Subprojeto pode ser On Demand quando o pai também é On Demand
+        // (separa apontamentos visualmente; consumo soma no pai).
+        // Banco de Horas Mensal continua bloqueado (mensalidade fica no pai).
+        $childCode  = (string) ($child->contractType?->code ?? '');
+        $childName  = strtolower(trim((string) ($child->contractType?->name ?? '')));
         $isMonthly  = $childCode === 'monthly_hours' || $childName === 'banco de horas mensal';
-        $isOnDemand = $childCode === 'on_demand'     || $childName === 'on demand';
-        if ($isMonthly || $isOnDemand) {
+        if ($isMonthly) {
             return response()->json([
-                'error' => 'Projetos do tipo Banco de Horas Mensal e On Demand não podem ser filhos de outro projeto',
+                'error' => 'Projetos do tipo Banco de Horas Mensal não podem ser filhos de outro projeto',
+            ], 422);
+        }
+        $isOnDemandChild  = $childCode === 'on_demand' || $childName === 'on demand';
+        $parentType       = strtolower(trim((string) ($parent->contractType?->name ?? '')));
+        $isOnDemandParent = $parentType === 'on demand';
+        if ($isOnDemandChild && !$isOnDemandParent) {
+            return response()->json([
+                'error' => 'Subprojeto On Demand só pode ser filho de um projeto On Demand',
             ], 422);
         }
 

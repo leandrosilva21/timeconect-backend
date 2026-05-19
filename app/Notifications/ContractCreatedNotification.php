@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\Contract;
+use Illuminate\Notifications\AnonymousNotifiable;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -37,9 +38,14 @@ class ContractCreatedNotification extends Notification
 
         $url = rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/') . '/contratos/kanban';
 
+        // AnonymousNotifiable (rota de teste / contato avulso) não tem `name`.
+        $greeting = $notifiable instanceof AnonymousNotifiable
+            ? 'Olá!'
+            : "Olá, {$notifiable->name}!";
+
         return (new MailMessage)
             ->subject("[Minutor] Novo contrato cadastrado — {$codigo}")
-            ->greeting("Olá, {$notifiable->name}!")
+            ->greeting($greeting)
             ->line("Um novo contrato foi cadastrado e está aguardando processamento administrativo.")
             ->line("**Código:** {$codigo}")
             ->line("**Projeto:** {$projeto}")

@@ -56,7 +56,7 @@ class MovideskService
             $response = Http::timeout(5)->get("{$this->baseUrl()}/tickets", [
                 'token'   => $this->token(),
                 'id'      => $ticketId,
-                '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments,createdBy($select=id,businessName,email);$select=id,type,isPublic,htmlDescription,timeAppointments)',
+                '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments,createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
             ]);
 
             if ($response->successful()) {
@@ -88,7 +88,7 @@ class MovideskService
         $response = Http::timeout(30)->get("{$this->baseUrl()}/tickets", [
             'token'   => $this->token(),
             'id'      => $ticketId,
-            '$expand' => 'actions($expand=timeAppointments,createdBy($select=id,businessName,email);$select=id,type,isPublic,htmlDescription,timeAppointments)',
+            '$expand' => 'actions($expand=timeAppointments,createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
         ]);
 
         if (!$response->successful()) {
@@ -1077,7 +1077,26 @@ class MovideskService
             $clean = trim($clean);
         }
 
+        // Quando a interação não tem texto e veio só com anexo de imagem,
+        // tenta OCR para preencher a observation com o conteúdo da imagem.
+        if ($this->isHtmlEffectivelyEmpty($clean)) {
+            $attachments = $action['attachments'] ?? [];
+            if (!empty($attachments)) {
+                $ocrText = app(OcrService::class)->extractTextFromAttachments($attachments);
+                if ($ocrText !== null) {
+                    $clean = '<p><em>[texto extraído da imagem via OCR]</em></p>'
+                        . '<p>' . nl2br(e($ocrText), false) . '</p>';
+                }
+            }
+        }
+
         return $clean;
+    }
+
+    private function isHtmlEffectivelyEmpty(string $html): bool
+    {
+        $stripped = trim(strip_tags($html));
+        return $stripped === '';
     }
 
     // ─────────────────────────────────────────────────────────────

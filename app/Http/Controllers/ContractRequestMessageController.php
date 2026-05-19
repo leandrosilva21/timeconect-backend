@@ -179,7 +179,11 @@ class ContractRequestMessageController extends Controller
     {
         $user = auth()->user();
 
-        if (!$this->clienteCanAccess($user, $contractRequest)) {
+        // Mesmo critério de index/store: cliente do mesmo customer acessa.
+        // (Antes exigia criador OU watcher via clienteCanAccess — restritivo demais
+        // e inconsistente: cliente conseguia ler/escrever mensagens mas não buscava
+        // a lista de menção, quebrando o @-picker em homolog.)
+        if ($user?->isCliente() && $user->customer_id !== $contractRequest->customer_id) {
             return response()->json([], 403);
         }
 

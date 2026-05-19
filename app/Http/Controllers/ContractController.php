@@ -788,13 +788,22 @@ class ContractController extends Controller
             }
 
             // Card entrou em "Alocado" (qualquer coordenador) vindo de fora →
-            // notifica executivo + coordenador + diretor + contatos. Skip se já
-            // estava em alocado (reatribuição de coordenador não re-dispara).
+            // notifica + marca requisição vinculada como convertida pra ela sair
+            // do kanban de demandas (evita duplicar requisição + projeto). Skip
+            // se já estava em alocado (reatribuição de coordenador não re-dispara).
             $wasAlocado = $fromColumn === Contract::KANBAN_ALOCADO
                 || str_starts_with($fromColumn, 'coordinator:');
             if (!$wasAlocado) {
                 $freshContract = $contract->fresh(['customer', 'contacts']);
                 if ($freshContract && $freshContract->project_id) {
+                    // Marca a requisição vinculada como CONVERTIDO → some do kanban
+                    // de requisições (que filtra por pendente/em_analise/aprovado).
+                    \App\Models\ContractRequest::where('linked_contract_id', $freshContract->id)
+                        ->update([
+                            'status'            => \App\Models\ContractRequest::STATUS_CONVERTIDO,
+                            'linked_project_id' => $freshContract->project_id,
+                        ]);
+
                     $project = \App\Models\Project::find($freshContract->project_id);
                     if ($project) {
                         $coordIds = $coordinatorId ? [$coordinatorId] : [];

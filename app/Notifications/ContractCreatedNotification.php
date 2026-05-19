@@ -36,21 +36,21 @@ class ContractCreatedNotification extends Notification
         $projeto = $c->project_name ?? '—';
         $cliente = optional($c->customer)->name ?? '—';
 
-        $url = rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/') . '/contratos/kanban';
+        $base = rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/');
+        $cardUrl = "{$base}/contratos/kanban";
 
-        // AnonymousNotifiable (rota de teste / contato avulso) não tem `name`.
-        $greeting = $notifiable instanceof AnonymousNotifiable
-            ? 'Olá!'
-            : "Olá, {$notifiable->name}!";
+        $recipientName = $notifiable instanceof AnonymousNotifiable
+            ? 'equipe administrativa'
+            : ($notifiable->name ?? 'equipe administrativa');
 
         return (new MailMessage)
             ->subject("[Minutor] Novo contrato cadastrado — {$codigo}")
-            ->greeting($greeting)
-            ->line("Um novo contrato foi cadastrado e está aguardando processamento administrativo.")
-            ->line("**Código:** {$codigo}")
-            ->line("**Projeto:** {$projeto}")
-            ->line("**Cliente:** {$cliente}")
-            ->action('Abrir Kanban de Contratos', $url)
-            ->line('Esta é uma notificação automática — não responda.');
+            ->view('emails.contracts.created', [
+                'codigo'        => $codigo,
+                'projeto'       => $projeto,
+                'cliente'       => $cliente,
+                'cardUrl'       => $cardUrl,
+                'recipientName' => $recipientName,
+            ]);
     }
 }

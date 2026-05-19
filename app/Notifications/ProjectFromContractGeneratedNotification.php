@@ -39,20 +39,22 @@ class ProjectFromContractGeneratedNotification extends Notification
         $cliente = optional($c->customer)->name ?? '—';
 
         $base = rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/');
-        $url  = "{$base}/projetos/{$this->project->id}";
+        $cardUrl = "{$base}/projetos/{$this->project->id}";
 
-        // AnonymousNotifiable (contato do cliente) não tem `name` — usa "Olá!" genérico.
-        $greeting = $notifiable instanceof AnonymousNotifiable
-            ? 'Olá!'
-            : "Olá, {$notifiable->name}!";
+        $isCliente = $notifiable instanceof AnonymousNotifiable;
+        $recipientName = $isCliente
+            ? 'contato do cliente'
+            : ($notifiable->name ?? 'time interno');
 
         return (new MailMessage)
             ->subject("[Minutor] Projeto criado — {$codigo}")
-            ->greeting($greeting)
-            ->line("O contrato {$codigo} foi liberado e gerou um novo projeto.")
-            ->line("**Projeto:** {$projeto}")
-            ->line("**Cliente:** {$cliente}")
-            ->action('Abrir Projeto', $url)
-            ->line('Esta é uma notificação automática — não responda.');
+            ->view('emails.contracts.project-generated', [
+                'codigo'        => $codigo,
+                'projeto'       => $projeto,
+                'cliente'       => $cliente,
+                'cardUrl'       => $cardUrl,
+                'recipientName' => $recipientName,
+                'isCliente'     => $isCliente,
+            ]);
     }
 }

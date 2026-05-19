@@ -13,10 +13,10 @@
       <td style="padding:32px 40px 4px;background:#000000;">
         <div style="font-size:11px;letter-spacing:.22em;color:#FBBF24;font-weight:800;text-transform:uppercase;">Cadastro de contrato</div>
         <h1 style="margin:8px 0 4px;color:#FFFFFF;font-size:23px;line-height:1.3;font-weight:800;">
-          Novo contrato aguardando processamento
+          Novo contrato aguardando triagem administrativa
         </h1>
         <p style="margin:0;color:#D4D4D8;font-size:14px;line-height:1.55;">
-          Contrato <b style="color:#FFFFFF;">{{ $codigo }}</b> {{ $projeto !== '—' ? '— '.$projeto : '' }}
+          @if($codigo !== '—')Contrato <b style="color:#FFFFFF;">{{ $codigo }}</b>@if($projeto !== '—') — {{ $projeto }}@endif @else{{ $projeto !== '—' ? $projeto : 'Detalhes no kanban' }}@endif
         </p>
       </td>
     </tr>
@@ -58,7 +58,7 @@
     <tr>
       <td style="padding:24px 40px 32px;background:#000000;color:#D4D4D8;font-size:12px;line-height:1.7;border-top:1px solid #3F3F46;">
         Olá, {{ $recipientName }}. Você está recebendo este e-mail porque integra a área administrativa
-        do Minutor — todo novo contrato cadastrado é comunicado à equipe responsável pelo processamento.
+        do Minutor — todo novo contrato cadastrado é comunicado à equipe responsável pela triagem administrativa.
         <br><br>
         <span style="color:#71717A;">&copy; {{ date('Y') }} ERPServ Consultoria · Todos os direitos reservados</span>
       </td>

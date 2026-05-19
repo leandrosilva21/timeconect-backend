@@ -222,6 +222,25 @@ class TimesheetController extends Controller
             $query->whereIn('timesheets.customer_id', $customerIds);
         }
 
+        // Triagem dos "padrões Movidesk": filtra timesheets cujo user_id, customer_id
+        // OU project_id coincida com algum dos IDs configurados em system_settings
+        // (movidesk_default_*). Usado pela rotina Triagem da Sustentação pra revisar
+        // apontamentos atribuídos ao fallback.
+        if ($request->boolean('triagem_padrao')) {
+            $defaultUserId     = \App\Models\SystemSetting::get('movidesk_default_user_id');
+            $defaultCustomerId = \App\Models\SystemSetting::get('movidesk_default_customer_id');
+            $defaultProjectId  = \App\Models\SystemSetting::get('movidesk_default_project_id');
+
+            $query->where(function ($q) use ($defaultUserId, $defaultCustomerId, $defaultProjectId) {
+                if ($defaultUserId)     $q->orWhere('timesheets.user_id',     (int) $defaultUserId);
+                if ($defaultCustomerId) $q->orWhere('timesheets.customer_id', (int) $defaultCustomerId);
+                if ($defaultProjectId)  $q->orWhere('timesheets.project_id',  (int) $defaultProjectId);
+                if (!$defaultUserId && !$defaultCustomerId && !$defaultProjectId) {
+                    $q->whereRaw('1 = 0');
+                }
+            });
+        }
+
         $executiveIds = array_values(array_filter((array) $request->input('executive_id', [])));
         if (!empty($executiveIds)) {
             $query->whereHas('customer', function ($q) use ($executiveIds) {

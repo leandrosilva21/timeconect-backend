@@ -29,5 +29,13 @@ class AiServiceProvider extends ServiceProvider
                 default => throw new RuntimeException("AI provider desconhecido: {$driver}"),
             };
         });
+
+        // AnthropicProvider acessado diretamente (tool-use no BotQueryService)
+        $this->app->singleton(AnthropicProvider::class, fn () => new AnthropicProvider(
+            apiKey: (string) config('services.anthropic.api_key'),
+            model: (string) config('services.anthropic.model'),
+            baseUrl: (string) config('services.anthropic.base_url'),
+            timeoutSeconds: 90,
+        ));
     }
 }

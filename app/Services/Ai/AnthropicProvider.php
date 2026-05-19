@@ -77,4 +77,49 @@ class AnthropicProvider implements AiProvider
 
         return trim($text);
     }
+
+    /**
+     * Chamada com tool-use. Retorna a estrutura crua da Anthropic
+     * (stop_reason, content[], usage). Caller é responsável pelo loop
+     * de tool execution + replays.
+     *
+     * @param  array<int,array{role:string,content:mixed}>  $messages
+     * @param  array<int,array{name:string,description:string,input_schema:array}>  $tools
+     */
+    public function callWithTools(string $system, array $messages, array $tools, array $options = []): array
+    {
+        if (! $this->apiKey) {
+            throw new RuntimeException('ANTHROPIC_API_KEY não configurada.');
+        }
+
+        $payload = [
+            'model'      => $options['model']      ?? $this->model,
+            'max_tokens' => $options['max_tokens'] ?? 2048,
+            'system'     => $system,
+            'messages'   => $messages,
+            'tools'      => $tools,
+        ];
+
+        if (isset($options['temperature'])) {
+            $payload['temperature'] = $options['temperature'];
+        }
+
+        $response = Http::withHeaders([
+            'x-api-key'         => $this->apiKey,
+            'anthropic-version' => '2023-06-01',
+            'content-type'      => 'application/json',
+        ])
+            ->timeout($this->timeoutSeconds)
+            ->post("{$this->baseUrl}/messages", $payload);
+
+        if (! $response->successful()) {
+            Log::error('🤖 [AI/Anthropic tools] Erro', [
+                'status' => $response->status(),
+                'body'   => $response->body(),
+            ]);
+            throw new RuntimeException("Anthropic API error: HTTP {$response->status()} - " . $response->body());
+        }
+
+        return $response->json();
+    }
 }

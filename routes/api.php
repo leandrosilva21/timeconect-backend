@@ -917,6 +917,7 @@ Route::prefix('v1')->group(function () {
             Route::post('/',                                      [\App\Http\Controllers\ConversationController::class, 'store'])->name('conversations.store');
             Route::post('/{id}/participants',                     [\App\Http\Controllers\ConversationController::class, 'addParticipant'])->name('conversations.participants.add');
             Route::delete('/{id}/participants/{userId}',          [\App\Http\Controllers\ConversationController::class, 'removeParticipant'])->name('conversations.participants.remove');
+            Route::post('/{id}/bot-query',                        [\App\Http\Controllers\BotQueryController::class, 'ask'])->name('conversations.bot-query');
         });
 
         // 🤖 BOT MINUTOR CONFIG — providers/agents/skills/rules/general

@@ -1079,14 +1079,20 @@ class MovideskService
 
         // Quando a interação não tem texto e veio só com anexo de imagem,
         // tenta OCR para preencher a observation com o conteúdo da imagem.
-        if ($this->isHtmlEffectivelyEmpty($clean)) {
-            $attachments = $action['attachments'] ?? [];
-            if (!empty($attachments)) {
-                $ocrText = app(OcrService::class)->extractTextFromAttachments($attachments);
-                if ($ocrText !== null) {
-                    $clean = '<p><em>[texto extraído da imagem via OCR]</em></p>'
-                        . '<p>' . nl2br(e($ocrText), false) . '</p>';
-                }
+        $isEmpty     = $this->isHtmlEffectivelyEmpty($clean);
+        $attachments = $action['attachments'] ?? [];
+        Log::info('📦 [MOVIDESK] buildObservation diagnóstico', [
+            'action_id'            => $action['id'] ?? null,
+            'html_len'             => strlen($clean),
+            'is_effectively_empty' => $isEmpty,
+            'attachments_count'    => count($attachments),
+            'first_att_keys'       => !empty($attachments) ? array_keys($attachments[0] ?? []) : [],
+        ]);
+        if ($isEmpty && !empty($attachments)) {
+            $ocrText = app(OcrService::class)->extractTextFromAttachments($attachments);
+            if ($ocrText !== null) {
+                $clean = '<p><em>[texto extraído da imagem via OCR]</em></p>'
+                    . '<p>' . nl2br(e($ocrText), false) . '</p>';
             }
         }
 

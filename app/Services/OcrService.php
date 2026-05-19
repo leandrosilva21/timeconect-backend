@@ -26,27 +26,48 @@ class OcrService
      */
     public function extractTextFromAttachments(array $attachments): ?string
     {
+        Log::info('🔎 [OCR] extractTextFromAttachments entrou', [
+            'configured'        => $this->isConfigured(),
+            'attachments_count' => count($attachments),
+            'first_keys'        => !empty($attachments) ? array_keys($attachments[0] ?? []) : [],
+        ]);
+
         if (!$this->isConfigured()) {
+            Log::warning('🔎 [OCR] ANTHROPIC_API_KEY ausente — fallback desligado');
             return null;
         }
 
         $extracted = [];
-        foreach ($attachments as $attachment) {
+        foreach ($attachments as $i => $attachment) {
             $url       = $attachment['path']     ?? $attachment['url']      ?? null;
             $fileName  = $attachment['fileName'] ?? $attachment['filename'] ?? null;
             $mimeType  = $attachment['mimeType'] ?? $attachment['contentType'] ?? null;
+
+            Log::info('🔎 [OCR] attachment candidato', [
+                'index'      => $i,
+                'has_url'    => (bool) $url,
+                'fileName'   => $fileName,
+                'mimeType'   => $mimeType,
+                'is_image'   => $this->looksLikeImage($mimeType, $fileName),
+            ]);
 
             if (!$url || !$this->looksLikeImage($mimeType, $fileName)) {
                 continue;
             }
 
             $text = $this->extractFromImageUrl($url, $mimeType, $fileName);
+            Log::info('🔎 [OCR] extração concluída', [
+                'index'    => $i,
+                'got_text' => $text !== null && trim($text) !== '',
+                'text_len' => strlen((string) $text),
+            ]);
             if ($text !== null && trim($text) !== '') {
                 $extracted[] = trim($text);
             }
         }
 
         if (empty($extracted)) {
+            Log::info('🔎 [OCR] nenhum texto extraído — retornando null');
             return null;
         }
 

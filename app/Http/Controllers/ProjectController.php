@@ -2127,7 +2127,8 @@ class ProjectController extends Controller
         }
 
         // Subprojeto pode ser On Demand quando o pai também é On Demand
-        // (separa apontamentos visualmente; consumo soma no pai).
+        // Subprojeto On Demand pode ser filho de qualquer tipo de pai
+        // (separa apontamentos visualmente; consumo soma no saldo do pai).
         // Banco de Horas Mensal continua bloqueado (mensalidade fica no pai).
         $childCode  = (string) ($child->contractType?->code ?? '');
         $childName  = strtolower(trim((string) ($child->contractType?->name ?? '')));
@@ -2135,14 +2136,6 @@ class ProjectController extends Controller
         if ($isMonthly) {
             return response()->json([
                 'error' => 'Projetos do tipo Banco de Horas Mensal não podem ser filhos de outro projeto',
-            ], 422);
-        }
-        $isOnDemandChild  = $childCode === 'on_demand' || $childName === 'on demand';
-        $parentType       = strtolower(trim((string) ($parent->contractType?->name ?? '')));
-        $isOnDemandParent = $parentType === 'on demand';
-        if ($isOnDemandChild && !$isOnDemandParent) {
-            return response()->json([
-                'error' => 'Subprojeto On Demand só pode ser filho de um projeto On Demand',
             ], 422);
         }
 

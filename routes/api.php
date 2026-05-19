@@ -131,6 +131,27 @@ Route::prefix('v1')->group(function () {
         }
     })->middleware('throttle:10,1')->name('test.contract-email');
 
+    // 🧪 DEV: backfill — marca requisições já convertidas em projeto como CONVERTIDO.
+    // One-shot pra limpar duplicação no kanban. Mesmo token do test endpoint.
+    Route::get('/__test/backfill-requests-convertido', function (\Illuminate\Http\Request $request) {
+        if ($request->query('token') !== 'minutor-debug-2026') {
+            return response()->json(['error' => 'token inválido'], 403);
+        }
+        try {
+            $affected = \App\Models\ContractRequest::whereNotNull('linked_contract_id')
+                ->whereIn('status', [
+                    \App\Models\ContractRequest::STATUS_PENDENTE,
+                    \App\Models\ContractRequest::STATUS_EM_ANALISE,
+                    \App\Models\ContractRequest::STATUS_APROVADO,
+                ])
+                ->whereHas('linkedContract', fn($q) => $q->whereNotNull('project_id'))
+                ->update(['status' => \App\Models\ContractRequest::STATUS_CONVERTIDO]);
+            return response()->json(['ok' => true, 'requests_convertido' => $affected]);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    })->middleware('throttle:5,1')->name('test.backfill-convertido');
+
     /**
      * @OA\Get(
      *     path="/api/v1/health",

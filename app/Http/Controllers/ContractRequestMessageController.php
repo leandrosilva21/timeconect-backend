@@ -183,20 +183,41 @@ class ContractRequestMessageController extends Controller
             return response()->json([], 403);
         }
 
-        // Inclui clientes do mesmo customer da requisição (eles podem ser
-        // mencionados enquanto req_decided_at IS NULL).
-        $users = User::query()
-            ->select('id', 'name', 'type')
+        // Escopo da Requisição: chat é entre cliente e executivo da conta.
+        // Admin pode participar. Coord/consultor/parceiro ficam fora.
+        $customer = $contractRequest->customer;
+        $executiveId = $customer?->executive_id;
+
+        $admins = User::query()
+            ->where('type', 'admin')
             ->where('enabled', true)
-            ->where(function ($q) use ($contractRequest) {
-                $q->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo']);
-                if ($contractRequest->customer_id) {
-                    $q->orWhere(fn ($q2) => $q2->where('type', 'cliente')
-                        ->where('customer_id', $contractRequest->customer_id));
-                }
-            })
-            ->orderBy('name')
-            ->get();
+            ->select('id', 'name')
+            ->get()
+            ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'role' => 'admin']);
+
+        $executivo = $executiveId
+            ? User::query()
+                ->where('id', $executiveId)
+                ->where('enabled', true)
+                ->select('id', 'name')
+                ->get()
+                ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'role' => 'executivo'])
+            : collect();
+
+        $clientes = User::query()
+            ->where('type', 'cliente')
+            ->where('customer_id', $contractRequest->customer_id)
+            ->where('enabled', true)
+            ->select('id', 'name')
+            ->get()
+            ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'role' => 'cliente']);
+
+        $users = $admins
+            ->concat($executivo)
+            ->concat($clientes)
+            ->unique('id')
+            ->sortBy('name')
+            ->values();
 
         return response()->json($users);
     }

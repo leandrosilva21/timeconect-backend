@@ -930,6 +930,17 @@ Route::prefix('v1')->group(function () {
             Route::put('/agents/{id}',     [\App\Http\Controllers\BotConfigController::class, 'updateAgent'])->name('bot.agents.update');
             Route::get('/skills',          [\App\Http\Controllers\BotConfigController::class, 'skills'])->name('bot.skills');
             Route::put('/skills/{id}',     [\App\Http\Controllers\BotConfigController::class, 'updateSkill'])->name('bot.skills.update');
+            // Grupos operacionais (admin/executivo)
+            Route::get('/groups',                      [\App\Http\Controllers\GroupAdminController::class, 'index'])->name('bot.groups');
+            Route::get('/groups/available-users',      [\App\Http\Controllers\GroupAdminController::class, 'availableUsers'])->name('bot.groups.users');
+            Route::post('/groups',                     [\App\Http\Controllers\GroupAdminController::class, 'store'])->name('bot.groups.store');
+            Route::post('/groups/seed-defaults',       [\App\Http\Controllers\GroupAdminController::class, 'seedDefaults'])->name('bot.groups.seed');
+            Route::get('/groups/{id}/members',         [\App\Http\Controllers\GroupAdminController::class, 'members'])->name('bot.groups.members');
+            Route::patch('/groups/{id}',               [\App\Http\Controllers\GroupAdminController::class, 'rename'])->name('bot.groups.rename');
+            Route::delete('/groups/{id}',              [\App\Http\Controllers\GroupAdminController::class, 'destroy'])->name('bot.groups.destroy');
+            Route::post('/groups/{id}/members',        [\App\Http\Controllers\GroupAdminController::class, 'addMember'])->name('bot.groups.members.add');
+            Route::delete('/groups/{id}/members/{userId}', [\App\Http\Controllers\GroupAdminController::class, 'removeMember'])->name('bot.groups.members.remove');
+
             Route::get('/rules',                [\App\Http\Controllers\BotConfigController::class, 'rules'])->name('bot.rules');
             Route::get('/rules/options',        [\App\Http\Controllers\BotConfigController::class, 'ruleOptions'])->name('bot.rules.options');
             Route::post('/rules',               [\App\Http\Controllers\BotConfigController::class, 'storeRule'])->name('bot.rules.store');

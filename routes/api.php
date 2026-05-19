@@ -117,6 +117,12 @@ Route::prefix('v1')->group(function () {
                 return response()->json(['ok' => true, 'kind' => 'generated', 'to' => $to, 'contract_id' => $contract->id, 'project_id' => $project->id]);
             }
 
+            if ($kind === 'inicio_autorizado') {
+                \Illuminate\Support\Facades\Notification::route('mail', $to)
+                    ->notifyNow(new \App\Notifications\ContractInicioAutorizadoNotification($contract));
+                return response()->json(['ok' => true, 'kind' => 'inicio_autorizado', 'to' => $to, 'contract_id' => $contract->id]);
+            }
+
             \Illuminate\Support\Facades\Notification::route('mail', $to)
                 ->notifyNow(new \App\Notifications\ContractCreatedNotification($contract));
             return response()->json(['ok' => true, 'kind' => 'created', 'to' => $to, 'contract_id' => $contract->id]);

@@ -479,10 +479,14 @@ class ProjectController extends Controller
 
         $timesheetsMap = [];
         if (!empty($allIdsToSum)) {
+            // DB::table bypassa SoftDeletes do Eloquent — precisa whereNull('deleted_at')
+            // explícito. E exclui mesmos status que os fechamentos (rejected,
+            // conflicted, adjustment_requested, internal) pra ficar consistente.
             $rows = DB::table('timesheets')
                 ->selectRaw('project_id, COALESCE(SUM(effort_minutes), 0) as total_logged_minutes')
                 ->whereIn('project_id', $allIdsToSum)
-                ->where('status', '!=', 'rejected')
+                ->whereNull('deleted_at')
+                ->whereNotIn('status', ['rejected', 'conflicted', 'adjustment_requested', 'internal'])
                 ->groupBy('project_id')
                 ->pluck('total_logged_minutes', 'project_id');
             $timesheetsMap = $rows->toArray();
@@ -967,7 +971,8 @@ class ProjectController extends Controller
         // Adicionar total de minutos apontados (excluindo rejeitados)
         $project->total_logged_minutes = DB::table('timesheets')
             ->where('project_id', $project->id)
-            ->where('status', '!=', 'rejected')
+            ->whereNull('deleted_at')
+            ->whereNotIn('status', ['rejected', 'conflicted', 'adjustment_requested', 'internal'])
             ->sum('effort_minutes') ?? 0;
 
         $this->invalidateListCache('projects');
@@ -2760,6 +2765,7 @@ class ProjectController extends Controller
         $rows = DB::table('timesheets')
             ->join('users', 'users.id', '=', 'timesheets.user_id')
             ->whereIn('timesheets.project_id', $projectIds)
+            ->whereNull('timesheets.deleted_at')
             ->whereIn('timesheets.status', ['approved', 'pending'])
             ->select(
                 'users.id',

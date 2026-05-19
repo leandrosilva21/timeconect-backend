@@ -788,6 +788,12 @@ class ContractController extends Controller
                 'kanban_coordinator_id' => null,
                 'kanban_order'          => $request->input('order', 0),
             ]);
+
+            // Card caiu em "Novo Contrato" (backlog) vindo de outra coluna →
+            // re-notifica administrativos (mesmo template da criação inicial).
+            if ($toColumn === Contract::KANBAN_BACKLOG && $fromColumn !== Contract::KANBAN_BACKLOG) {
+                $this->notifyContractCreated($contract->fresh(['customer']));
+            }
         }
 
         ContractKanbanLog::create([

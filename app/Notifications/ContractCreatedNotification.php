@@ -3,8 +3,6 @@
 namespace App\Notifications;
 
 use App\Models\Contract;
-use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -12,11 +10,12 @@ use Illuminate\Notifications\Notification;
  * Notifica área administrativa + criador quando um novo contrato é cadastrado
  * (fase de rascunho). Cliente ainda NÃO recebe — só recebe quando o projeto
  * é gerado a partir desse contrato.
+ *
+ * Síncrono (sem ShouldQueue) — evento raro, vale o custo ms da request HTTP
+ * em troca de não depender de queue-worker estar rodando.
  */
-class ContractCreatedNotification extends Notification implements ShouldQueue
+class ContractCreatedNotification extends Notification
 {
-    use Queueable;
-
     public Contract $contract;
 
     public function __construct(Contract $contract)

@@ -4,8 +4,6 @@ namespace App\Notifications;
 
 use App\Models\Contract;
 use App\Models\Project;
-use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Notifications\AnonymousNotifiable;
@@ -13,11 +11,12 @@ use Illuminate\Notifications\AnonymousNotifiable;
 /**
  * Notifica executivo da conta + coordenadores + contatos do cliente quando
  * um contrato vira projeto (POST /contracts/{id}/generate-project).
+ *
+ * Síncrono (sem ShouldQueue) — evento raro, evita depender de queue-worker
+ * rodando em homolog.
  */
-class ProjectFromContractGeneratedNotification extends Notification implements ShouldQueue
+class ProjectFromContractGeneratedNotification extends Notification
 {
-    use Queueable;
-
     public Contract $contract;
     public Project $project;
 

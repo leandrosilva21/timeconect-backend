@@ -89,10 +89,12 @@ Route::prefix('v1')->group(function () {
         ->name('webhooks.movidesk.ticket');
 
     // 🧪 DEV: dispara e-mail de exemplo dos templates de contrato.
-    // Bloqueado em APP_ENV=production. Uso: GET /api/v1/__test/contract-email?to=...&kind=created|generated
+    // Protegido por token fixo (APP_ENV em homolog está como 'production', então
+    // não dá pra usar app()->environment como guard).
+    // Uso: GET /api/v1/__test/contract-email?token=minutor-debug-2026&to=...&kind=created|generated
     Route::get('/__test/contract-email', function (\Illuminate\Http\Request $request) {
-        if (app()->environment('production')) {
-            return response()->json(['error' => 'bloqueado em produção'], 403);
+        if ($request->query('token') !== 'minutor-debug-2026') {
+            return response()->json(['error' => 'token inválido'], 403);
         }
         $to = $request->query('to', 'ricardo.oliveira@erpserv.com.br');
         $kind = $request->query('kind', 'created');

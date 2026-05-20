@@ -1,6 +1,8 @@
 <?php
 
-error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED & ~E_STRICT);
+// E_STRICT removido no PHP 8.4 (referenciar a constante dispara deprecated);
+// E_DEPRECATED/E_USER_DEPRECATED já cobrem a poluição de log em 8.2 e 8.4.
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED);
 ini_set('display_errors', 'Off');
 ini_set('display_startup_errors', 'Off');
 ini_set('html_errors', '0');

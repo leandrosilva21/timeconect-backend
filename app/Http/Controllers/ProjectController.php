@@ -496,23 +496,32 @@ class ProjectController extends Controller
         if ($allChildProjectIds->isNotEmpty()) {
             // Atribuir total_logged_minutes e consumed_hours aos projetos filhos
             // consumed_hours usa a mesma lógica do pai para que os valores somem visualmente
-            $projects->getCollection()->each(function ($project) use ($timesheetsMap) {
+            $projects->getCollection()->each(function ($project) use ($timesheetsMap, $gestaoMode) {
                 if ($project->relationLoaded('childProjects') && $project->childProjects) {
-                    $project->childProjects->each(function ($childProject) use ($timesheetsMap) {
+                    $project->childProjects->each(function ($childProject) use ($timesheetsMap, $gestaoMode) {
                         $childProject->total_logged_minutes = $timesheetsMap[$childProject->id] ?? 0;
                         $childLogged = $childProject->total_logged_minutes / 60;
                         $initialConsumed = (float)($childProject->initial_hours_consumed ?? 0);
 
                         if ($childProject->relationLoaded('contractType') && $childProject->contractType) {
                             $ctName = strtolower(trim($childProject->contractType->name));
-                            if ($ctName === 'fechado') {
-                                // Fechado: todo o valor vendido é comprometido (mesma lógica do pai)
+                            if ($ctName === 'fechado' && !$gestaoMode) {
+                                // Visão do cliente: Fechado compromete todo o sold (saldo 0).
+                                // Na visão gerencial (gestaoMode) o consumo do filho vem dos
+                                // apontamentos reais — saldo = sold - apontado.
                                 $childProject->consumed_hours = (float)($childProject->sold_hours ?? 0);
                             } else {
                                 $childProject->consumed_hours = round($childLogged + $initialConsumed, 2);
                             }
                         } else {
                             $childProject->consumed_hours = round($childLogged + $initialConsumed, 2);
+                        }
+
+                        // Visão gerencial: saldo do filho = vendido − consumido real (apontamentos).
+                        // Sem essa atribuição o saldo do filho fica null e a UI mostra "—".
+                        if ($gestaoMode) {
+                            $childSold = (float)($childProject->sold_hours ?? 0);
+                            $childProject->general_hours_balance = round($childSold - (float)$childProject->consumed_hours, 2);
                         }
                     });
                 }

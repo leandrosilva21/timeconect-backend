@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Customer;
+use App\Models\MovideskAgent;
 use App\Models\MovideskOrganization;
 use App\Models\MovideskTicket;
 use App\Models\Project;
@@ -13,11 +14,26 @@ use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class MovideskService
 {
+    /**
+     * Identificadores fixos das entidades de fallback. Eliminam a
+     * dependência de cadastrar manualmente em /settings — se a config
+     * estiver vazia ou apontar pra entidade ausente, o firstOrCreate
+     * resolve criando/retornando uma entidade marcada como fallback.
+     */
+    private const FALLBACK_USER_EMAIL    = 'movidesk-fallback@minutor.local';
+    private const FALLBACK_CUSTOMER_CGC  = '00000000000000';
+    private const FALLBACK_PROJECT_CODE  = 'MOVIDESK-FALLBACK';
+    private const FALLBACK_NAME          = 'Padrão Movidesk (Fallback)';
+
+    private bool $lastUserIdWasFallback = false;
+
     private function token(): ?string
     {
         return config('services.movidesk.token') ?: null;
@@ -40,7 +56,7 @@ class MovideskService
             $response = Http::timeout(5)->get("{$this->baseUrl()}/tickets", [
                 'token'   => $this->token(),
                 'id'      => $ticketId,
-                '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments;$select=id,type,isPublic,htmlDescription,createdBy,timeAppointments)',
+                '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments,createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
             ]);
 
             if ($response->successful()) {
@@ -72,7 +88,7 @@ class MovideskService
         $response = Http::timeout(30)->get("{$this->baseUrl()}/tickets", [
             'token'   => $this->token(),
             'id'      => $ticketId,
-            '$expand' => 'actions($expand=timeAppointments;$select=id,type,isPublic,htmlDescription,createdBy,timeAppointments)',
+            '$expand' => 'actions($expand=timeAppointments,createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
         ]);
 
         if (!$response->successful()) {
@@ -198,26 +214,34 @@ class MovideskService
             ];
         }
 
-        $defaultUserId = $this->getDefaultUserId();
-        $changes       = [];
+        $changes = [];
 
-        // Tenta resolver o usuário pelo e-mail do createdBy da ação.
-        // Se não encontrar no Minutor (equipe externa/cliente), usa o owner do ticket como fallback.
-        $resolvedEmail = strtolower(trim($targetAction['createdBy']['email'] ?? ''));
-        $resolvedUser  = $resolvedEmail
-            ? User::where('email', $resolvedEmail)->where('enabled', true)->first()
-            : null;
+        // Resolve user usando a MESMA cascata do extractUserId: email da action,
+        // depois nome exato, depois Usuário Padrão. NUNCA cai no owner do ticket
+        // — owner é o responsável administrativo, não o autor do apontamento.
+        // Caso real (Anderson Promax ticket 48186) onde o owner-fallback atribuía
+        // indevidamente ao consultor responsável (William Campana).
+        $resolvedUserId = $this->extractUserId($targetAction);
+        $cameFromFallback = $this->lastUserIdWasFallback;
 
-        if (!$resolvedUser) {
-            $ownerEmail   = strtolower(trim($ticket['owner']['email'] ?? ''));
-            $resolvedUser = $ownerEmail
-                ? User::where('email', $ownerEmail)->where('enabled', true)->first()
-                : null;
-        }
+        if ($resolvedUserId && $resolvedUserId !== $timesheet->user_id) {
+            // Não sobrescreve um user real anterior caindo no Usuário Padrão —
+            // se a resolução nova é fallback E o timesheet atual já tem user
+            // diferente do padrão (provavelmente reatribuição manual prévia),
+            // preserva. Evita anular triagens feitas via UI.
+            $defaultUserId = $this->getDefaultUserId();
+            $alreadyManuallyAssigned = $cameFromFallback
+                && $timesheet->user_id !== null
+                && $timesheet->user_id !== $defaultUserId;
 
-        if ($resolvedUser && $resolvedUser->id !== $timesheet->user_id) {
-            $changes['user_id'] = ['from' => $timesheet->user_id, 'to' => $resolvedUser->id];
-            $timesheet->user_id = $resolvedUser->id;
+            if (!$alreadyManuallyAssigned) {
+                $changes['user_id'] = ['from' => $timesheet->user_id, 'to' => $resolvedUserId];
+                $timesheet->user_id = $resolvedUserId;
+                if ($cameFromFallback && $timesheet->origin !== 'movidesk_fallback') {
+                    $changes['origin'] = ['from' => $timesheet->origin, 'to' => 'movidesk_fallback'];
+                    $timesheet->origin = 'movidesk_fallback';
+                }
+            }
         }
 
         // Trava manual: se o usuário editou qualquer campo de conteúdo via UI
@@ -498,8 +522,9 @@ class MovideskService
                 }
             }
 
-            $userId = $this->extractUserId($action);
+            $userId     = $this->extractUserId($action);
             if (!$userId) return false;
+            $isFallback = $this->lastUserIdWasFallback;
 
             $customerId = $this->extractCustomerId($ticket);
             if (!$customerId) return false;
@@ -529,6 +554,7 @@ class MovideskService
                 'movidesk_appointment_id' => $appointmentId,
                 'is_internal_action'      => $isInternal,
                 'status'                  => $isInternal ? 'internal' : 'pending',
+                'origin'                  => $isFallback ? 'movidesk_fallback' : 'webhook',
             ]);
 
             return true;
@@ -548,37 +574,132 @@ class MovideskService
 
     private function extractUserId(array $action): ?int
     {
-        $email = $action['createdBy']['email'] ?? null;
-        if ($email) $email = strtolower(trim($email));
+        $this->lastUserIdWasFallback = false;
 
-        if ($email) {
-            $user = User::where('email', $email)->where('enabled', true)->first();
-            if ($user) return $user->id;
-            Log::info('⏭️ [MOVIDESK] Apontamento descartado — agente não é consultor do Minutor', [
-                'email'     => $email,
-                'action_id' => $action['id'] ?? null,
+        $createdBy   = $action['createdBy'] ?? [];
+        $movideskId  = isset($createdBy['id']) && $createdBy['id'] !== '' ? (string) $createdBy['id'] : null;
+        $email       = $createdBy['email'] ?? null;
+        if ($email) $email = strtolower(trim($email));
+        $name        = isset($createdBy['businessName']) ? trim($createdBy['businessName']) : null;
+        $name        = $name ?: (isset($createdBy['name']) ? trim($createdBy['name']) : null);
+
+        // Resolve agente cacheado (id tem prioridade, email é fallback). Usado pra
+        // descobrir o email real do agente quando o payload omite (Movidesk às
+        // vezes não inclui email no createdBy mesmo pedindo via $expand).
+        $cachedAgent = null;
+        if ($movideskId) {
+            $cachedAgent = MovideskAgent::where('movidesk_id', $movideskId)->first();
+        }
+        if (!$cachedAgent && $email) {
+            $cachedAgent = MovideskAgent::where('email', $email)->first();
+        }
+        $effectiveEmail = $email ?: ($cachedAgent ? strtolower((string) $cachedAgent->email) : null);
+
+        // Promax check via DOMÍNIO do email (Movidesk não devolve o campo `team`
+        // pela API /persons, então team em movidesk_agents fica vazio — domínio
+        // é o sinal único confiável: @promax.bardahl.com.br, @promax.com.br, etc).
+        // Também olha team como cinto-e-suspensório caso algum cadastro venha
+        // preenchido manualmente no futuro.
+        if ($this->isPromaxAgent($effectiveEmail, $cachedAgent->team ?? null)) {
+            Log::info('⏭️ [MOVIDESK] Apontamento descartado — agente Promax', [
+                'movidesk_id' => $movideskId,
+                'email'       => $effectiveEmail,
+                'team'        => $cachedAgent->team ?? null,
+                'action_id'   => $action['id'] ?? null,
             ]);
-        } else {
-            Log::warning('⚠️ [MOVIDESK] Apontamento descartado — email ausente na ação', [
-                'action_id' => $action['id'] ?? null,
-            ]);
+            return null;
         }
 
-        // Retorna null = caller (processAppointment) descarta o apontamento.
-        // Antes caía em getDefaultUserId() que atribuía a um usuário padrão —
-        // poluía estatísticas dos consultores quando agentes externos (ex:
-        // Promax) faziam ações no mesmo ticket.
-        return null;
+        // 1. Match via agente cacheado linkado a User
+        if ($cachedAgent && $cachedAgent->user_id) {
+            $user = User::where('id', $cachedAgent->user_id)->where('enabled', true)->first();
+            if ($user) return $user->id;
+        }
+
+        // 2. Match por email direto (payload ou cache)
+        if ($effectiveEmail) {
+            $user = User::where('email', $effectiveEmail)->where('enabled', true)->first();
+            if ($user) return $user->id;
+        }
+
+        // 3. Match por nome — último recurso. Só atribui se for inequívoco
+        //    (exatamente 1 User enabled com o nome exato, case-insensitive).
+        if ($name) {
+            $matches = User::whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+                ->where('enabled', true)
+                ->limit(2)
+                ->get();
+            if ($matches->count() === 1) {
+                Log::info('ℹ️ [MOVIDESK] Usuário resolvido por nome', [
+                    'name'      => $name,
+                    'user_id'   => $matches->first()->id,
+                    'action_id' => $action['id'] ?? null,
+                ]);
+                return $matches->first()->id;
+            }
+            if ($matches->count() > 1) {
+                Log::warning('⚠️ [MOVIDESK] Nome ambíguo — Usuário Padrão pra triagem manual', [
+                    'name'      => $name,
+                    'matches'   => $matches->pluck('id')->all(),
+                    'action_id' => $action['id'] ?? null,
+                ]);
+            }
+        }
+
+        Log::warning('⚠️ [MOVIDESK] Usuário não encontrado — caindo no Usuário Padrão pra triagem', [
+            'movidesk_id' => $movideskId,
+            'email'       => $email,
+            'name'        => $name,
+            'action_id'   => $action['id'] ?? null,
+        ]);
+
+        $defaultId = $this->getDefaultUserId();
+        if ($defaultId) $this->lastUserIdWasFallback = true;
+        return $defaultId;
+    }
+
+    /**
+     * Detecta se o agente é da Promax (não deve gerar timesheet local).
+     * Critério principal: domínio do email (@promax.*). Critério secundário:
+     * `team` em movidesk_agents contém "promax" — não confiável hoje porque o
+     * Movidesk omite team na API /persons, mas mantemos pro caso de cadastro
+     * manual no futuro.
+     */
+    private function isPromaxAgent(?string $email, ?string $team): bool
+    {
+        if ($email && stripos($email, '@promax.') !== false) return true;
+        if ($team && stripos($team, 'promax') !== false) return true;
+        return false;
     }
 
     private function getDefaultUserId(): ?int
     {
-        $id = SystemSetting::get('movidesk_default_user_id');
-        if (!$id) {
-            Log::error('🚨 [MOVIDESK] movidesk_default_user_id não configurado — apontamento descartado');
-            return null;
+        // 1. Config explícita em /settings tem precedência (mantém compat).
+        $configured = SystemSetting::get('movidesk_default_user_id');
+        if ($configured && User::where('id', $configured)->where('enabled', true)->exists()) {
+            return (int) $configured;
         }
-        return (int) $id;
+
+        // 2. Auto-provisionamento por email reservado — não exige cadastro manual.
+        return $this->ensureDefaultUser()->id;
+    }
+
+    /**
+     * Cria (ou recupera) o User reservado para o fallback do Movidesk.
+     * Senha aleatória torna o login impossível — entidade serve apenas
+     * como destino de triagem.
+     */
+    private function ensureDefaultUser(): User
+    {
+        return User::firstOrCreate(
+            ['email' => self::FALLBACK_USER_EMAIL],
+            [
+                'name'     => self::FALLBACK_NAME,
+                'password' => Hash::make(Str::random(64)),
+                'enabled'  => true,
+                'type'     => 'consultor',
+            ]
+        );
     }
 
     private function extractCustomerId(array $ticket): ?int
@@ -735,14 +856,28 @@ class MovideskService
 
     private function getDefaultCustomerId(): ?int
     {
-        $id = SystemSetting::get('movidesk_default_customer_id');
-
-        if (!$id) {
-            Log::error('🚨 [MOVIDESK] movidesk_default_customer_id não configurado');
-            return null;
+        $configured = SystemSetting::get('movidesk_default_customer_id');
+        if ($configured && Customer::where('id', $configured)->where('active', true)->exists()) {
+            return (int) $configured;
         }
+        return $this->ensureDefaultCustomer()->id;
+    }
 
-        return (int) $id;
+    /**
+     * Cria (ou recupera) o Customer reservado para fallback do Movidesk.
+     * CGC 14×0 é um identificador placeholder unique que não colide com
+     * CNPJs reais.
+     */
+    private function ensureDefaultCustomer(): Customer
+    {
+        return Customer::firstOrCreate(
+            ['cgc' => self::FALLBACK_CUSTOMER_CGC],
+            [
+                'name'         => self::FALLBACK_NAME,
+                'company_name' => self::FALLBACK_NAME,
+                'active'       => true,
+            ]
+        );
     }
 
     private function extractProjectId(?int $customerId): ?int
@@ -819,27 +954,59 @@ class MovideskService
 
     private function resolveDefaultProject(): ?int
     {
-        $defaultId = SystemSetting::get('movidesk_default_project_id');
+        $configured = SystemSetting::get('movidesk_default_project_id');
+        if ($configured) {
+            $project = Project::find($configured);
+            if ($project) {
+                Log::info('ℹ️ [MOVIDESK] Usando projeto padrão configurado', [
+                    'project_id'   => $project->id,
+                    'project_name' => $project->name,
+                    'status'       => $project->status,
+                ]);
+                return $project->id;
+            }
+            Log::warning('⚠️ [MOVIDESK] movidesk_default_project_id aponta pra projeto inexistente — caindo no auto-provisionado', ['id' => $configured]);
+        }
 
-        if (!$defaultId) {
-            Log::error('🚨 [MOVIDESK] movidesk_default_project_id não configurado — apontamento descartado');
+        $project = $this->ensureDefaultProject();
+        return $project?->id;
+    }
+
+    /**
+     * Cria (ou recupera) o Project reservado para fallback. Linkado ao
+     * Customer fallback. Service type: prefere "sustentacao" se existir,
+     * senão o primeiro disponível.
+     */
+    private function ensureDefaultProject(): ?Project
+    {
+        $serviceTypeId = ServiceType::query()
+            ->orderByRaw("CASE WHEN code = 'sustentacao' THEN 0 ELSE 1 END")
+            ->orderBy('id')
+            ->value('id');
+
+        $contractTypeId = \App\Models\ContractType::query()
+            ->orderByRaw("CASE WHEN code = 'on_demand' THEN 0 ELSE 1 END")
+            ->orderBy('id')
+            ->value('id');
+
+        if (!$serviceTypeId || !$contractTypeId) {
+            Log::error('🚨 [MOVIDESK] Faltam ServiceType/ContractType cadastrados — impossível criar projeto fallback', [
+                'service_type_id'  => $serviceTypeId,
+                'contract_type_id' => $contractTypeId,
+            ]);
             return null;
         }
 
-        $project = Project::find($defaultId);
-
-        if (!$project) {
-            Log::error('🚨 [MOVIDESK] Projeto padrão não encontrado', ['id' => $defaultId]);
-            return null;
-        }
-
-        Log::info('ℹ️ [MOVIDESK] Usando projeto padrão', [
-            'project_id'   => $project->id,
-            'project_name' => $project->name,
-            'status'       => $project->status,
-        ]);
-
-        return $project->id;
+        return Project::firstOrCreate(
+            ['code' => self::FALLBACK_PROJECT_CODE],
+            [
+                'name'             => self::FALLBACK_NAME,
+                'customer_id'      => $this->ensureDefaultCustomer()->id,
+                'service_type_id'  => $serviceTypeId,
+                'contract_type_id' => $contractTypeId,
+                'status'           => Project::STATUS_STARTED,
+            ]
+        );
     }
 
     private function extractDate(array $appointment): ?string
@@ -910,7 +1077,74 @@ class MovideskService
             $clean = trim($clean);
         }
 
+        // Quando a interação não tem texto e veio só com anexo de imagem,
+        // tenta OCR para preencher a observation com o conteúdo da imagem.
+        $isEmpty     = $this->isHtmlEffectivelyEmpty($clean);
+        $attachments = $action['attachments'] ?? [];
+        $inlineUrls  = [];
+
+        // Plano B: Movidesk frequentemente NÃO devolve attachments[] mesmo com
+        // $expand=attachments. As imagens vão inline no htmlDescription como
+        // <img src="https://s3.amazonaws.com/movidesk-files-*">. Quando o
+        // attachments[] vier vazio mas houver imgs inline, sintetiza um array
+        // de "pseudo-attachments" só com a URL pra alimentar o OCR.
+        if (empty($attachments)) {
+            $inlineUrls = $this->extractMovideskImageUrls($html);
+            if (!empty($inlineUrls)) {
+                $attachments = array_map(function ($url) {
+                    return [
+                        'url'      => $url,
+                        'fileName' => basename(parse_url($url, PHP_URL_PATH) ?: 'image'),
+                        'mimeType' => 'image/jpeg',  // OcrService re-valida via Content-Type da resposta
+                    ];
+                }, $inlineUrls);
+            }
+        }
+
+        Log::info('📦 [MOVIDESK] buildObservation diagnóstico', [
+            'action_id'            => $action['id'] ?? null,
+            'html_len'             => strlen($clean),
+            'is_effectively_empty' => $isEmpty,
+            'attachments_count'    => count($attachments),
+            'inline_urls_count'    => count($inlineUrls),
+            'first_att_keys'       => !empty($attachments) ? array_keys($attachments[0] ?? []) : [],
+        ]);
+        if ($isEmpty && !empty($attachments)) {
+            $ocrText = app(OcrService::class)->extractTextFromAttachments($attachments);
+            if ($ocrText !== null) {
+                $clean = '<p><em>[texto extraído da imagem via OCR]</em></p>'
+                    . '<p>' . nl2br(e($ocrText), false) . '</p>';
+            }
+        }
+
         return $clean;
+    }
+
+    /**
+     * Extrai URLs S3 Movidesk de <img src="..."> no HTML. Filtro:
+     * só URLs em domínio s3*.amazonaws.com com "movidesk" no path,
+     * evita logos/data URIs/imagens externas. Dedup + cap em 10.
+     */
+    private function extractMovideskImageUrls(string $html): array
+    {
+        if ($html === '' || !preg_match_all('/<img[^>]+src=["\']([^"\']+)["\']/i', $html, $m)) {
+            return [];
+        }
+        $urls = array_unique(array_map("html_entity_decode", $m[1]));
+        $movidesk = [];
+        foreach ($urls as $url) {
+            if (preg_match('~^https?://[^/]*s3[.-][^/]*amazonaws\.com/[^?]*movidesk~i', $url)) {
+                $movidesk[] = $url;
+                if (count($movidesk) >= 10) break;
+            }
+        }
+        return $movidesk;
+    }
+
+    private function isHtmlEffectivelyEmpty(string $html): bool
+    {
+        $stripped = trim(strip_tags($html));
+        return $stripped === '';
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -1007,7 +1241,7 @@ class MovideskService
             $timesheet->ticket                  = $data['ticket'];
             $timesheet->movidesk_appointment_id = $data['movidesk_appointment_id'] ?? null;
             $timesheet->is_internal_action      = $data['is_internal_action'] ?? false;
-            $timesheet->origin = 'webhook';
+            $timesheet->origin                  = $data['origin'] ?? 'webhook';
 
             if ($data['is_internal_action'] ?? false) {
                 $timesheet->status = Timesheet::STATUS_INTERNAL;

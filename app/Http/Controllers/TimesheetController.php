@@ -222,6 +222,33 @@ class TimesheetController extends Controller
             $query->whereIn('timesheets.customer_id', $customerIds);
         }
 
+        // Triagem dos "padrões Movidesk": filtra timesheets cujo user_id, customer_id
+        // OU project_id coincida com algum dos IDs configurados em system_settings
+        // (movidesk_default_*). Usado pela rotina Triagem da Sustentação pra revisar
+        // apontamentos atribuídos ao fallback.
+        if ($request->boolean('triagem_padrao')) {
+            $defaultUserId     = \App\Models\SystemSetting::get('movidesk_default_user_id');
+            $defaultCustomerId = \App\Models\SystemSetting::get('movidesk_default_customer_id');
+            $defaultProjectId  = \App\Models\SystemSetting::get('movidesk_default_project_id');
+
+            // triagem_field opcional: user | customer | project — filtra só uma
+            // dimensão. Sem o parâmetro, faz OR entre os 3 (default Todos).
+            $field = $request->input('triagem_field');
+
+            $query->where(function ($q) use ($defaultUserId, $defaultCustomerId, $defaultProjectId, $field) {
+                $applyUser     = (!$field || $field === 'user')     && $defaultUserId;
+                $applyCustomer = (!$field || $field === 'customer') && $defaultCustomerId;
+                $applyProject  = (!$field || $field === 'project')  && $defaultProjectId;
+
+                if ($applyUser)     $q->orWhere('timesheets.user_id',     (int) $defaultUserId);
+                if ($applyCustomer) $q->orWhere('timesheets.customer_id', (int) $defaultCustomerId);
+                if ($applyProject)  $q->orWhere('timesheets.project_id',  (int) $defaultProjectId);
+                if (!$applyUser && !$applyCustomer && !$applyProject) {
+                    $q->whereRaw('1 = 0');
+                }
+            });
+        }
+
         $executiveIds = array_values(array_filter((array) $request->input('executive_id', [])));
         if (!empty($executiveIds)) {
             $query->whereHas('customer', function ($q) use ($executiveIds) {
@@ -473,7 +500,12 @@ class TimesheetController extends Controller
                     // somando apontamentos já soft-deletados (ex.: limpeza dos <5min).
                     $totalsQ = \Illuminate\Support\Facades\DB::table('timesheets')
                         ->whereNull('deleted_at')
-                        ->where('status', '!=', 'rejected')
+                        ->whereNotIn('status', [
+                            Timesheet::STATUS_REJECTED,
+                            Timesheet::STATUS_CONFLICTED,
+                            Timesheet::STATUS_ADJUSTMENT_REQUESTED,
+                            Timesheet::STATUS_INTERNAL,
+                        ])
                         ->whereRaw("ticket ~ '^[0-9]{5}$'");
                     $totalsQ->where(function ($q) use ($ticketsByCustomer) {
                         foreach ($ticketsByCustomer as $cid => $tickets) {
@@ -2856,7 +2888,7 @@ class TimesheetController extends Controller
         }
 
         $ids             = $request->input('ids', []);
-        $movideskOrigins = ['movidesk', 'webhook'];
+        $movideskOrigins = ['movidesk', 'webhook', 'movidesk_fallback'];
 
         // Sem IDs: roda o MESMO fluxo do cron (movidesk:sync) — fetch tickets
         // atualizados desde o último sync, importa novos, atualiza existentes

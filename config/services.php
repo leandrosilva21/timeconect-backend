@@ -46,4 +46,9 @@ return [
         'timesheet_webhook_enabled' => filter_var(env('N8N_TIMESHEET_WEBHOOK_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
     ],
 
+    'anthropic' => [
+        'api_key'   => env('ANTHROPIC_API_KEY'),
+        'ocr_model' => env('ANTHROPIC_OCR_MODEL', 'claude-haiku-4-5-20251001'),
+    ],
+
 ];

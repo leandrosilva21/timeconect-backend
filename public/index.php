@@ -1,7 +1,8 @@
 <?php
 
-error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED);
-ini_set('display_errors', '0');
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED & ~E_STRICT);
+ini_set('display_errors', 'Off');
+ini_set('display_startup_errors', 'Off');
 ini_set('html_errors', '0');
 
 use Illuminate\Foundation\Application;

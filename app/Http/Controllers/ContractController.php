@@ -285,6 +285,25 @@ class ContractController extends Controller
                 'vendedor_id'           => $contract->vendedor_id,
             ]));
 
+            // Auto-ativação da integração Movidesk para projetos de SUSTENTAÇÃO:
+            // se o cliente ainda não tem nenhum projeto flagado, ativa neste
+            // recém-criado (respeita a regra "máx 1 projeto flagado por cliente").
+            $contract->loadMissing('serviceType');
+            $svcCode = $contract->serviceType?->code;
+            $svcName = strtolower(trim((string) $contract->serviceType?->name));
+            $isSustentacao = $contract->categoria === 'sustentacao'
+                || $svcCode === 'sustentacao'
+                || str_contains($svcName, 'sustenta');
+            if ($isSustentacao) {
+                $hasFlagged = Project::where('customer_id', $project->customer_id)
+                    ->where('id', '!=', $project->id)
+                    ->where('movidesk_integration_enabled', true)
+                    ->exists();
+                if (!$hasFlagged) {
+                    $project->update(['movidesk_integration_enabled' => true]);
+                }
+            }
+
             // Copiar contatos
             foreach ($contract->contacts as $c) {
                 ProjectContact::create([

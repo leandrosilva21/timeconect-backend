@@ -866,6 +866,25 @@ class ProjectController extends Controller
             return $p;
         });
 
+        // Auto-ativação da integração Movidesk para projetos de SUSTENTAÇÃO:
+        // se o usuário NÃO setou a flag explicitamente E o cliente ainda não tem
+        // nenhum projeto flagado, ativa neste recém-criado (respeita "máx 1 por cliente").
+        if (!$request->has('movidesk_integration_enabled')) {
+            $project->loadMissing('serviceType');
+            $svcCode = $project->serviceType?->code;
+            $svcName = strtolower(trim((string) $project->serviceType?->name));
+            $isSustentacao = $svcCode === 'sustentacao' || str_contains($svcName, 'sustenta');
+            if ($isSustentacao) {
+                $hasFlagged = Project::where('customer_id', $project->customer_id)
+                    ->where('id', '!=', $project->id)
+                    ->where('movidesk_integration_enabled', true)
+                    ->exists();
+                if (!$hasFlagged) {
+                    $project->update(['movidesk_integration_enabled' => true]);
+                }
+            }
+        }
+
         // Vincular consultores
         if (!empty($consultantIds)) {
             $project->consultants()->attach($consultantIds);
@@ -1097,6 +1116,7 @@ class ProjectController extends Controller
             'categoria_interna' => 'nullable|in:Sustentação,Projeto,Suporte,Comercial',
             'movidesk_integration_enabled' => 'nullable|boolean',
             'confirm_movidesk_swap'        => 'nullable|boolean',
+            'migrate_movidesk_timesheets'  => 'nullable|boolean',
         ], [
             'name.max' => 'O nome não pode ter mais de 255 caracteres',
             'name.min' => 'O nome deve ter pelo menos 2 caracteres',
@@ -1315,6 +1335,8 @@ class ProjectController extends Controller
         // Conflito sem confirm_movidesk_swap → 409.
         $confirmSwap = !empty($validated['confirm_movidesk_swap']);
         unset($validated['confirm_movidesk_swap']);
+        $migrateMovideskTimesheets = !empty($validated['migrate_movidesk_timesheets']);
+        unset($validated['migrate_movidesk_timesheets']);
         if (array_key_exists('movidesk_integration_enabled', $validated)
             && $validated['movidesk_integration_enabled'] === true
             && (bool) $project->movidesk_integration_enabled !== true) {
@@ -1332,6 +1354,17 @@ class ProjectController extends Controller
             }
         }
 
+        // Captura os projetos do cliente que HOJE estão com a flag ativa (os "antigos"),
+        // antes da transação desativá-los — necessário para migrar os apontamentos depois.
+        $oldFlaggedIds = [];
+        if (!empty($validated['movidesk_integration_enabled'])) {
+            $oldFlaggedIds = Project::where('customer_id', $project->customer_id)
+                ->where('id', '!=', $project->id)
+                ->where('movidesk_integration_enabled', true)
+                ->pluck('id')
+                ->all();
+        }
+
         \DB::transaction(function () use ($project, $validated) {
             $project->update($validated);
             if (!empty($validated['movidesk_integration_enabled'])) {
@@ -1341,6 +1374,16 @@ class ProjectController extends Controller
                     ->update(['movidesk_integration_enabled' => false]);
             }
         });
+
+        // Migração opcional dos apontamentos de origem Movidesk dos projetos antigos
+        // para o novo projeto flagado. "Origem Movidesk" = tem movidesk_appointment_id
+        // (o origin pode ser 'webhook'/'movidesk_fallback'/etc; o id é o sinal confiável).
+        // Eloquent respeita SoftDeletes automaticamente.
+        if ($migrateMovideskTimesheets && !empty($oldFlaggedIds)) {
+            \App\Models\Timesheet::whereIn('project_id', $oldFlaggedIds)
+                ->whereNotNull('movidesk_appointment_id')
+                ->update(['project_id' => $project->id]);
+        }
 
         // Idempotente: garante consistência do contract no Kanban sempre que admin envia
         // o campo num projeto de sustentação, mesmo que o valor não tenha mudado.

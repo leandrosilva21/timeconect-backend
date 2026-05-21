@@ -396,6 +396,13 @@ class BankHoursMonthlyController extends Controller
         // Arredondar para 2 casas decimais
         $consumedHours = round($consumedHours, 2);
 
+        // Saldo do banco mensal = horas acumuladas + aporte − consumo acumulado (consistente com o consumo exibido).
+        // Antes usava sum(getGeneralHoursBalance), que conta só apontamentos DIRETOS do projeto e ignora a
+        // sustentação do cliente que consome o banco → saldo inflado/inconsistente com o consumo (igual bug do BH Fixo).
+        $hoursBalance  = round($accumulatedContractedHours + $contributedHours - $consumedHours, 2);
+        $exceededHours = $hoursBalance < 0 ? abs($hoursBalance) : 0;
+        $amountToPay   = ($exceededHours > 0 && $rateForPayment !== null) ? round($exceededHours * $rateForPayment, 2) : null;
+
         // Calcular consumo do mês (apontamentos do mês especificado + projetos fechados com start_date no mês especificado)
         $monthConsumedHours = 0;
 
@@ -780,24 +787,9 @@ class BankHoursMonthlyController extends Controller
             $projects = $query->get();
         }
 
-        // Filtro por start_date no período (Mês/Ano ou Período).
-        $dateFrom = $request->get('date_from');
-        $dateTo   = $request->get('date_to');
-        if (!$dateFrom || !$dateTo) {
-            $month = (int) $request->get('month');
-            $year  = (int) $request->get('year');
-            if ($month >= 1 && $month <= 12 && $year >= 1970) {
-                $dateFrom = sprintf('%04d-%02d-01', $year, $month);
-                $dateTo   = date('Y-m-t', strtotime($dateFrom));
-            }
-        }
-        if ($dateFrom && $dateTo) {
-            $projects = $projects->filter(function ($p) use ($dateFrom, $dateTo) {
-                if (!$p->start_date) return false;
-                $sd = $p->start_date->format('Y-m-d');
-                return $sd >= $dateFrom && $sd <= $dateTo;
-            })->values();
-        }
+        // A aba Projetos NÃO filtra a lista por data (igual ao BH Fixo): os projetos do
+        // contrato sempre aparecem, independente do mês/período. A data vale só pros
+        // números de consumo, não pra lista. (Removido o filtro por start_date.)
 
         $projectsData = $projects->map(function($project) {
             return [

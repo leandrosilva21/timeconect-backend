@@ -32,8 +32,8 @@ class FechamentoConsultorController extends Controller
 
     // ─── Enviar fechamento por e-mail ───────────────────────────────────────────
     // Envia o relatório de fechamento do consultor por e-mail.
-    // Remetente = usuário logado (Send As — o Office 365 precisa permitir o "Send As"
-    // da conta autenticada pros mailboxes dos usuários). To = consultor, CC = financeiro.
+    // De = conta autenticada (mail.from) com o NOME do usuário logado; Reply-To = usuário
+    // (entrega sempre, sem depender de Send As). To = consultor, CC = financeiro.
     public function enviarEmail(Request $request, string $userId, string $yearMonth): JsonResponse
     {
         $sender = $request->user();
@@ -66,9 +66,9 @@ class FechamentoConsultorController extends Controller
 
         try {
             Mail::html($data['html'], function ($message) use ($sender, $consultant, $financeiroCc, $subject) {
-                // Send As: remetente = usuário logado. Reply-To também aponta pra ele
-                // (caso o O365 reescreva o From por falta de permissão Send As).
-                $message->from($sender->email, $sender->name)
+                // De = "Nome do usuário <conta autenticada>" (mail.from), Reply-To = usuário.
+                // Sem Send As: a conta envia "como ela mesma", só o nome exibido é o do usuário.
+                $message->from(config('mail.from.address'), $sender->name)
                         ->replyTo($sender->email, $sender->name)
                         ->to($consultant->email, $consultant->name)
                         ->subject($subject);

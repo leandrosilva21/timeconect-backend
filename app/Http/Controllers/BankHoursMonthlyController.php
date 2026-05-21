@@ -535,6 +535,7 @@ class BankHoursMonthlyController extends Controller
                             ? (int) $log->new_value - (int) $log->old_value
                             : ($log->new_value ? (int) $log->new_value : 0),
                         'reason' => $log->reason,
+                        'motivo' => 'aporte',
                         'changed_by' => $log->changedByUser ? [
                             'id' => $log->changedByUser->id,
                             'name' => $log->changedByUser->name,
@@ -564,6 +565,7 @@ class BankHoursMonthlyController extends Controller
                         'hourly_rate' => (float) $contribution->hourly_rate,
                         'total_value' => $contribution->getTotalValue(),
                         'description' => $contribution->description,
+                        'motivo' => $contribution->motivo ?? 'aporte',
                         'changed_by' => $contribution->contributedBy ? [
                             'id' => $contribution->contributedBy->id,
                             'name' => $contribution->contributedBy->name,

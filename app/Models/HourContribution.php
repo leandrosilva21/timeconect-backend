@@ -21,9 +21,13 @@ class HourContribution extends Model
         'contributed_hours',
         'hourly_rate',
         'description',
+        'motivo',
         'contributed_by',
         'contributed_at',
     ];
+
+    // Motivos do aporte: aporte | excedentes | absorvidas
+    public const MOTIVOS = ['aporte', 'excedentes', 'absorvidas'];
     
     /**
      * The attributes that should be cast.

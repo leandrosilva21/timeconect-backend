@@ -118,6 +118,7 @@ class HourContributionController extends Controller
             'contributed_hours' => 'required|numeric|min:0.01|max:999999',
             'hourly_rate' => 'required|numeric|min:0.01|max:9999.99',
             'description' => 'nullable|string|max:1000',
+            'motivo' => 'nullable|in:aporte,excedentes,absorvidas',
             'contributed_at' => 'nullable|date',
         ], [
             'contributed_hours.required' => 'A quantidade de horas é obrigatória',
@@ -132,6 +133,7 @@ class HourContributionController extends Controller
         
         $contribution = $project->hourContributions()->create([
             ...$validated,
+            'motivo' => $validated['motivo'] ?? 'aporte',
             'contributed_by' => $request->user()->id,
             'contributed_at' => $validated['contributed_at'] ?? now(),
         ]);
@@ -197,6 +199,7 @@ class HourContributionController extends Controller
             'contributed_hours' => 'sometimes|numeric|min:0.01|max:999999',
             'hourly_rate' => 'sometimes|numeric|min:0.01|max:9999.99',
             'description' => 'nullable|string|max:1000',
+            'motivo' => 'sometimes|in:aporte,excedentes,absorvidas',
             'contributed_at' => 'sometimes|date',
         ], [
             'contributed_hours.min' => 'A quantidade de horas deve ser pelo menos 1',

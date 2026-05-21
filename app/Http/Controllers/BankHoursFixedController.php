@@ -370,6 +370,13 @@ class BankHoursFixedController extends Controller
         // Arredondar para 2 casas decimais
         $consumedHours = round($consumedHours, 2);
 
+        // Saldo do banco = contratadas + aporte − consumo acumulado (consistente com o consumo exibido).
+        // Antes usava sum(getGeneralHoursBalance), que contava só os apontamentos DIRETOS do projeto e
+        // ignorava a sustentação do cliente que consome o banco → saldo inflado/inconsistente com o consumo.
+        $hoursBalance  = round($contractedHours + $contributedHours - $consumedHours, 2);
+        $exceededHours = $hoursBalance < 0 ? abs($hoursBalance) : 0;
+        $amountToPay   = ($exceededHours > 0 && $rateForPayment !== null) ? round($exceededHours * $rateForPayment, 2) : null;
+
         // Calcular consumo do mês (apontamentos do mês especificado + projetos fechados com start_date no mês especificado)
         $monthConsumedHours = 0;
 

@@ -8,6 +8,9 @@ use App\Models\UserHourlyRateLog;
 use App\Services\HourBankService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 
 class FechamentoConsultorController extends Controller
 {
@@ -25,6 +28,65 @@ class FechamentoConsultorController extends Controller
         return ($rateType === 'monthly' && $hourlyRate > 0)
             ? round($hourlyRate / 180, 4)
             : $hourlyRate;
+    }
+
+    // ─── Enviar fechamento por e-mail ───────────────────────────────────────────
+    // Envia o relatório de fechamento do consultor por e-mail.
+    // Remetente = usuário logado (Send As — o Office 365 precisa permitir o "Send As"
+    // da conta autenticada pros mailboxes dos usuários). To = consultor, CC = financeiro.
+    public function enviarEmail(Request $request, string $userId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão para enviar o fechamento.'], 403);
+        }
+        if (!$sender->email) {
+            return response()->json(['success' => false, 'message' => 'Seu usuário não tem e-mail cadastrado para usar como remetente.'], 422);
+        }
+
+        $data = $request->validate([
+            'html'    => 'required|string',
+            'subject' => 'nullable|string',
+        ]);
+
+        $consultant = User::find($userId);
+        if (!$consultant) {
+            return response()->json(['success' => false, 'message' => 'Consultor não encontrado.'], 404);
+        }
+        if (!$consultant->email) {
+            return response()->json(['success' => false, 'message' => 'Consultor sem e-mail cadastrado.'], 422);
+        }
+
+        [$year, $month] = array_map('intval', explode('-', $yearMonth));
+        $meses   = ['', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+        $periodo = (($month >= 1 && $month <= 12) ? $meses[$month] : $yearMonth) . " de {$year}";
+        $subject = $data['subject'] ?? "Fechamento de Consultores — {$periodo} — {$consultant->name}";
+
+        $financeiroCc = config('mail.financeiro_cc');
+
+        try {
+            Mail::html($data['html'], function ($message) use ($sender, $consultant, $financeiroCc, $subject) {
+                // Send As: remetente = usuário logado. Reply-To também aponta pra ele
+                // (caso o O365 reescreva o From por falta de permissão Send As).
+                $message->from($sender->email, $sender->name)
+                        ->replyTo($sender->email, $sender->name)
+                        ->to($consultant->email, $consultant->name)
+                        ->subject($subject);
+                if ($financeiroCc) {
+                    $message->cc($financeiroCc);
+                }
+            });
+        } catch (\Throwable $e) {
+            Log::error('Falha ao enviar fechamento de consultor por e-mail', [
+                'consultor' => $consultant->id, 'remetente' => $sender->id, 'erro' => $e->getMessage(),
+            ]);
+            return response()->json(['success' => false, 'message' => 'Falha ao enviar o e-mail: ' . $e->getMessage()], 500);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => "Fechamento enviado para {$consultant->email}" . ($financeiroCc ? " (cópia: {$financeiroCc})" : '') . '.',
+        ]);
     }
 
     // ─── Index ────────────────────────────────────────────────────────────────

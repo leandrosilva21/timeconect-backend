@@ -125,4 +125,13 @@ return [
         'name' => env('MAIL_FROM_NAME', 'Example'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Cópia do financeiro (fechamentos)
+    |--------------------------------------------------------------------------
+    | Endereço que recebe cópia (CC) dos e-mails de fechamento enviados pela
+    | rotina de fechamento de consultores. Vazio desativa o CC.
+    */
+    'financeiro_cc' => env('MAIL_FINANCEIRO_CC', 'financeiro@erpserv.com'),
+
 ];

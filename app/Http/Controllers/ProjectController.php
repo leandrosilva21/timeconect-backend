@@ -1093,7 +1093,10 @@ class ProjectController extends Controller
             'parent_project_id' => 'nullable|exists:projects,id',
             'service_type_id' => 'sometimes|exists:service_types,id',
             'contract_type_id' => 'sometimes|exists:contract_types,id',
-            'status' => ['sometimes', Rule::in(array_keys(Project::getStatuses()))],
+            // Permite o status ATUAL do projeto mesmo que não esteja em getStatuses() — há
+            // projetos com status legado do Cronograma (ex.: 'liberado_para_testes') que a
+            // FE reenvia ao salvar; sem isso o update falha com validation.in (422).
+            'status' => ['sometimes', Rule::in(array_merge(array_keys(Project::getStatuses()), [$project->status]))],
             'project_value' => 'nullable|numeric|min:0|max:999999999.99',
             'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'sold_hours' => 'nullable|numeric|min:0|max:999999',

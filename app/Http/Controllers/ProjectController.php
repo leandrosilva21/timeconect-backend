@@ -608,11 +608,16 @@ class ProjectController extends Controller
                     // total_available_hours usa a relação eager-loaded para incluir aportes novos
                     $totalAvailable = $project->getTotalAvailableHours();
                     $newContributions = $totalAvailable - ($project->sold_hours ?? 0);
+                    // Quebra das HS Vendidas p/ "ver a conta": base (acumulada) + aporte = total
+                    $project->vendidas_projeto_hours = round($accumulatedHours, 2);
+                    $project->vendidas_aporte_hours  = round($newContributions, 2);
                     // saldo usa o acumulado real; HS consumidas iniciais + novas + consumo dos filhos
                     $project->consumed_hours = round($consumed + $initialConsumed + $childrenConsumed, 2);
                     $project->general_hours_balance = round($accumulatedHours + $newContributions - $consumed - $initialConsumed - $childrenConsumed, 2);
                 } else {
                     $totalAvailable = $project->getTotalAvailableHours();
+                    $project->vendidas_projeto_hours = round((float)($project->sold_hours ?? 0), 2);
+                    $project->vendidas_aporte_hours  = round($totalAvailable - (float)($project->sold_hours ?? 0), 2);
                     $project->consumed_hours = round($consumed + $initialConsumed + $childrenConsumed, 2);
                     $project->general_hours_balance = round($totalAvailable - $consumed - $initialConsumed - $childrenConsumed, 2);
                 }

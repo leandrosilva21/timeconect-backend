@@ -92,7 +92,8 @@ class FechamentoConsultorMail extends Mailable
     public function content(): Content
     {
         return new Content(
-            view: 'emails.fechamento.consultor',
+            // Continuação = e-mail simples (texto livre + assinatura), NÃO reenvia o template do fechamento.
+            view: $this->isContinuation ? 'emails.fechamento.continuacao' : 'emails.fechamento.consultor',
             with: [
                 'consultantName' => $this->consultantName,
                 'senderName'     => $this->senderName,

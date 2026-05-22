@@ -2514,6 +2514,15 @@ class TimesheetController extends Controller
             'coordinator_hours' => $project->coordinator_hours,
         ]);
 
+        // On Demand é SOB DEMANDA — não controla saldo. Não valida saldo nem para o projeto
+        // On Demand nem para projeto FILHO de um On Demand. (getGeneralHoursBalance retorna 0
+        // para On Demand, o que antes era tratado erroneamente como "saldo insuficiente".)
+        if (($project->contractType?->code ?? null) === 'on_demand'
+            || ($project->parentProject?->contractType?->code ?? null) === 'on_demand') {
+            Log::info('Validação de saldo IGNORADA (On Demand não tem saldo)', ['project_id' => $project->id]);
+            return null;
+        }
+
         // Carregar relacionamentos necessários
         $project->load(['consultants', 'coordinators']);
 

@@ -329,6 +329,21 @@ class FechamentoConsultorController extends Controller
     }
 
     /**
+     * Raiz canônica da thread de um consultor+período: a 1ª linha (por id) que tenha
+     * message_id não-nulo. É o Message-ID que todas as demais mensagens (reenvios e
+     * continuações) referenciam via In-Reply-To/References para threadar no Outlook/Gmail.
+     * Retorna null se ainda não houver nenhuma mensagem com message_id (thread inexistente).
+     */
+    private function threadRoot(int|string $consultantId, string $yearMonth): ?FechamentoConsultorEmail
+    {
+        return FechamentoConsultorEmail::where('consultant_user_id', $consultantId)
+            ->where('year_month', $yearMonth)
+            ->whereNotNull('message_id')
+            ->orderBy('id')
+            ->first();
+    }
+
+    /**
      * Gera (PDF + XLSX) do fechamento do consultor e grava em storage/app/fechamentos.
      * Reutilizado pelo envio original e pelas continuações que pedem anexo atualizado.
      *
@@ -421,13 +436,28 @@ class FechamentoConsultorController extends Controller
         }
 
         $periodo      = $this->periodoExtenso($yearMonth);
-        $subject      = $request->input('subject')
-            ?: 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Horas - ' . $consultant->name;
         $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
 
-        // Message-ID determinístico desta mensagem (raiz da thread) + chave da thread.
+        // Message-ID determinístico DESTA mensagem (sempre persistido) + chave da thread.
         $messageId    = $this->buildMessageId($consultant->id, $yearMonth);
         $threadKey    = $this->threadKey($consultant->id, $yearMonth);
+
+        // Uma única thread por (consultor, período). Se já existe uma raiz canônica,
+        // este "envio" é na verdade um REENVIO: threada na raiz (mesmo assunto + In-Reply-To),
+        // em vez de virar um e-mail novo. Sem raiz = primeiro envio (cria a thread).
+        $root         = $this->threadRoot($consultant->id, $yearMonth);
+        $isResend     = $root !== null;
+
+        if ($isResend) {
+            // Reenvio: MESMO assunto da raiz (sem "Re:") + In-Reply-To/References da raiz.
+            $subject  = $root->subject;
+            $inReplyTo = $root->message_id;
+        } else {
+            // Primeiro envio: assunto gerado, raiz da thread (sem pai).
+            $subject  = $request->input('subject')
+                ?: 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Horas - ' . $consultant->name;
+            $inReplyTo = null;
+        }
 
         // Gera anexos (PDF + XLSX) — reutilizável (mesma geração das continuações).
         $files        = $this->generateFechamentoFiles($consultant, $yearMonth);
@@ -441,7 +471,7 @@ class FechamentoConsultorController extends Controller
             'cc_email'           => $financeiroCc ?: null,
             'subject'            => $subject,
             'message_id'         => $messageId,
-            'in_reply_to'        => null,
+            'in_reply_to'        => $inReplyTo,
             'is_continuation'    => false,
             'total_value'        => $totalValue,
         ]);
@@ -460,7 +490,8 @@ class FechamentoConsultorController extends Controller
                 pdfFileName:    $files['pdf_name'],
                 xlsxFileName:   $files['xlsx_name'],
                 messageId:      $messageId,
-                references:     null,
+                references:     $inReplyTo,
+                inReplyTo:      $inReplyTo,
                 threadKey:      $threadKey,
                 withAttachments: true,
             );
@@ -561,8 +592,12 @@ class FechamentoConsultorController extends Controller
             return response()->json(['success' => false, 'message' => 'Consultor sem e-mail cadastrado.'], 422);
         }
 
-        // A thread precisa existir: tem que haver um envio original antes.
-        $original = FechamentoConsultorEmail::where('consultant_user_id', $userId)
+        // Raiz canônica da thread (1ª linha com message_id). É nela que a continuação
+        // se pendura via In-Reply-To/References, garantindo UMA conversa no Outlook/Gmail.
+        $root = $this->threadRoot($userId, $yearMonth);
+
+        // Fallback gracioso p/ logs antigos sem message_id: usa o 1º envio original.
+        $original = $root ?: FechamentoConsultorEmail::where('consultant_user_id', $userId)
             ->where('year_month', $yearMonth)
             ->where('is_continuation', false)
             ->orderBy('sent_at')
@@ -577,7 +612,7 @@ class FechamentoConsultorController extends Controller
         }
 
         $periodo      = $this->periodoExtenso($yearMonth);
-        $parentMsgId  = $original->message_id; // pode ser null em logs antigos; trata abaixo
+        $parentMsgId  = $original->message_id; // raiz; pode ser null em logs antigos (fallback)
         $threadKey    = $this->threadKey($consultant->id, $yearMonth);
         $messageId    = $this->buildMessageId($consultant->id, $yearMonth);
         $financeiroCc = (string) ($original->cc_email ?? config('mail.financeiro_cc') ?? '');
@@ -620,6 +655,7 @@ class FechamentoConsultorController extends Controller
                 xlsxFileName:   $files['xlsx_name'] ?? '',
                 messageId:      $messageId,
                 references:     $parentMsgId,
+                inReplyTo:      $parentMsgId,
                 threadKey:      $threadKey,
                 bodyText:       $bodyText,
                 isContinuation: true,

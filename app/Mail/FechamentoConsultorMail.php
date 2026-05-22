@@ -27,7 +27,8 @@ class FechamentoConsultorMail extends Mailable
 
     /**
      * @param string|null      $messageId      Message-ID custom (sem os <>) que setamos no header desta mensagem.
-     * @param string|null      $references     Message-ID da mensagem-pai (References/In-Reply-To) para threading.
+     * @param string|null      $references     Message-ID da mensagem-raiz (References) para threading.
+     * @param string|null      $inReplyTo      Message-ID da mensagem-raiz (In-Reply-To) — Outlook threada por este header.
      * @param string|null      $threadKey      "consultorId:yearMonth" — vai no header X-Minutor-Fechamento-Id.
      * @param string|null      $bodyText       Texto livre (continuações) — exibido antes do conteúdo padrão.
      * @param bool             $isContinuation Se é uma continuação/resposta da thread (vs. envio original).
@@ -46,6 +47,7 @@ class FechamentoConsultorMail extends Mailable
         public string $xlsxFileName,
         public ?string $messageId = null,
         public ?string $references = null,
+        public ?string $inReplyTo = null,
         public ?string $threadKey = null,
         public ?string $bodyText = null,
         public bool $isContinuation = false,
@@ -72,14 +74,23 @@ class FechamentoConsultorMail extends Mailable
     /**
      * Headers de threading + matching:
      *  - Message-ID determinístico (fech-...@minutor.com.br) por mensagem;
-     *  - References = Message-ID da 1ª mensagem da thread (continuações);
+     *  - In-Reply-To = Message-ID da mensagem-raiz da thread (Outlook threada por este);
+     *  - References = Message-ID da mensagem-raiz da thread;
      *  - X-Minutor-Fechamento-Id = "consultorId:yearMonth" para matching robusto de inbound futuro.
+     *
+     * O Illuminate\Mail\Mailables\Headers não tem campo dedicado para In-Reply-To,
+     * então adicionamos via `text:` (addTextHeader não envolve em <>; envolvemos aqui),
+     * garantindo exatamente um par de angle brackets.
      */
     public function headers(): Headers
     {
         $text = [];
         if ($this->threadKey) {
             $text['X-Minutor-Fechamento-Id'] = $this->threadKey;
+        }
+        if ($this->inReplyTo) {
+            $id = trim($this->inReplyTo, '<>');
+            $text['In-Reply-To'] = '<' . $id . '>';
         }
 
         return new Headers(

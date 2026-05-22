@@ -586,6 +586,9 @@ class ProjectController extends Controller
                     }
                 }
                 $project->children_consumption_breakdown = $childrenBreakdown;
+                // Decomposição p/ a UI "ver a conta": consumo próprio do pai + consumo dos filhos = total
+                $project->own_consumed_hours      = round($consumed + $initialConsumed, 2);
+                $project->children_consumed_hours = round($childrenConsumed, 2);
 
                 if ($project->isBankHoursMonthly()) {
                     // accumulated_sold_hours: usa valor do DB ou calcula meses × sold_hours

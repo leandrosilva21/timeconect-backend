@@ -56,7 +56,7 @@ class MovideskService
             $response = Http::timeout(5)->get("{$this->baseUrl()}/tickets", [
                 'token'   => $this->token(),
                 'id'      => $ticketId,
-                '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments,createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
+                '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
             ]);
 
             if ($response->successful()) {
@@ -88,7 +88,7 @@ class MovideskService
         $response = Http::timeout(30)->get("{$this->baseUrl()}/tickets", [
             'token'   => $this->token(),
             'id'      => $ticketId,
-            '$expand' => 'actions($expand=timeAppointments,createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
+            '$expand' => 'actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
         ]);
 
         if (!$response->successful()) {
@@ -439,6 +439,27 @@ class MovideskService
         if ($ownerTeam && in_array(trim($ownerTeam), self::BLOCKED_OWNER_TEAMS, true)) {
             Log::info('⛔ [MOVIDESK] Apontamento bloqueado (equipe não permitida)', [
                 'owner_team'              => $ownerTeam,
+                'ticket_id'               => $ticket['id'] ?? null,
+                'movidesk_appointment_id' => $appointmentId,
+            ]);
+            return false;
+        }
+
+        // Filtro PRINCIPAL: pela EQUIPE QUE APONTOU (quem lançou ESTE tempo). Promax também
+        // é CLIENTE — quando a NOSSA equipe aponta num ticket de cliente Promax, DEVE importar.
+        // Por isso não se olha o dono/equipe do ticket, e sim quem lançou o apontamento. O
+        // timeAppointment traz `createdByTeam` (nome da equipe) + `createdBy` (agente) de forma
+        // confiável no payload — sinal certo, diferente de /persons (que não traz team). Caso
+        // real: ticket 48072 com tempo lançado por Anderson @promax (equipe "Promax Bardahl")
+        // virou apontamento VEDAMOTORS porque esse filtro não existia (só checava o autor da
+        // AÇÃO, que pode ser ≠ de quem lançou o tempo).
+        $apptTeam  = $appointment['createdByTeam']['name'] ?? null;
+        $apptEmail = $appointment['createdBy']['email'] ?? null;
+        if (($apptTeam && stripos($apptTeam, 'promax') !== false)
+            || $this->isPromaxAgent($apptEmail, $apptTeam)) {
+            Log::info('⛔ [MOVIDESK] Apontamento descartado — quem lançou o tempo é Promax', [
+                'appt_team'               => $apptTeam,
+                'appt_email'              => $apptEmail,
                 'ticket_id'               => $ticket['id'] ?? null,
                 'movidesk_appointment_id' => $appointmentId,
             ]);

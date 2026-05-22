@@ -47,7 +47,7 @@
 
           {{-- ── HEADER ── --}}
           <tr>
-            <td class="pd-header" align="center" bgcolor="#FFFFFF"
+            <td class="pd-header" align="left" bgcolor="#FFFFFF"
               style="padding:36px 40px 28px;background-color:#FFFFFF;border-bottom:1px solid #E5E7EB;">
 
               {{-- Logo ERPSERV (centralizado, maior, com dark-mode swap) --}}
@@ -58,8 +58,8 @@
                 </div>
               </div>
 
-              {{-- Marca Minutor (secundária, menor, centralizada abaixo do logo) --}}
-              <table role="presentation" border="0" cellpadding="0" cellspacing="0" align="center" style="margin-top:20px;">
+              {{-- Marca Minutor (secundária, menor, alinhada à esquerda abaixo do logo) --}}
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" align="left" style="margin-top:20px;">
                 <tr>
                   <td style="vertical-align:middle;padding-right:10px;">
                     <table role="presentation" border="0" cellpadding="0" cellspacing="0">

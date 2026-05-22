@@ -26,6 +26,12 @@
       .pd-foot { padding: 18px 22px 28px !important; }
       .h1 { font-size: 22px !important; }
     }
+    @media (prefers-color-scheme: dark) {
+      .erp-light { display:none !important; }
+      .erp-dark  { display:inline-block !important; max-height:none !important; overflow:visible !important; }
+    }
+    [data-ogsc] .erp-light { display:none !important; }
+    [data-ogsc] .erp-dark  { display:inline-block !important; max-height:none !important; overflow:visible !important; }
   </style>
 </head>
 <body style="margin:0;padding:0;background-color:#F4F5F7;font-family:'Segoe UI',Arial,sans-serif;">
@@ -41,33 +47,32 @@
 
           {{-- ── HEADER ── --}}
           <tr>
-            <td class="pd-header" align="left" bgcolor="#FFFFFF"
+            <td class="pd-header" align="center" bgcolor="#FFFFFF"
               style="padding:36px 40px 28px;background-color:#FFFFFF;border-bottom:1px solid #E5E7EB;">
 
-              {{-- Logo ERPSERV --}}
-              <table role="presentation" border="0" cellpadding="0" cellspacing="0">
-                <tr>
-                  <td style="padding-bottom:22px;">
-                    <img src="https://app.minutor.com.br/logo.png" alt="ERPSERV Consultoria" height="36" style="display:block;height:36px;width:auto;border:0;" />
-                  </td>
-                </tr>
-              </table>
+              {{-- Logo ERPSERV (centralizado, maior, com dark-mode swap) --}}
+              <div style="text-align:center;">
+                <img src="https://app.minutor.com.br/logo.png" alt="ERPSERV Consultoria" width="200" class="erp-light" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
+                <div class="erp-dark" style="display:none;mso-hide:all;max-height:0;overflow:hidden;">
+                  <img src="https://app.minutor.com.br/logo-white.png" alt="ERPSERV Consultoria" width="200" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
+                </div>
+              </div>
 
-              {{-- Marca Minutor --}}
-              <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+              {{-- Marca Minutor (secundária, menor, centralizada abaixo do logo) --}}
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" align="center" style="margin-top:20px;">
                 <tr>
-                  <td style="vertical-align:middle;padding-right:14px;">
+                  <td style="vertical-align:middle;padding-right:10px;">
                     <table role="presentation" border="0" cellpadding="0" cellspacing="0">
                       <tr>
-                        <td align="center" bgcolor="#ECFEFF" style="width:38px;height:38px;border-radius:10px;background-color:#ECFEFF;border:1px solid #A5F0F7;vertical-align:middle;">
-                          <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHZpZXdCb3g9IjAgMCAyOCAyOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB4PSIyIiB5PSIxNS40IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjkiIHJ4PSIxLjYiIGZpbGw9IiMwMEM5REIiLz48cmVjdCB4PSI5LjEiIHk9IjkuNCIgd2lkdGg9IjQuMiIgaGVpZ2h0PSIxNSIgcng9IjEuNiIgZmlsbD0iIzAwQzlEQiIvPjxyZWN0IHg9IjE2LjIiIHk9IjQiIHdpZHRoPSI0LjIiIGhlaWdodD0iMjAiIHJ4PSIxLjYiIGZpbGw9IiMwMEM5REIiLz48cmVjdCB4PSIyMy4yIiB5PSIxMS42IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjEyIiByeD0iMS42IiBmaWxsPSIjMDBDOURCIi8+PC9zdmc+" alt="" width="20" height="20" style="display:inline-block;width:20px;height:20px;" />
+                        <td align="center" bgcolor="#ECFEFF" style="width:26px;height:26px;border-radius:8px;background-color:#ECFEFF;border:1px solid #A5F0F7;vertical-align:middle;">
+                          <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHZpZXdCb3g9IjAgMCAyOCAyOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB4PSIyIiB5PSIxNS40IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjkiIHJ4PSIxLjYiIGZpbGw9IiMwMEM5REIiLz48cmVjdCB4PSI5LjEiIHk9IjkuNCIgd2lkdGg9IjQuMiIgaGVpZ2h0PSIxNSIgcng9IjEuNiIgZmlsbD0iIzAwQzlEQiIvPjxyZWN0IHg9IjE2LjIiIHk9IjQiIHdpZHRoPSI0LjIiIGhlaWdodD0iMjAiIHJ4PSIxLjYiIGZpbGw9IiMwMEM5REIiLz48cmVjdCB4PSIyMy4yIiB5PSIxMS42IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjEyIiByeD0iMS42IiBmaWxsPSIjMDBDOURCIi8+PC9zdmc+" alt="" width="14" height="14" style="display:inline-block;width:14px;height:14px;" />
                         </td>
                       </tr>
                     </table>
                   </td>
-                  <td style="vertical-align:middle;">
-                    <div style="font-size:24px;font-weight:700;letter-spacing:-0.02em;color:#111827;line-height:1.05;">Minutor</div>
-                    <div style="margin-top:4px;font-size:13px;color:#6B7280;font-weight:400;">Controle de horas e contratos em um só lugar</div>
+                  <td style="vertical-align:middle;text-align:left;">
+                    <div style="font-size:16px;font-weight:700;letter-spacing:-0.01em;color:#111827;line-height:1.05;">Minutor</div>
+                    <div style="margin-top:2px;font-size:12px;color:#6B7280;font-weight:400;">Controle de horas e contratos em um só lugar</div>
                   </td>
                 </tr>
               </table>

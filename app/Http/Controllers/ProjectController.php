@@ -480,13 +480,13 @@ class ProjectController extends Controller
         $timesheetsMap = [];
         if (!empty($allIdsToSum)) {
             // DB::table bypassa SoftDeletes do Eloquent — precisa whereNull('deleted_at')
-            // explícito. E exclui mesmos status que os fechamentos (rejected,
-            // conflicted, adjustment_requested, internal) pra ficar consistente.
+            // explícito. Consumo = tudo apontado MENOS rejeitado/ajuste/conflito (inclui ação
+            // interna, pendente, aprovado, liberado). Regra do user 2026-05-22.
             $rows = DB::table('timesheets')
                 ->selectRaw('project_id, COALESCE(SUM(effort_minutes), 0) as total_logged_minutes')
                 ->whereIn('project_id', $allIdsToSum)
                 ->whereNull('deleted_at')
-                ->whereNotIn('status', ['rejected', 'conflicted', 'adjustment_requested', 'internal'])
+                ->whereNotIn('status', ['rejected', 'conflicted', 'adjustment_requested'])
                 ->groupBy('project_id')
                 ->pluck('total_logged_minutes', 'project_id');
             $timesheetsMap = $rows->toArray();

@@ -371,7 +371,13 @@ class FechamentoConsultorController extends Controller
         ]);
 
         try {
-            Storage::makeDirectory($dir);
+            // Cria a pasta REAL onde os arquivos são gravados/anexados (storage/app/fechamentos).
+            // No Laravel 11+ o disco 'local' aponta pra storage/app/private, então não dá pra
+            // usar Storage::makeDirectory($dir) aqui — gravamos via storage_path() direto.
+            $dirFull = storage_path("app/{$dir}");
+            if (!is_dir($dirFull)) {
+                mkdir($dirFull, 0775, true);
+            }
 
             // ── PDF ──
             $pdf = Pdf::loadView('pdf.fechamento-consultor', [
@@ -387,7 +393,8 @@ class FechamentoConsultorController extends Controller
 
             // ── XLSX ──
             $export = new FechamentoConsultorExport($rows, $effectiveRate, $consultant->name, $periodo, $totalValue);
-            Excel::store($export, $xlsxRelPath, 'local');
+            // Grava no mesmo path que o Mailable anexa (storage/app/fechamentos), não no disco 'local' (app/private).
+            file_put_contents($xlsxFullPath, Excel::raw($export, \Maatwebsite\Excel\Excel::XLSX));
 
             // ── E-mail ──
             $mailable = new FechamentoConsultorMail(

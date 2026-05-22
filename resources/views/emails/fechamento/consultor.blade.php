@@ -185,10 +185,7 @@
           {{-- ── RODAPÉ ── --}}
           <tr>
             <td class="pd-foot" align="left" bgcolor="#FFFFFF" style="padding:18px 40px 32px;background-color:#FFFFFF;">
-              <div style="font-size:12px;color:#6B7280;line-height:1.6;">
-                Em cópia: <span style="color:#4B5563;">{{ $financeiroCc }}</span>
-              </div>
-              <div style="margin-top:10px;font-size:11px;color:#9CA3AF;letter-spacing:0.02em;">
+              <div style="font-size:11px;color:#9CA3AF;letter-spacing:0.02em;">
                 &copy; {{ date('Y') }} ERPSERV Consultoria &middot; Todos os direitos reservados
               </div>
             </td>

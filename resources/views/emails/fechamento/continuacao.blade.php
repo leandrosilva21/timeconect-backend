@@ -23,11 +23,6 @@
               </div>
             </td>
           </tr>
-          @if(!empty($financeiroCc))
-          <tr>
-            <td style="padding-top:10px;font-size:11px;color:#9CA3AF;">Em cópia: {{ $financeiroCc }}</td>
-          </tr>
-          @endif
           <tr>
             <td style="padding-top:14px;font-size:11px;color:#9CA3AF;">Enviado via Minutor</td>
           </tr>

@@ -96,14 +96,14 @@
           {{-- ── VALOR TOTAL ── --}}
           <tr>
             <td bgcolor="#FFFFFF" style="padding:24px 40px 0;background-color:#FFFFFF;">
-              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="#ECFEFF"
-                style="background-color:#ECFEFF;border-radius:12px;border:1px solid #A5F0F7;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="#103A42"
+                style="background-color:#103A42;border-radius:12px;border:1px solid #1C5763;">
                 <tr>
                   <td style="padding:18px 22px;">
-                    <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#0E7490;">
+                    <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#5EEAD4;">
                       Valor total do fechamento
                     </div>
-                    <div style="margin-top:6px;font-size:28px;font-weight:800;color:#111827;letter-spacing:-0.01em;">
+                    <div style="margin-top:6px;font-size:28px;font-weight:800;color:#FFFFFF;letter-spacing:-0.01em;">
                       {{ $valorTotal }}
                     </div>
                   </td>
@@ -115,16 +115,16 @@
           {{-- ── ANEXOS ── --}}
           <tr>
             <td bgcolor="#FFFFFF" style="padding:18px 40px 0;background-color:#FFFFFF;">
-              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="#F9FAFB"
-                style="background-color:#F9FAFB;border-radius:10px;border:1px solid #E5E7EB;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="#1F2937"
+                style="background-color:#1F2937;border-radius:10px;border:1px solid #374151;">
                 <tr>
                   <td style="padding:14px 20px;">
                     <table role="presentation" border="0" cellpadding="0" cellspacing="0">
                       <tr>
                         <td style="vertical-align:middle;padding-right:12px;font-size:18px;line-height:1;">📎</td>
                         <td style="vertical-align:middle;">
-                          <div style="font-size:13px;color:#4B5563;line-height:1.5;">
-                            Os arquivos anexos (<strong style="color:#111827;">PDF</strong> e <strong style="color:#111827;">Excel</strong>)
+                          <div style="font-size:13px;color:#CBD5E1;line-height:1.5;">
+                            Os arquivos anexos (<strong style="color:#FFFFFF;">PDF</strong> e <strong style="color:#FFFFFF;">Excel</strong>)
                             contêm o detalhamento completo dos apontamentos considerados no período.
                           </div>
                         </td>

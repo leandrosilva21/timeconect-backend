@@ -44,13 +44,23 @@
             <td class="pd-header" align="left" bgcolor="#FFFFFF"
               style="padding:36px 40px 28px;background-color:#FFFFFF;border-bottom:1px solid #E5E7EB;">
 
+              {{-- Logo ERPSERV --}}
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="padding-bottom:22px;">
+                    <img src="https://app.minutor.com.br/logo.png" alt="ERPSERV Consultoria" height="36" style="display:block;height:36px;width:auto;border:0;" />
+                  </td>
+                </tr>
+              </table>
+
+              {{-- Marca Minutor --}}
               <table role="presentation" border="0" cellpadding="0" cellspacing="0">
                 <tr>
                   <td style="vertical-align:middle;padding-right:14px;">
                     <table role="presentation" border="0" cellpadding="0" cellspacing="0">
                       <tr>
-                        <td align="center" bgcolor="#F5F3FF" style="width:38px;height:38px;border-radius:10px;background-color:#F5F3FF;border:1px solid #E9D5FF;vertical-align:middle;">
-                          <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHZpZXdCb3g9IjAgMCAyOCAyOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB4PSIyIiB5PSIxNS40IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjkiIHJ4PSIxLjYiIGZpbGw9IiM3QzNBRUQiLz48cmVjdCB4PSI5LjEiIHk9IjkuNCIgd2lkdGg9IjQuMiIgaGVpZ2h0PSIxNSIgcng9IjEuNiIgZmlsbD0iIzdDM0FFRCIvPjxyZWN0IHg9IjE2LjIiIHk9IjQiIHdpZHRoPSI0LjIiIGhlaWdodD0iMjAiIHJ4PSIxLjYiIGZpbGw9IiM3QzNBRUQiLz48cmVjdCB4PSIyMy4yIiB5PSIxMS42IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjEyIiByeD0iMS42IiBmaWxsPSIjN0MzQUVEIi8+PC9zdmc+" alt="" width="20" height="20" style="display:inline-block;width:20px;height:20px;" />
+                        <td align="center" bgcolor="#ECFEFF" style="width:38px;height:38px;border-radius:10px;background-color:#ECFEFF;border:1px solid #A5F0F7;vertical-align:middle;">
+                          <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHZpZXdCb3g9IjAgMCAyOCAyOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB4PSIyIiB5PSIxNS40IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjkiIHJ4PSIxLjYiIGZpbGw9IiMwMEM5REIiLz48cmVjdCB4PSI5LjEiIHk9IjkuNCIgd2lkdGg9IjQuMiIgaGVpZ2h0PSIxNSIgcng9IjEuNiIgZmlsbD0iIzAwQzlEQiIvPjxyZWN0IHg9IjE2LjIiIHk9IjQiIHdpZHRoPSI0LjIiIGhlaWdodD0iMjAiIHJ4PSIxLjYiIGZpbGw9IiMwMEM5REIiLz48cmVjdCB4PSIyMy4yIiB5PSIxMS42IiB3aWR0aD0iNC4yIiBoZWlnaHQ9IjEyIiByeD0iMS42IiBmaWxsPSIjMDBDOURCIi8+PC9zdmc+" alt="" width="20" height="20" style="display:inline-block;width:20px;height:20px;" />
                         </td>
                       </tr>
                     </table>
@@ -68,7 +78,7 @@
           {{-- ── KICKER + TÍTULO ── --}}
           <tr>
             <td class="pd-main" align="left" bgcolor="#FFFFFF" style="padding:36px 40px 0;background-color:#FFFFFF;">
-              <div style="font-size:11px;letter-spacing:.18em;color:#7C3AED;font-weight:700;text-transform:uppercase;">Fechamento de Consultores</div>
+              <div style="font-size:11px;letter-spacing:.18em;color:#0E7490;font-weight:700;text-transform:uppercase;">Fechamento de Consultores</div>
               <h1 class="h1" style="margin:10px 0 4px;font-size:24px;font-weight:700;color:#111827;line-height:1.3;">
                 Olá, {{ $consultantName }}.
               </h1>
@@ -81,11 +91,11 @@
           {{-- ── VALOR TOTAL ── --}}
           <tr>
             <td bgcolor="#FFFFFF" style="padding:24px 40px 0;background-color:#FFFFFF;">
-              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="#F5F3FF"
-                style="background-color:#F5F3FF;border-radius:12px;border:1px solid #E9D5FF;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="#ECFEFF"
+                style="background-color:#ECFEFF;border-radius:12px;border:1px solid #A5F0F7;">
                 <tr>
                   <td style="padding:18px 22px;">
-                    <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#7C3AED;">
+                    <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#0E7490;">
                       Valor total do fechamento
                     </div>
                     <div style="margin-top:6px;font-size:28px;font-weight:800;color:#111827;letter-spacing:-0.01em;">

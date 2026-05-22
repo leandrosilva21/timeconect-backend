@@ -548,6 +548,45 @@ class ProjectController extends Controller
             if ($gestaoMode) {
                 // Modo leve: usar apenas campos já presentes na query, sem relações extras
                 $consumed = ($project->total_logged_minutes ?? 0) / 60;
+                $initialConsumed = (float)($project->initial_hours_consumed ?? 0);
+
+                // Consumo dos filhos comprometido no banco do pai, conforme o tipo do filho:
+                //  - Fechado / BH Fixo: comprometem sold_hours + aportes do filho (independe do consumo efetivo)
+                //  - On Demand: consome pelas horas EFETIVAMENTE lançadas no filho (sob demanda, sem saldo próprio)
+                // ANTES: On Demand era ignorado aqui e o ramo BH Mensal nem agregava filhos → filho On Demand
+                // não descontava do banco do pai. Detalhe por filho exposto em $childrenBreakdown p/ a UI.
+                $childrenConsumed = 0.0;
+                $childrenBreakdown = [];
+                if ($project->relationLoaded('childProjects')) {
+                    foreach ($project->childProjects as $child) {
+                        if ($child->isAusterFrozen()) continue;
+                        if (!$child->relationLoaded('contractType') || !$child->contractType) continue;
+                        $childCode = (string) ($child->contractType->code ?? '');
+                        $childName = strtolower(trim($child->contractType->name));
+                        $isClosed   = $childCode === 'closed'      || $childName === 'fechado';
+                        $isBhFixo   = $childCode === 'fixed_hours' || $childName === 'banco de horas fixo';
+                        $isOnDemand = $childCode === 'on_demand'   || $childName === 'on demand';
+                        $childConsumedHours = 0.0;
+                        if ($isClosed || $isBhFixo) {
+                            $childConsumedHours = (float) $child->getTotalAvailableHours();
+                        } elseif ($isOnDemand) {
+                            $childLoggedH = ($child->total_logged_minutes ?? 0) / 60;
+                            $childConsumedHours = round($childLoggedH + (float)($child->initial_hours_consumed ?? 0), 2);
+                        } else {
+                            continue;
+                        }
+                        $childrenConsumed += $childConsumedHours;
+                        $childrenBreakdown[] = [
+                            'id'             => $child->id,
+                            'code'           => $child->code,
+                            'name'           => $child->name,
+                            'contract_type'  => $child->contractType->name,
+                            'consumed_hours' => $childConsumedHours,
+                        ];
+                    }
+                }
+                $project->children_consumption_breakdown = $childrenBreakdown;
+
                 if ($project->isBankHoursMonthly()) {
                     // accumulated_sold_hours: usa valor do DB ou calcula meses × sold_hours
                     $dbAccum = $project->getRawOriginal('accumulated_sold_hours') ?? $project->accumulated_sold_hours;
@@ -565,36 +604,12 @@ class ProjectController extends Controller
                     $project->accumulated_sold_hours = $accumulatedHours;
                     // total_available_hours usa a relação eager-loaded para incluir aportes novos
                     $totalAvailable = $project->getTotalAvailableHours();
-                    // saldo usa o acumulado real; HS consumidas iniciais somadas às novas
-                    $initialConsumed = (float)($project->initial_hours_consumed ?? 0);
-                    $project->consumed_hours = round($consumed + $initialConsumed, 2);
                     $newContributions = $totalAvailable - ($project->sold_hours ?? 0);
-                    $project->general_hours_balance = round($accumulatedHours + $newContributions - $consumed - $initialConsumed, 2);
+                    // saldo usa o acumulado real; HS consumidas iniciais + novas + consumo dos filhos
+                    $project->consumed_hours = round($consumed + $initialConsumed + $childrenConsumed, 2);
+                    $project->general_hours_balance = round($accumulatedHours + $newContributions - $consumed - $initialConsumed - $childrenConsumed, 2);
                 } else {
-                    $initialConsumed = (float)($project->initial_hours_consumed ?? 0);
                     $totalAvailable = $project->getTotalAvailableHours();
-
-                    // Filhos comprometem horas do banco do pai conforme a regra do tipo:
-                    //  - Fechado:  compromete sold_hours + aportes do filho no ato da criação
-                    //  - BH Fixo:  compromete sold_hours + aportes (igual ao Fechado) — a
-                    //              alocação no filho reserva 100% das horas vendidas do
-                    //              saldo do pai, independente de consumo efetivo.
-                    //  - BH Mensal / On Demand: não podem ser filhos (bloqueado em attach)
-                    $childrenConsumed = 0.0;
-                    if ($project->relationLoaded('childProjects')) {
-                        foreach ($project->childProjects as $child) {
-                            if ($child->isAusterFrozen()) continue;
-                            if (!$child->relationLoaded('contractType') || !$child->contractType) continue;
-                            $childCode = (string) ($child->contractType->code ?? '');
-                            $childName = strtolower(trim($child->contractType->name));
-                            $isClosed   = $childCode === 'closed'      || $childName === 'fechado';
-                            $isBhFixo   = $childCode === 'fixed_hours' || $childName === 'banco de horas fixo';
-                            if ($isClosed || $isBhFixo) {
-                                $childrenConsumed += (float) $child->getTotalAvailableHours();
-                            }
-                        }
-                    }
-
                     $project->consumed_hours = round($consumed + $initialConsumed + $childrenConsumed, 2);
                     $project->general_hours_balance = round($totalAvailable - $consumed - $initialConsumed - $childrenConsumed, 2);
                 }

@@ -23,6 +23,10 @@ class FechamentoConsultorEmail extends Model
         'to_email',
         'cc_email',
         'subject',
+        'message_id',
+        'in_reply_to',
+        'body',
+        'is_continuation',
         'total_value',
         'pdf_path',
         'xlsx_path',
@@ -32,8 +36,9 @@ class FechamentoConsultorEmail extends Model
     ];
 
     protected $casts = [
-        'total_value' => 'decimal:2',
-        'sent_at'     => 'datetime',
+        'total_value'     => 'decimal:2',
+        'is_continuation' => 'boolean',
+        'sent_at'         => 'datetime',
     ];
 
     public function sender(): BelongsTo

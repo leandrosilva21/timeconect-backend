@@ -80,7 +80,23 @@
             </td>
           </tr>
 
+          {{-- ── TEXTO LIVRE (continuações da thread) ── --}}
+          @if(!empty($bodyText))
+          <tr>
+            <td class="pd-main" align="left" bgcolor="#FFFFFF" style="padding:36px 40px 0;background-color:#FFFFFF;">
+              @if(($isContinuation ?? false))
+                <div style="font-size:11px;letter-spacing:.18em;color:#0E7490;font-weight:700;text-transform:uppercase;">Fechamento de Consultores</div>
+                <h1 class="h1" style="margin:10px 0 4px;font-size:24px;font-weight:700;color:#111827;line-height:1.3;">
+                  Olá, {{ $consultantName }}.
+                </h1>
+              @endif
+              <div style="margin:12px 0 0;font-size:15px;color:#374151;line-height:1.65;white-space:pre-wrap;">{{ $bodyText }}</div>
+            </td>
+          </tr>
+          @endif
+
           {{-- ── KICKER + TÍTULO ── --}}
+          @if(!($isContinuation ?? false))
           <tr>
             <td class="pd-main" align="left" bgcolor="#FFFFFF" style="padding:36px 40px 0;background-color:#FFFFFF;">
               <div style="font-size:11px;letter-spacing:.18em;color:#0E7490;font-weight:700;text-transform:uppercase;">Fechamento de Consultores</div>
@@ -92,8 +108,10 @@
               </p>
             </td>
           </tr>
+          @endif
 
           {{-- ── VALOR TOTAL ── --}}
+          @if(!($isContinuation ?? false))
           <tr>
             <td bgcolor="#FFFFFF" style="padding:24px 40px 0;background-color:#FFFFFF;">
               <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="#103A42"
@@ -111,8 +129,10 @@
               </table>
             </td>
           </tr>
+          @endif
 
           {{-- ── ANEXOS ── --}}
+          @if(($withAttachments ?? true))
           <tr>
             <td bgcolor="#FFFFFF" style="padding:18px 40px 0;background-color:#FFFFFF;">
               <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="#1F2937"
@@ -135,6 +155,7 @@
               </table>
             </td>
           </tr>
+          @endif
 
           {{-- ── CORPO ── --}}
           <tr>

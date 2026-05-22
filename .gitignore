@@ -27,3 +27,5 @@ migrate*.load
 
 # Docker volumes
 docker/mysql/data/
+
+/public/storage

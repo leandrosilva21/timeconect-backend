@@ -16,6 +16,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Maatwebsite\Excel\Facades\Excel;
 
 class FechamentoConsultorController extends Controller
@@ -315,6 +316,81 @@ class FechamentoConsultorController extends Controller
         return $grupos;
     }
 
+    /** Message-ID determinístico-por-envio da thread de fechamento. */
+    private function buildMessageId(int|string $consultantId, string $yearMonth): string
+    {
+        return 'fech-' . $consultantId . '-' . $yearMonth . '-' . Str::uuid()->toString() . '@minutor.com.br';
+    }
+
+    /** Chave da thread usada no header X-Minutor-Fechamento-Id. */
+    private function threadKey(int|string $consultantId, string $yearMonth): string
+    {
+        return "{$consultantId}:{$yearMonth}";
+    }
+
+    /**
+     * Gera (PDF + XLSX) do fechamento do consultor e grava em storage/app/fechamentos.
+     * Reutilizado pelo envio original e pelas continuações que pedem anexo atualizado.
+     *
+     * @return array{
+     *   pdf_rel:string, xlsx_rel:string, pdf_full:string, xlsx_full:string,
+     *   pdf_name:string, xlsx_name:string, total_value:float
+     * }
+     */
+    private function generateFechamentoFiles(User $consultant, string $yearMonth): array
+    {
+        [$from, $to]   = $this->period($yearMonth);
+        $periodo       = $this->periodoExtenso($yearMonth);
+
+        $closing       = $this->computeConsultantClosing($consultant, $yearMonth);
+        $totalValue    = (float) $closing['total'];
+        $apont         = $this->buildApontamentosRows($consultant->id, $from, $to, $consultant);
+        $rows          = $apont['rows'];
+        $effectiveRate = (float) $apont['effective_rate'];
+
+        $safeName     = $this->sanitizeFilename($consultant->name);
+        $pdfFileName  = "Fechamento_{$yearMonth}_{$safeName}.pdf";
+        $xlsxFileName = "Fechamento_{$yearMonth}_{$safeName}.xlsx";
+        $dir          = 'fechamentos';
+        $pdfRelPath   = "{$dir}/{$pdfFileName}";
+        $xlsxRelPath  = "{$dir}/{$xlsxFileName}";
+        $pdfFullPath  = storage_path("app/{$pdfRelPath}");
+        $xlsxFullPath = storage_path("app/{$xlsxRelPath}");
+
+        // Cria a pasta REAL onde os arquivos são gravados/anexados (storage/app/fechamentos).
+        // No Laravel 11+ o disco 'local' aponta pra storage/app/private, então gravamos via storage_path() direto.
+        $dirFull = storage_path("app/{$dir}");
+        if (!is_dir($dirFull)) {
+            mkdir($dirFull, 0775, true);
+        }
+
+        // ── PDF ──
+        $pdf = Pdf::loadView('pdf.fechamento-consultor', [
+            'consultantName' => $consultant->name,
+            'periodo'        => $periodo,
+            'totalHorasFmt'  => $this->fmtHoras((float) $closing['horas_a_pagar']),
+            'taxaLabel'      => $closing['taxa_label'],
+            'taxaFmt'        => $this->brl((float) $closing['taxa_value']),
+            'valorTotal'     => $this->brl($totalValue),
+            'grupos'         => $this->buildPdfGroups($rows),
+        ])->setPaper('a4', 'portrait');
+        file_put_contents($pdfFullPath, $pdf->output());
+
+        // ── XLSX ──
+        $export = new FechamentoConsultorExport($rows, $effectiveRate, $consultant->name, $periodo, $totalValue);
+        file_put_contents($xlsxFullPath, Excel::raw($export, \Maatwebsite\Excel\Excel::XLSX));
+
+        return [
+            'pdf_rel'     => $pdfRelPath,
+            'xlsx_rel'    => $xlsxRelPath,
+            'pdf_full'    => $pdfFullPath,
+            'xlsx_full'   => $xlsxFullPath,
+            'pdf_name'    => $pdfFileName,
+            'xlsx_name'   => $xlsxFileName,
+            'total_value' => $totalValue,
+        ];
+    }
+
 
     // ─── Enviar fechamento por e-mail ───────────────────────────────────────────
     // Envia o fechamento do consultor por e-mail, com detalhamento em anexos (PDF + XLSX).
@@ -344,28 +420,18 @@ class FechamentoConsultorController extends Controller
             return response()->json(['success' => false, 'message' => 'Consultor sem e-mail cadastrado.'], 422);
         }
 
-        [$from, $to]  = $this->period($yearMonth);
         $periodo      = $this->periodoExtenso($yearMonth);
         $subject      = $request->input('subject')
             ?: 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Horas - ' . $consultant->name;
         $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
 
-        // Dados do fechamento
-        $closing      = $this->computeConsultantClosing($consultant, $yearMonth);
-        $totalValue   = (float) $closing['total'];
-        $apont        = $this->buildApontamentosRows($userId, $from, $to, $consultant);
-        $rows         = $apont['rows'];
-        $effectiveRate = (float) $apont['effective_rate'];
+        // Message-ID determinístico desta mensagem (raiz da thread) + chave da thread.
+        $messageId    = $this->buildMessageId($consultant->id, $yearMonth);
+        $threadKey    = $this->threadKey($consultant->id, $yearMonth);
 
-        // Nomes de arquivo
-        $safeName = $this->sanitizeFilename($consultant->name);
-        $pdfFileName  = "Fechamento_{$yearMonth}_{$safeName}.pdf";
-        $xlsxFileName = "Fechamento_{$yearMonth}_{$safeName}.xlsx";
-        $dir          = 'fechamentos';
-        $pdfRelPath   = "{$dir}/{$pdfFileName}";
-        $xlsxRelPath  = "{$dir}/{$xlsxFileName}";
-        $pdfFullPath  = storage_path("app/{$pdfRelPath}");
-        $xlsxFullPath = storage_path("app/{$xlsxRelPath}");
+        // Gera anexos (PDF + XLSX) — reutilizável (mesma geração das continuações).
+        $files        = $this->generateFechamentoFiles($consultant, $yearMonth);
+        $totalValue   = $files['total_value'];
 
         $log = new FechamentoConsultorEmail([
             'sender_user_id'     => $sender->id,
@@ -374,35 +440,13 @@ class FechamentoConsultorController extends Controller
             'to_email'           => $consultant->email,
             'cc_email'           => $financeiroCc ?: null,
             'subject'            => $subject,
+            'message_id'         => $messageId,
+            'in_reply_to'        => null,
+            'is_continuation'    => false,
             'total_value'        => $totalValue,
         ]);
 
         try {
-            // Cria a pasta REAL onde os arquivos são gravados/anexados (storage/app/fechamentos).
-            // No Laravel 11+ o disco 'local' aponta pra storage/app/private, então não dá pra
-            // usar Storage::makeDirectory($dir) aqui — gravamos via storage_path() direto.
-            $dirFull = storage_path("app/{$dir}");
-            if (!is_dir($dirFull)) {
-                mkdir($dirFull, 0775, true);
-            }
-
-            // ── PDF ──
-            $pdf = Pdf::loadView('pdf.fechamento-consultor', [
-                'consultantName' => $consultant->name,
-                'periodo'        => $periodo,
-                'totalHorasFmt'  => $this->fmtHoras((float) $closing['horas_a_pagar']),
-                'taxaLabel'      => $closing['taxa_label'],
-                'taxaFmt'        => $this->brl((float) $closing['taxa_value']),
-                'valorTotal'     => $this->brl($totalValue),
-                'grupos'         => $this->buildPdfGroups($rows),
-            ])->setPaper('a4', 'portrait');
-            file_put_contents($pdfFullPath, $pdf->output());
-
-            // ── XLSX ──
-            $export = new FechamentoConsultorExport($rows, $effectiveRate, $consultant->name, $periodo, $totalValue);
-            // Grava no mesmo path que o Mailable anexa (storage/app/fechamentos), não no disco 'local' (app/private).
-            file_put_contents($xlsxFullPath, Excel::raw($export, \Maatwebsite\Excel\Excel::XLSX));
-
             // ── E-mail ──
             $mailable = new FechamentoConsultorMail(
                 consultantName: $consultant->name,
@@ -411,16 +455,20 @@ class FechamentoConsultorController extends Controller
                 valorTotal:     $this->brl($totalValue),
                 financeiroCc:   $financeiroCc,
                 subjectLine:    $subject,
-                pdfPath:        $pdfFullPath,
-                xlsxPath:       $xlsxFullPath,
-                pdfFileName:    $pdfFileName,
-                xlsxFileName:   $xlsxFileName,
+                pdfPath:        $files['pdf_full'],
+                xlsxPath:       $files['xlsx_full'],
+                pdfFileName:    $files['pdf_name'],
+                xlsxFileName:   $files['xlsx_name'],
+                messageId:      $messageId,
+                references:     null,
+                threadKey:      $threadKey,
+                withAttachments: true,
             );
             Mail::to($consultant->email)->send($mailable);
 
             $log->fill([
-                'pdf_path'          => $pdfRelPath,
-                'xlsx_path'         => $xlsxRelPath,
+                'pdf_path'          => $files['pdf_rel'],
+                'xlsx_path'         => $files['xlsx_rel'],
                 'status'            => FechamentoConsultorEmail::STATUS_ENVIADO,
                 'provider_response' => null,
                 'sent_at'           => now(),
@@ -428,12 +476,12 @@ class FechamentoConsultorController extends Controller
 
             Log::info('Fechamento de consultor enviado por e-mail', [
                 'consultor' => $consultant->id, 'remetente' => $sender->id,
-                'pdf' => $pdfRelPath, 'xlsx' => $xlsxRelPath, 'total' => $totalValue,
+                'pdf' => $files['pdf_rel'], 'xlsx' => $files['xlsx_rel'], 'total' => $totalValue,
             ]);
         } catch (\Throwable $e) {
             $log->fill([
-                'pdf_path'          => is_file($pdfFullPath) ? $pdfRelPath : null,
-                'xlsx_path'         => is_file($xlsxFullPath) ? $xlsxRelPath : null,
+                'pdf_path'          => is_file($files['pdf_full']) ? $files['pdf_rel'] : null,
+                'xlsx_path'         => is_file($files['xlsx_full']) ? $files['xlsx_rel'] : null,
                 'status'            => FechamentoConsultorEmail::STATUS_FALHOU,
                 'provider_response' => $e->getMessage(),
                 'sent_at'           => null,
@@ -448,6 +496,165 @@ class FechamentoConsultorController extends Controller
         return response()->json([
             'success' => true,
             'message' => "Fechamento enviado para {$consultant->email}" . ($financeiroCc ? " (cópia: {$financeiroCc})" : '') . '.',
+        ]);
+    }
+
+    // ─── Thread (conversa do fechamento) ────────────────────────────────────────
+    // Lista todas as mensagens (envio original + continuações) de um consultor no período,
+    // ordenadas por sent_at/id. Fase 1 = só saída (outbound).
+    public function thread(Request $request, string $userId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
+        }
+
+        $messages = FechamentoConsultorEmail::with('sender:id,name')
+            ->where('consultant_user_id', $userId)
+            ->where('year_month', $yearMonth)
+            ->orderByRaw('sent_at IS NULL')      // enviados primeiro
+            ->orderBy('sent_at')
+            ->orderBy('id')
+            ->get()
+            ->map(fn (FechamentoConsultorEmail $m) => [
+                'id'              => $m->id,
+                'subject'         => $m->subject,
+                'body'            => $m->body,
+                'is_continuation' => (bool) $m->is_continuation,
+                'has_attachments' => (bool) ($m->pdf_path || $m->xlsx_path),
+                'sender_name'     => $m->sender?->name,
+                'to_email'        => $m->to_email,
+                'cc_email'        => $m->cc_email,
+                'status'          => $m->status,
+                'sent_at'         => optional($m->sent_at)->toIso8601String(),
+            ])
+            ->values();
+
+        return response()->json(['data' => $messages]);
+    }
+
+    // ─── Continuar a conversa (resposta na mesma thread) ────────────────────────
+    // Envia um follow-up THREADED (Re: + In-Reply-To/References da 1ª mensagem).
+    // From/CC iguais ao original (plano B). Anexar fechamento atualizado é opcional.
+    public function continuar(Request $request, string $userId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão para responder o fechamento.'], 403);
+        }
+        if (!$sender->email) {
+            return response()->json(['success' => false, 'message' => 'Seu usuário não tem e-mail cadastrado para usar como remetente.'], 422);
+        }
+
+        $validated = $request->validate([
+            'body'              => 'required|string',
+            'attach_fechamento' => 'nullable|boolean',
+        ]);
+        $bodyText        = (string) $validated['body'];
+        $attachFechamento = (bool) ($validated['attach_fechamento'] ?? false);
+
+        $consultant = User::find($userId);
+        if (!$consultant) {
+            return response()->json(['success' => false, 'message' => 'Consultor não encontrado.'], 404);
+        }
+        if (!$consultant->email) {
+            return response()->json(['success' => false, 'message' => 'Consultor sem e-mail cadastrado.'], 422);
+        }
+
+        // A thread precisa existir: tem que haver um envio original antes.
+        $original = FechamentoConsultorEmail::where('consultant_user_id', $userId)
+            ->where('year_month', $yearMonth)
+            ->where('is_continuation', false)
+            ->orderBy('sent_at')
+            ->orderBy('id')
+            ->first();
+
+        if (!$original) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Envie o fechamento original antes de continuar a conversa.',
+            ], 422);
+        }
+
+        $periodo      = $this->periodoExtenso($yearMonth);
+        $parentMsgId  = $original->message_id; // pode ser null em logs antigos; trata abaixo
+        $threadKey    = $this->threadKey($consultant->id, $yearMonth);
+        $messageId    = $this->buildMessageId($consultant->id, $yearMonth);
+        $financeiroCc = (string) ($original->cc_email ?? config('mail.financeiro_cc') ?? '');
+        $subject      = Str::startsWith($original->subject, 'Re: ')
+            ? $original->subject
+            : 'Re: ' . $original->subject;
+
+        // Anexos só se pedido — regenera (reusa a geração do envio original).
+        $files = null;
+        if ($attachFechamento) {
+            $files = $this->generateFechamentoFiles($consultant, $yearMonth);
+        }
+        $totalValue = $files['total_value'] ?? (float) $original->total_value;
+
+        $log = new FechamentoConsultorEmail([
+            'sender_user_id'     => $sender->id,
+            'consultant_user_id' => $consultant->id,
+            'year_month'         => $yearMonth,
+            'to_email'           => $consultant->email,
+            'cc_email'           => $financeiroCc ?: null,
+            'subject'            => $subject,
+            'message_id'         => $messageId,
+            'in_reply_to'        => $parentMsgId,
+            'body'               => $bodyText,
+            'is_continuation'    => true,
+            'total_value'        => $totalValue,
+        ]);
+
+        try {
+            $mailable = new FechamentoConsultorMail(
+                consultantName: $consultant->name,
+                senderName:     $sender->name,
+                periodo:        $periodo,
+                valorTotal:     $this->brl($totalValue),
+                financeiroCc:   $financeiroCc,
+                subjectLine:    $subject,
+                pdfPath:        $files['pdf_full']  ?? '',
+                xlsxPath:       $files['xlsx_full'] ?? '',
+                pdfFileName:    $files['pdf_name']  ?? '',
+                xlsxFileName:   $files['xlsx_name'] ?? '',
+                messageId:      $messageId,
+                references:     $parentMsgId,
+                threadKey:      $threadKey,
+                bodyText:       $bodyText,
+                isContinuation: true,
+                withAttachments: $attachFechamento,
+            );
+            Mail::to($consultant->email)->send($mailable);
+
+            $log->fill([
+                'pdf_path'          => $attachFechamento && $files ? $files['pdf_rel']  : null,
+                'xlsx_path'         => $attachFechamento && $files ? $files['xlsx_rel'] : null,
+                'status'            => FechamentoConsultorEmail::STATUS_ENVIADO,
+                'provider_response' => null,
+                'sent_at'           => now(),
+            ])->save();
+
+            Log::info('Continuação de fechamento de consultor enviada', [
+                'consultor' => $consultant->id, 'remetente' => $sender->id,
+                'in_reply_to' => $parentMsgId, 'message_id' => $messageId, 'anexo' => $attachFechamento,
+            ]);
+        } catch (\Throwable $e) {
+            $log->fill([
+                'status'            => FechamentoConsultorEmail::STATUS_FALHOU,
+                'provider_response' => $e->getMessage(),
+                'sent_at'           => null,
+            ])->save();
+
+            Log::error('Falha ao enviar continuação de fechamento de consultor', [
+                'consultor' => $consultant->id, 'remetente' => $sender->id, 'erro' => $e->getMessage(),
+            ]);
+            return response()->json(['success' => false, 'message' => 'Falha ao enviar a resposta: ' . $e->getMessage()], 500);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => "Resposta enviada para {$consultant->email}" . ($financeiroCc ? " (cópia: {$financeiroCc})" : '') . '.',
         ]);
     }
 

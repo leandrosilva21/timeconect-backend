@@ -46,6 +46,13 @@ class FechamentoConsultorController extends Controller
         return "{$nome} de {$year}";
     }
 
+    /** "05/2026" (MM/AAAA) — usado no assunto do e-mail. */
+    private function periodoMMAAAA(string $yearMonth): string
+    {
+        [$year, $month] = array_map('intval', explode('-', $yearMonth));
+        return sprintf('%02d/%04d', $month, $year);
+    }
+
     private function brl(float $value): string
     {
         return 'R$ ' . number_format($value, 2, ',', '.');
@@ -340,7 +347,7 @@ class FechamentoConsultorController extends Controller
         [$from, $to]  = $this->period($yearMonth);
         $periodo      = $this->periodoExtenso($yearMonth);
         $subject      = $request->input('subject')
-            ?: "Fechamento de Consultores — {$periodo} — {$consultant->name}";
+            ?: 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Horas - ' . $consultant->name;
         $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
 
         // Dados do fechamento

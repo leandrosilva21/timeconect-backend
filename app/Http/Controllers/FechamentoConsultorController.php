@@ -2,15 +2,22 @@
 
 namespace App\Http\Controllers;
 
+use App\Exports\FechamentoConsultorExport;
+use App\Mail\FechamentoConsultorMail;
+use App\Models\FechamentoConsultorEmail;
 use App\Models\Timesheet;
 use App\Models\User;
 use App\Models\UserHourlyRateLog;
 use App\Services\HourBankService;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Maatwebsite\Excel\Facades\Excel;
 
 class FechamentoConsultorController extends Controller
 {
@@ -30,10 +37,386 @@ class FechamentoConsultorController extends Controller
             : $hourlyRate;
     }
 
+    private const MESES = ['', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+
+    /** "Maio de 2026" */
+    private function periodoExtenso(string $yearMonth): string
+    {
+        [$year, $month] = array_map('intval', explode('-', $yearMonth));
+        $nome = ($month >= 1 && $month <= 12) ? self::MESES[$month] : $yearMonth;
+        return "{$nome} de {$year}";
+    }
+
+    /** "05/2026" (MM/AAAA) — usado no assunto do e-mail. */
+    private function periodoMMAAAA(string $yearMonth): string
+    {
+        [$year, $month] = array_map('intval', explode('-', $yearMonth));
+        return sprintf('%02d/%04d', $month, $year);
+    }
+
+    private function brl(float $value): string
+    {
+        return 'R$ ' . number_format($value, 2, ',', '.');
+    }
+
+    /** Formata horas decimais como HHhMM (ex.: 12.5 -> "12h30"). */
+    private function fmtHoras(float $h): string
+    {
+        $totalMins = abs((int) round($h * 60));
+        $hrs  = intdiv($totalMins, 60);
+        $mins = $totalMins % 60;
+        return sprintf('%dh%02d', $hrs, $mins);
+    }
+
+    /** Remove acentos/espaços/barras de um nome para uso em filename. */
+    private function sanitizeFilename(string $name): string
+    {
+        $ascii = @iconv('UTF-8', 'ASCII//TRANSLIT', $name);
+        if ($ascii === false) {
+            $ascii = $name;
+        }
+        $ascii = preg_replace('/[^A-Za-z0-9]+/', '_', $ascii);
+        return trim((string) $ascii, '_') ?: 'consultor';
+    }
+
+    /**
+     * Linhas de apontamento do consultor no mês — mesma forma do endpoint apontamentos().
+     * Usada tanto pela API quanto pela geração de PDF/XLSX no envio de e-mail.
+     */
+    private function buildApontamentosRows(string $userId, string $from, string $to, ?User $user = null): array
+    {
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
+
+        $user          = $user ?: User::find($userId, ['id', 'name', 'hourly_rate', 'rate_type', 'consultant_type']);
+        $isBancoHoras  = $user?->consultant_type === 'banco_de_horas';
+        $hist          = UserHourlyRateLog::effectiveValuesAt((int) $userId, $user, $from);
+        $effectiveRate = $this->effectiveHourlyRate(
+            (float) ($hist['hourly_rate'] ?? $user?->hourly_rate ?? 0),
+            $hist['rate_type'] ?? $user?->rate_type ?? 'hourly'
+        );
+
+        $rows = Timesheet::with([
+            'project:id,name,code,contract_type_id,customer_id',
+            'project.contractType:id,name,code',
+            'project.customer:id,name',
+        ])
+            ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_titulo', 'movidesk_tickets.solicitante as ticket_solicitante')
+            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+            ->where('timesheets.user_id', $userId)
+            ->whereBetween('timesheets.date', [$from, $to])
+            ->whereNotIn('timesheets.status', $excludeStatuses)
+            ->where('timesheets.is_billable_only', false)
+            ->where('timesheets.is_internal_action', false)
+            ->whereNull('timesheets.deleted_at')
+            ->orderBy('timesheets.date')
+            ->get()
+            ->map(function ($t) use ($effectiveRate, $isBancoHoras) {
+                $solicitanteRaw = $t->ticket_solicitante;
+                if (is_string($solicitanteRaw)) $solicitanteRaw = json_decode($solicitanteRaw, true);
+                $solicitante = is_array($solicitanteRaw) ? ($solicitanteRaw['name'] ?? null) : null;
+
+                $baseHoras = $t->effort_minutes / 60;
+                $pct       = $t->consultant_extra_pct ? (float) $t->consultant_extra_pct : null;
+                $horasEfetivas = ($isBancoHoras && $pct)
+                    ? round($baseHoras * (1 + $pct / 100), 2)
+                    : round($baseHoras, 2);
+
+                return [
+                    'id'                   => $t->id,
+                    'data'                 => $t->date->format('Y-m-d'),
+                    'start_time'           => $t->start_time,
+                    'end_time'             => $t->end_time,
+                    'projeto'              => $t->project->name ?? '—',
+                    'projeto_codigo'       => $t->project->code ?? '—',
+                    'cliente'              => $t->project->customer->name ?? '—',
+                    'tipo_contrato_code'   => $t->project?->contractType?->code ?? 'outros',
+                    'tipo_contrato_nome'   => $t->project?->contractType?->name ?? 'Outros',
+                    'horas'                => $horasEfetivas,
+                    'horas_base'           => round($baseHoras, 2),
+                    'status'               => $t->status,
+                    'ticket'               => $t->ticket,
+                    'titulo'               => $t->ticket_titulo,
+                    'solicitante'          => $solicitante,
+                    'observacao'           => $t->observation,
+                    'consultant_extra_pct' => $pct,
+                    'valor_extra'          => (!$isBancoHoras && $pct)
+                        ? round($baseHoras * $effectiveRate * ($pct / 100), 2)
+                        : null,
+                ];
+            })
+            ->toArray();
+
+        return ['rows' => $rows, 'effective_rate' => $effectiveRate, 'is_banco_horas' => $isBancoHoras];
+    }
+
+    /**
+     * Total a pagar de UM consultor no mês — mesma regra do index(), por tipo.
+     * Retorna ['total' => float, 'horas_a_pagar' => float, 'horas_trabalhadas' => float].
+     */
+    private function computeConsultantClosing(User $user, string $yearMonth): array
+    {
+        [$from, $to]    = $this->period($yearMonth);
+        [$year, $month] = array_map('intval', explode('-', $yearMonth));
+
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
+
+        $totalMinutes = (int) Timesheet::whereBetween('date', [$from, $to])
+            ->whereNotIn('status', $excludeStatuses)
+            ->whereNull('deleted_at')
+            ->where('is_billable_only', false)
+            ->where('is_internal_action', false)
+            ->where('user_id', $user->id)
+            ->sum('effort_minutes');
+
+        $extraTimesheets = Timesheet::whereBetween('date', [$from, $to])
+            ->whereNotIn('status', $excludeStatuses)
+            ->whereNull('deleted_at')
+            ->where('is_billable_only', false)
+            ->where('is_internal_action', false)
+            ->whereNotNull('consultant_extra_pct')
+            ->where('user_id', $user->id)
+            ->get(['effort_minutes', 'consultant_extra_pct']);
+
+        $hist          = UserHourlyRateLog::effectiveValuesAt($user->id, $user, $from);
+        $hourlyRate    = (float) ($hist['hourly_rate'] ?? 0);
+        $rateType      = $hist['rate_type'] ?? 'hourly';
+        $effectiveRate = $this->effectiveHourlyRate($hourlyRate, $rateType);
+        $horasTrabalhadas = round($totalMinutes / 60, 2);
+
+        $hourBankService  = app(HourBankService::class);
+        $workingDaysFull  = $hourBankService->calculateWorkingDays($year, $month);
+        $totalWorkingDays = $workingDaysFull['working_days'];
+
+        $startDate = $user->bank_hours_start_date
+            ? $user->bank_hours_start_date->format('Y-m-d')
+            : null;
+        $startIsInMonth = $startDate
+            && Carbon::parse($startDate)->year  === $year
+            && Carbon::parse($startDate)->month === $month;
+
+        if ($startIsInMonth) {
+            $workingDaysPeriod = $hourBankService->calculateWorkingDays($year, $month, $startDate);
+            $ratio = $totalWorkingDays > 0 ? round($workingDaysPeriod['working_days'] / $totalWorkingDays, 6) : 1;
+        } else {
+            $ratio = 1;
+        }
+
+        $extrasConsultant = round(
+            $extraTimesheets->sum(fn ($t) => ($t->effort_minutes / 60) * $effectiveRate * ((float) $t->consultant_extra_pct / 100)),
+            2
+        );
+
+        switch ($user->consultant_type) {
+            case 'horista':
+                $guaranteedHours    = (float) ($user->guaranteed_hours ?? 0);
+                $guaranteedProrated = $guaranteedHours > 0 ? round($guaranteedHours * $ratio, 2) : 0;
+                $horasMinimas       = $guaranteedProrated > 0 ? max($horasTrabalhadas, $guaranteedProrated) : $horasTrabalhadas;
+                return [
+                    'total'             => round($horasMinimas * $effectiveRate + $extrasConsultant, 2),
+                    'horas_a_pagar'     => $horasMinimas,
+                    'horas_trabalhadas' => $horasTrabalhadas,
+                    'effective_rate'    => $effectiveRate,
+                    'taxa_label'        => 'Valor/Hora',
+                    'taxa_value'        => $effectiveRate,
+                ];
+
+            case 'banco_de_horas':
+                $extraHoursForBank = round(
+                    $extraTimesheets->sum(fn ($t) => ($t->effort_minutes / 60) * ((float) $t->consultant_extra_pct / 100)),
+                    2
+                );
+                $calc = $hourBankService->calculateMonth(
+                    $user->id, $year, $month,
+                    (float) ($user->daily_hours ?? 8.0),
+                    $startDate, $extraHoursForBank
+                );
+                $valorHoraExtra = $hourlyRate > 0 ? round($hourlyRate / 180, 4) : 0;
+                $horasExtras    = $calc['paid_hours'];
+                $totalExtra     = round($horasExtras * $valorHoraExtra, 2);
+                return [
+                    'total'             => round($hourlyRate + $totalExtra, 2),
+                    'horas_a_pagar'     => $horasExtras,
+                    'horas_trabalhadas' => round($calc['worked_hours'] ?? $horasTrabalhadas, 2),
+                    'effective_rate'    => $valorHoraExtra,
+                    'taxa_label'        => 'Salário Mensal',
+                    'taxa_value'        => $hourlyRate,
+                ];
+
+            case 'fixo':
+                $salarioProportional = round($hourlyRate * $ratio, 2);
+                return [
+                    'total'             => round($salarioProportional + $extrasConsultant, 2),
+                    'horas_a_pagar'     => $horasTrabalhadas,
+                    'horas_trabalhadas' => $horasTrabalhadas,
+                    'effective_rate'    => $effectiveRate,
+                    'taxa_label'        => 'Salário Mensal',
+                    'taxa_value'        => $hourlyRate,
+                ];
+
+            default:
+                return [
+                    'total'             => round($horasTrabalhadas * $effectiveRate + $extrasConsultant, 2),
+                    'horas_a_pagar'     => $horasTrabalhadas,
+                    'horas_trabalhadas' => $horasTrabalhadas,
+                    'effective_rate'    => $effectiveRate,
+                    'taxa_label'        => 'Valor/Hora',
+                    'taxa_value'        => $effectiveRate,
+                ];
+        }
+    }
+
+    /** Agrupa as linhas por tipo de contrato → cliente, para o PDF. */
+    private function buildPdfGroups(array $rows): array
+    {
+        $byTipo = [];
+        foreach ($rows as $r) {
+            $byTipo[$r['tipo_contrato_nome'] ?? 'Outros'][] = $r;
+        }
+
+        $grupos = [];
+        foreach ($byTipo as $tipo => $items) {
+            $byCliente   = [];
+            $horasTipo   = 0.0;
+            foreach ($items as $r) {
+                $byCliente[$r['cliente'] ?? '—'][] = $r;
+                $horasTipo += (float) ($r['horas'] ?? 0);
+            }
+
+            $clientes = [];
+            foreach ($byCliente as $cliente => $linhasCliente) {
+                $horasCliente = 0.0;
+                $linhas = [];
+                foreach ($linhasCliente as $l) {
+                    $horasCliente += (float) ($l['horas'] ?? 0);
+                    $descricao = $l['observacao']
+                        ? trim(preg_replace('/\s+/', ' ', strip_tags((string) $l['observacao'])))
+                        : '';
+                    $linhas[] = [
+                        'data'      => isset($l['data']) ? Carbon::parse($l['data'])->format('d/m/Y') : '',
+                        'projeto'   => $l['projeto'] ?? '—',
+                        'ticket'    => $l['ticket'] ?? '',
+                        'descricao' => $descricao,
+                        'horas_fmt' => $this->fmtHoras((float) ($l['horas'] ?? 0)),
+                    ];
+                }
+                $clientes[] = [
+                    'nome'      => $cliente,
+                    'linhas'    => $linhas,
+                    'horas_fmt' => $this->fmtHoras($horasCliente),
+                ];
+            }
+
+            $grupos[] = [
+                'tipo'      => $tipo,
+                'clientes'  => $clientes,
+                'horas_fmt' => $this->fmtHoras($horasTipo),
+            ];
+        }
+
+        return $grupos;
+    }
+
+    /** Message-ID determinístico-por-envio da thread de fechamento. */
+    private function buildMessageId(int|string $consultantId, string $yearMonth): string
+    {
+        return 'fech-' . $consultantId . '-' . $yearMonth . '-' . Str::uuid()->toString() . '@minutor.com.br';
+    }
+
+    /** Chave da thread usada no header X-Minutor-Fechamento-Id. */
+    private function threadKey(int|string $consultantId, string $yearMonth): string
+    {
+        return "{$consultantId}:{$yearMonth}";
+    }
+
+    /**
+     * Raiz canônica da thread de um consultor+período: a 1ª linha (por id) que tenha
+     * message_id não-nulo. É o Message-ID que todas as demais mensagens (reenvios e
+     * continuações) referenciam via In-Reply-To/References para threadar no Outlook/Gmail.
+     * Retorna null se ainda não houver nenhuma mensagem com message_id (thread inexistente).
+     */
+    private function threadRoot(int|string $consultantId, string $yearMonth): ?FechamentoConsultorEmail
+    {
+        return FechamentoConsultorEmail::where('consultant_user_id', $consultantId)
+            ->where('year_month', $yearMonth)
+            ->whereNotNull('message_id')
+            ->orderBy('id')
+            ->first();
+    }
+
+    /**
+     * Gera (PDF + XLSX) do fechamento do consultor e grava em storage/app/fechamentos.
+     * Reutilizado pelo envio original e pelas continuações que pedem anexo atualizado.
+     *
+     * @return array{
+     *   pdf_rel:string, xlsx_rel:string, pdf_full:string, xlsx_full:string,
+     *   pdf_name:string, xlsx_name:string, total_value:float
+     * }
+     */
+    private function generateFechamentoFiles(User $consultant, string $yearMonth): array
+    {
+        [$from, $to]   = $this->period($yearMonth);
+        $periodo       = $this->periodoExtenso($yearMonth);
+
+        $closing       = $this->computeConsultantClosing($consultant, $yearMonth);
+        $totalValue    = (float) $closing['total'];
+        $apont         = $this->buildApontamentosRows($consultant->id, $from, $to, $consultant);
+        $rows          = $apont['rows'];
+        $effectiveRate = (float) $apont['effective_rate'];
+
+        $safeName     = $this->sanitizeFilename($consultant->name);
+        $pdfFileName  = "Fechamento_{$yearMonth}_{$safeName}.pdf";
+        $xlsxFileName = "Fechamento_{$yearMonth}_{$safeName}.xlsx";
+        $dir          = 'fechamentos';
+        $pdfRelPath   = "{$dir}/{$pdfFileName}";
+        $xlsxRelPath  = "{$dir}/{$xlsxFileName}";
+        $pdfFullPath  = storage_path("app/{$pdfRelPath}");
+        $xlsxFullPath = storage_path("app/{$xlsxRelPath}");
+
+        // Cria a pasta REAL onde os arquivos são gravados/anexados (storage/app/fechamentos).
+        // No Laravel 11+ o disco 'local' aponta pra storage/app/private, então gravamos via storage_path() direto.
+        $dirFull = storage_path("app/{$dir}");
+        if (!is_dir($dirFull)) {
+            mkdir($dirFull, 0775, true);
+        }
+
+        // ── PDF ──
+        $pdf = Pdf::loadView('pdf.fechamento-consultor', [
+            'consultantName' => $consultant->name,
+            'periodo'        => $periodo,
+            'totalHorasFmt'  => $this->fmtHoras((float) $closing['horas_a_pagar']),
+            'taxaLabel'      => $closing['taxa_label'],
+            'taxaFmt'        => $this->brl((float) $closing['taxa_value']),
+            'valorTotal'     => $this->brl($totalValue),
+            'grupos'         => $this->buildPdfGroups($rows),
+        ])->setPaper('a4', 'portrait');
+        file_put_contents($pdfFullPath, $pdf->output());
+
+        // ── XLSX ──
+        $export = new FechamentoConsultorExport($rows, $effectiveRate, $consultant->name, $periodo, $totalValue);
+        file_put_contents($xlsxFullPath, Excel::raw($export, \Maatwebsite\Excel\Excel::XLSX));
+
+        return [
+            'pdf_rel'     => $pdfRelPath,
+            'xlsx_rel'    => $xlsxRelPath,
+            'pdf_full'    => $pdfFullPath,
+            'xlsx_full'   => $xlsxFullPath,
+            'pdf_name'    => $pdfFileName,
+            'xlsx_name'   => $xlsxFileName,
+            'total_value' => $totalValue,
+        ];
+    }
+
+
+    /** Mensagem padrão (corpo) do e-mail de fechamento — editável na tela antes de enviar. */
+    private function defaultMensagem(string $periodo): string
+    {
+        return "Segue em anexo o fechamento referente ao período de {$periodo}.\n\nEm caso de dúvidas ou divergências, por gentileza entrar em contato.";
+    }
+
     // ─── Enviar fechamento por e-mail ───────────────────────────────────────────
-    // Envia o relatório de fechamento do consultor por e-mail.
-    // De = conta autenticada (mail.from) com o NOME do usuário logado; Reply-To = usuário
-    // (entrega sempre, sem depender de Send As). To = consultor, CC = financeiro.
+    // Envia o fechamento do consultor por e-mail, com detalhamento em anexos (PDF + XLSX).
+    // De = conta autenticada (mail.from) com o NOME do usuário logado (sem Send As).
+    // Reply-To = financeiro; CC = financeiro; To = consultor. O corpo é minimalista.
     public function enviarEmail(Request $request, string $userId, string $yearMonth): JsonResponse
     {
         $sender = $request->user();
@@ -44,9 +427,11 @@ class FechamentoConsultorController extends Controller
             return response()->json(['success' => false, 'message' => 'Seu usuário não tem e-mail cadastrado para usar como remetente.'], 422);
         }
 
-        $data = $request->validate([
-            'html'    => 'required|string',
-            'subject' => 'nullable|string',
+        // 'html' aceito por retrocompatibilidade do front, mas ignorado.
+        $request->validate([
+            'html'     => 'nullable|string',
+            'subject'  => 'nullable|string',
+            'mensagem' => 'nullable|string', // corpo editável; vazio = mensagem padrão
         ]);
 
         $consultant = User::find($userId);
@@ -57,26 +442,93 @@ class FechamentoConsultorController extends Controller
             return response()->json(['success' => false, 'message' => 'Consultor sem e-mail cadastrado.'], 422);
         }
 
-        [$year, $month] = array_map('intval', explode('-', $yearMonth));
-        $meses   = ['', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-        $periodo = (($month >= 1 && $month <= 12) ? $meses[$month] : $yearMonth) . " de {$year}";
-        $subject = $data['subject'] ?? "Fechamento de Consultores — {$periodo} — {$consultant->name}";
+        $periodo      = $this->periodoExtenso($yearMonth);
+        $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
+        // Corpo editável (texto livre); vazio = mensagem padrão.
+        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo);
 
-        $financeiroCc = config('mail.financeiro_cc');
+        // Message-ID determinístico DESTA mensagem (sempre persistido) + chave da thread.
+        $messageId    = $this->buildMessageId($consultant->id, $yearMonth);
+        $threadKey    = $this->threadKey($consultant->id, $yearMonth);
+
+        // Uma única thread por (consultor, período). Se já existe uma raiz canônica,
+        // este "envio" é na verdade um REENVIO: threada na raiz (mesmo assunto + In-Reply-To),
+        // em vez de virar um e-mail novo. Sem raiz = primeiro envio (cria a thread).
+        $root         = $this->threadRoot($consultant->id, $yearMonth);
+        $isResend     = $root !== null;
+
+        if ($isResend) {
+            // Reenvio: MESMO assunto da raiz (sem "Re:") + In-Reply-To/References da raiz.
+            $subject  = $root->subject;
+            $inReplyTo = $root->message_id;
+        } else {
+            // Primeiro envio: assunto gerado, raiz da thread (sem pai).
+            $subject  = $request->input('subject')
+                ?: 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Horas - ' . $consultant->name;
+            $inReplyTo = null;
+        }
+
+        // Gera anexos (PDF + XLSX) — reutilizável (mesma geração das continuações).
+        $files        = $this->generateFechamentoFiles($consultant, $yearMonth);
+        $totalValue   = $files['total_value'];
+
+        $log = new FechamentoConsultorEmail([
+            'sender_user_id'     => $sender->id,
+            'consultant_user_id' => $consultant->id,
+            'year_month'         => $yearMonth,
+            'to_email'           => $consultant->email,
+            'cc_email'           => $financeiroCc ?: null,
+            'subject'            => $subject,
+            'message_id'         => $messageId,
+            'in_reply_to'        => $inReplyTo,
+            'is_continuation'    => false,
+            'total_value'        => $totalValue,
+        ]);
 
         try {
-            Mail::html($data['html'], function ($message) use ($sender, $consultant, $financeiroCc, $subject) {
-                // De = "Nome do usuário <conta autenticada>" (mail.from), Reply-To = usuário.
-                // Sem Send As: a conta envia "como ela mesma", só o nome exibido é o do usuário.
-                $message->from(config('mail.from.address'), $sender->name)
-                        ->replyTo($sender->email, $sender->name)
-                        ->to($consultant->email, $consultant->name)
-                        ->subject($subject);
-                if ($financeiroCc) {
-                    $message->cc($financeiroCc);
-                }
-            });
+            // ── E-mail ──
+            $mailable = new FechamentoConsultorMail(
+                consultantName: $consultant->name,
+                senderName:     $sender->name,
+                periodo:        $periodo,
+                valorTotal:     $this->brl($totalValue),
+                financeiroCc:   $financeiroCc,
+                subjectLine:    $subject,
+                pdfPath:        $files['pdf_full'],
+                xlsxPath:       $files['xlsx_full'],
+                pdfFileName:    $files['pdf_name'],
+                xlsxFileName:   $files['xlsx_name'],
+                messageId:      $messageId,
+                references:     $inReplyTo,
+                inReplyTo:      $inReplyTo,
+                threadKey:      $threadKey,
+                withAttachments: true,
+                senderEmail:    $sender->email, // Reply-To = quem enviou (trata a resposta no Outlook)
+                mensagem:       $mensagem,
+            );
+            Mail::to($consultant->email)->send($mailable);
+
+            $log->fill([
+                'pdf_path'          => $files['pdf_rel'],
+                'xlsx_path'         => $files['xlsx_rel'],
+                'status'            => FechamentoConsultorEmail::STATUS_ENVIADO,
+                'provider_response' => null,
+                'sent_at'           => now(),
+            ])->save();
+
+            Log::info('Fechamento de consultor enviado por e-mail', [
+                'consultor' => $consultant->id, 'remetente' => $sender->id,
+                'pdf' => $files['pdf_rel'], 'xlsx' => $files['xlsx_rel'], 'total' => $totalValue,
+            ]);
         } catch (\Throwable $e) {
+            $log->fill([
+                'pdf_path'          => is_file($files['pdf_full']) ? $files['pdf_rel'] : null,
+                'xlsx_path'         => is_file($files['xlsx_full']) ? $files['xlsx_rel'] : null,
+                'status'            => FechamentoConsultorEmail::STATUS_FALHOU,
+                'provider_response' => $e->getMessage(),
+                'sent_at'           => null,
+            ])->save();
+
             Log::error('Falha ao enviar fechamento de consultor por e-mail', [
                 'consultor' => $consultant->id, 'remetente' => $sender->id, 'erro' => $e->getMessage(),
             ]);
@@ -86,6 +538,282 @@ class FechamentoConsultorController extends Controller
         return response()->json([
             'success' => true,
             'message' => "Fechamento enviado para {$consultant->email}" . ($financeiroCc ? " (cópia: {$financeiroCc})" : '') . '.',
+        ]);
+    }
+
+    // ─── Download do Excel (XLSX) do fechamento ─────────────────────────────────
+    // Mesmo XLSX que vai como anexo no e-mail, baixável direto pela tela do relatório.
+    public function excel(Request $request, string $userId, string $yearMonth)
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
+        }
+        $consultant = User::find($userId);
+        if (!$consultant) {
+            return response()->json(['success' => false, 'message' => 'Consultor não encontrado.'], 404);
+        }
+
+        [$from, $to] = $this->period($yearMonth);
+        $periodo  = $this->periodoExtenso($yearMonth);
+        $closing  = $this->computeConsultantClosing($consultant, $yearMonth);
+        $apont    = $this->buildApontamentosRows($consultant->id, $from, $to, $consultant);
+        $export   = new FechamentoConsultorExport(
+            $apont['rows'], (float) $apont['effective_rate'], $consultant->name, $periodo, (float) $closing['total']
+        );
+        $fileName = "Fechamento_{$yearMonth}_" . $this->sanitizeFilename($consultant->name) . ".xlsx";
+
+        return Excel::download($export, $fileName);
+    }
+
+    // ─── Prévia do e-mail (template real) com a mensagem editável ───────────────
+    // Renderiza o MESMO template do envio, pra mostrar na tela e atualizar ao vivo
+    // conforme o admin edita a mensagem. Retorna o HTML + a mensagem padrão (1ª carga).
+    public function emailPreview(Request $request, string $userId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
+        }
+        $consultant = User::find($userId);
+        if (!$consultant) {
+            return response()->json(['success' => false, 'message' => 'Consultor não encontrado.'], 404);
+        }
+
+        $periodo        = $this->periodoExtenso($yearMonth);
+        $closing        = $this->computeConsultantClosing($consultant, $yearMonth);
+        $mensagemPadrao = $this->defaultMensagem($periodo);
+        $mensagem       = trim((string) $request->input('mensagem'));
+        $mensagem       = $mensagem !== '' ? $mensagem : $mensagemPadrao;
+
+        $html = view('emails.fechamento.consultor', [
+            'consultantName'  => $consultant->name,
+            'senderName'      => $sender->name,
+            'periodo'         => $periodo,
+            'valorTotal'      => $this->brl((float) $closing['total']),
+            'financeiroCc'    => (string) (config('mail.financeiro_cc') ?? ''),
+            'bodyText'        => null,
+            'isContinuation'  => false,
+            'withAttachments' => true,
+            'mensagem'        => $mensagem,
+        ])->render();
+
+        // Prévia só: força o logo claro (escuro-colorido) a aparecer no card branco —
+        // o swap de dark-mode do template trocaria pro logo branco (invisível aqui).
+        $override = '<style>.erp-light{display:inline-block !important}.erp-dark{display:none !important}</style>';
+        $html = str_ireplace('</head>', $override . '</head>', $html);
+
+        return response()->json(['html' => $html, 'mensagem_padrao' => $mensagemPadrao]);
+    }
+
+    // ─── Thread (conversa do fechamento) ────────────────────────────────────────
+    // Lista todas as mensagens de um consultor no período — saída (outbound: original +
+    // continuações) E entrada (inbound: respostas lidas via Graph) — em ordem cronológica.
+    public function thread(Request $request, string $userId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
+        }
+
+        return response()->json([
+            'data'          => $this->threadMessages($userId, $yearMonth),
+            'graph_enabled' => app(\App\Services\GraphMailService::class)->isConfigured(),
+        ]);
+    }
+
+    // ─── Atualizar / puxar respostas agora (botão "Atualizar" da conversa) ───────
+    // Dispara a leitura da caixa do noreply (Graph) na hora e devolve a thread já atualizada.
+    // Em prod o scheduler já roda de 5 em 5 min; este endpoint é o "puxar agora".
+    public function syncInbox(Request $request, string $userId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
+        }
+
+        $graph    = app(\App\Services\GraphMailService::class);
+        $enabled  = $graph->isConfigured();
+        $imported = 0;
+        if ($enabled) {
+            try {
+                \Illuminate\Support\Facades\Artisan::call('fechamento:poll-inbox');
+                if (preg_match('/importadas:\s*(\d+)/i', \Illuminate\Support\Facades\Artisan::output(), $mm)) {
+                    $imported = (int) $mm[1];
+                }
+            } catch (\Throwable $e) {
+                Log::warning('syncInbox: falha ao puxar respostas', ['erro' => $e->getMessage()]);
+            }
+        }
+
+        return response()->json([
+            'data'          => $this->threadMessages($userId, $yearMonth),
+            'graph_enabled' => $enabled,
+            'imported'      => $imported,
+        ]);
+    }
+
+    /** Mensagens da thread (saída + entrada) em ordem cronológica — payload compartilhado. */
+    private function threadMessages(string $userId, string $yearMonth): \Illuminate\Support\Collection
+    {
+        return FechamentoConsultorEmail::with('sender:id,name')
+            ->where('consultant_user_id', $userId)
+            ->where('year_month', $yearMonth)
+            ->orderByRaw('COALESCE(sent_at, received_at, created_at) ASC') // cronológico (in + out)
+            ->orderBy('id')
+            ->get()
+            ->map(function (FechamentoConsultorEmail $m) {
+                $isInbound = $m->direction === FechamentoConsultorEmail::DIRECTION_INBOUND;
+                $at        = $m->sent_at ?: $m->received_at;
+                return [
+                    'id'              => $m->id,
+                    'direction'       => $m->direction ?: FechamentoConsultorEmail::DIRECTION_OUTBOUND,
+                    'is_inbound'      => $isInbound,
+                    'subject'         => $m->subject,
+                    'body'            => $m->body,
+                    'is_continuation' => (bool) $m->is_continuation,
+                    'has_attachments' => (bool) ($m->pdf_path || $m->xlsx_path),
+                    // Inbound = remetente é o consultor (from_email); outbound = usuário logado.
+                    'sender_name'     => $isInbound ? ($m->from_email ?: 'Consultor') : $m->sender?->name,
+                    'from_email'      => $m->from_email,
+                    'to_email'        => $m->to_email,
+                    'cc_email'        => $m->cc_email,
+                    'status'          => $m->status,
+                    'sent_at'         => optional($m->sent_at)->toIso8601String(),
+                    'received_at'     => optional($m->received_at)->toIso8601String(),
+                    'at'              => optional($at)->toIso8601String(),
+                ];
+            })
+            ->values();
+    }
+
+    // ─── Continuar a conversa (resposta na mesma thread) ────────────────────────
+    // Envia um follow-up THREADED (Re: + In-Reply-To/References da 1ª mensagem).
+    // From/CC iguais ao original (plano B). Anexar fechamento atualizado é opcional.
+    public function continuar(Request $request, string $userId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão para responder o fechamento.'], 403);
+        }
+        if (!$sender->email) {
+            return response()->json(['success' => false, 'message' => 'Seu usuário não tem e-mail cadastrado para usar como remetente.'], 422);
+        }
+
+        $validated = $request->validate([
+            'body'              => 'required|string',
+            'attach_fechamento' => 'nullable|boolean',
+        ]);
+        $bodyText        = (string) $validated['body'];
+        $attachFechamento = (bool) ($validated['attach_fechamento'] ?? false);
+
+        $consultant = User::find($userId);
+        if (!$consultant) {
+            return response()->json(['success' => false, 'message' => 'Consultor não encontrado.'], 404);
+        }
+        if (!$consultant->email) {
+            return response()->json(['success' => false, 'message' => 'Consultor sem e-mail cadastrado.'], 422);
+        }
+
+        // Raiz canônica da thread (1ª linha com message_id). É nela que a continuação
+        // se pendura via In-Reply-To/References, garantindo UMA conversa no Outlook/Gmail.
+        $root = $this->threadRoot($userId, $yearMonth);
+
+        // Fallback gracioso p/ logs antigos sem message_id: usa o 1º envio original.
+        $original = $root ?: FechamentoConsultorEmail::where('consultant_user_id', $userId)
+            ->where('year_month', $yearMonth)
+            ->where('is_continuation', false)
+            ->orderBy('sent_at')
+            ->orderBy('id')
+            ->first();
+
+        if (!$original) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Envie o fechamento original antes de continuar a conversa.',
+            ], 422);
+        }
+
+        $periodo      = $this->periodoExtenso($yearMonth);
+        $parentMsgId  = $original->message_id; // raiz; pode ser null em logs antigos (fallback)
+        $threadKey    = $this->threadKey($consultant->id, $yearMonth);
+        $messageId    = $this->buildMessageId($consultant->id, $yearMonth);
+        $financeiroCc = (string) ($original->cc_email ?? config('mail.financeiro_cc') ?? '');
+        $subject      = Str::startsWith($original->subject, 'Re: ')
+            ? $original->subject
+            : 'Re: ' . $original->subject;
+
+        // Anexos só se pedido — regenera (reusa a geração do envio original).
+        $files = null;
+        if ($attachFechamento) {
+            $files = $this->generateFechamentoFiles($consultant, $yearMonth);
+        }
+        $totalValue = $files['total_value'] ?? (float) $original->total_value;
+
+        $log = new FechamentoConsultorEmail([
+            'sender_user_id'     => $sender->id,
+            'consultant_user_id' => $consultant->id,
+            'year_month'         => $yearMonth,
+            'to_email'           => $consultant->email,
+            'cc_email'           => $financeiroCc ?: null,
+            'subject'            => $subject,
+            'message_id'         => $messageId,
+            'in_reply_to'        => $parentMsgId,
+            'body'               => $bodyText,
+            'is_continuation'    => true,
+            'total_value'        => $totalValue,
+        ]);
+
+        try {
+            $mailable = new FechamentoConsultorMail(
+                consultantName: $consultant->name,
+                senderName:     $sender->name,
+                periodo:        $periodo,
+                valorTotal:     $this->brl($totalValue),
+                financeiroCc:   $financeiroCc,
+                subjectLine:    $subject,
+                pdfPath:        $files['pdf_full']  ?? '',
+                xlsxPath:       $files['xlsx_full'] ?? '',
+                pdfFileName:    $files['pdf_name']  ?? '',
+                xlsxFileName:   $files['xlsx_name'] ?? '',
+                messageId:      $messageId,
+                references:     $parentMsgId,
+                inReplyTo:      $parentMsgId,
+                threadKey:      $threadKey,
+                bodyText:       $bodyText,
+                isContinuation: true,
+                withAttachments: $attachFechamento,
+            );
+            Mail::to($consultant->email)->send($mailable);
+
+            $log->fill([
+                'pdf_path'          => $attachFechamento && $files ? $files['pdf_rel']  : null,
+                'xlsx_path'         => $attachFechamento && $files ? $files['xlsx_rel'] : null,
+                'status'            => FechamentoConsultorEmail::STATUS_ENVIADO,
+                'provider_response' => null,
+                'sent_at'           => now(),
+            ])->save();
+
+            Log::info('Continuação de fechamento de consultor enviada', [
+                'consultor' => $consultant->id, 'remetente' => $sender->id,
+                'in_reply_to' => $parentMsgId, 'message_id' => $messageId, 'anexo' => $attachFechamento,
+            ]);
+        } catch (\Throwable $e) {
+            $log->fill([
+                'status'            => FechamentoConsultorEmail::STATUS_FALHOU,
+                'provider_response' => $e->getMessage(),
+                'sent_at'           => null,
+            ])->save();
+
+            Log::error('Falha ao enviar continuação de fechamento de consultor', [
+                'consultor' => $consultant->id, 'remetente' => $sender->id, 'erro' => $e->getMessage(),
+            ]);
+            return response()->json(['success' => false, 'message' => 'Falha ao enviar a resposta: ' . $e->getMessage()], 500);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => "Resposta enviada para {$consultant->email}" . ($financeiroCc ? " (cópia: {$financeiroCc})" : '') . '.',
         ]);
     }
 
@@ -290,69 +1018,9 @@ class FechamentoConsultorController extends Controller
     public function apontamentos(string $userId, string $yearMonth): JsonResponse
     {
         [$from, $to] = $this->period($yearMonth);
+        $apont = $this->buildApontamentosRows($userId, $from, $to);
 
-        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
-
-        $user          = User::find($userId, ['id', 'name', 'hourly_rate', 'rate_type', 'consultant_type']);
-        $isBancoHoras  = $user?->consultant_type === 'banco_de_horas';
-        $hist          = UserHourlyRateLog::effectiveValuesAt((int) $userId, $user, $from);
-        $effectiveRate = $this->effectiveHourlyRate(
-            (float) ($hist['hourly_rate'] ?? $user?->hourly_rate ?? 0),
-            $hist['rate_type'] ?? $user?->rate_type ?? 'hourly'
-        );
-
-        $rows = Timesheet::with([
-            'project:id,name,code,contract_type_id,customer_id',
-            'project.contractType:id,name,code',
-            'project.customer:id,name',
-        ])
-            ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_titulo', 'movidesk_tickets.solicitante as ticket_solicitante')
-            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
-            ->where('timesheets.user_id', $userId)
-            ->whereBetween('timesheets.date', [$from, $to])
-            ->whereNotIn('timesheets.status', $excludeStatuses)
-            ->where('timesheets.is_billable_only', false)
-            ->where('timesheets.is_internal_action', false)
-            ->whereNull('timesheets.deleted_at')
-            ->orderBy('timesheets.date')
-            ->get()
-            ->map(function ($t) use ($effectiveRate, $isBancoHoras) {
-                $solicitanteRaw = $t->ticket_solicitante;
-                if (is_string($solicitanteRaw)) $solicitanteRaw = json_decode($solicitanteRaw, true);
-                $solicitante = is_array($solicitanteRaw) ? ($solicitanteRaw['name'] ?? null) : null;
-
-                $baseHoras = $t->effort_minutes / 60;
-                $pct       = $t->consultant_extra_pct ? (float) $t->consultant_extra_pct : null;
-                // Banco de horas: pct infla as horas creditadas; horista/fixo: pct gera valor monetário
-                $horasEfetivas = ($isBancoHoras && $pct)
-                    ? round($baseHoras * (1 + $pct / 100), 2)
-                    : round($baseHoras, 2);
-
-                return [
-                    'id'                   => $t->id,
-                    'data'                 => $t->date->format('Y-m-d'),
-                    'start_time'           => $t->start_time,
-                    'end_time'             => $t->end_time,
-                    'projeto'              => $t->project->name ?? '—',
-                    'projeto_codigo'       => $t->project->code ?? '—',
-                    'cliente'              => $t->project->customer->name ?? '—',
-                    'tipo_contrato_code'   => $t->project?->contractType?->code ?? 'outros',
-                    'tipo_contrato_nome'   => $t->project?->contractType?->name ?? 'Outros',
-                    'horas'                => $horasEfetivas,
-                    'horas_base'           => round($baseHoras, 2),
-                    'status'               => $t->status,
-                    'ticket'               => $t->ticket,
-                    'titulo'               => $t->ticket_titulo,
-                    'solicitante'          => $solicitante,
-                    'observacao'           => $t->observation,
-                    'consultant_extra_pct' => $pct,
-                    'valor_extra'          => (!$isBancoHoras && $pct)
-                        ? round($baseHoras * $effectiveRate * ($pct / 100), 2)
-                        : null,
-                ];
-            });
-
-        return response()->json(['data' => $rows]);
+        return response()->json(['data' => $apont['rows']]);
     }
 
     // ─── Banco de Horas Detalhado ─────────────────────────────────────────────

@@ -173,7 +173,16 @@ class GraphMailService
         }
         $content = preg_replace("/\r\n?/", "\n", $content);
 
-        // Corta o histórico citado no 1º separador conhecido.
+        // Remove o aviso de "e-mail externo" que a regra do Exchange prepende (1º parágrafo).
+        $lead = ltrim($content);
+        $firstLine = strtok($lead, "\n");
+        if ($firstLine !== false && preg_match('/\b(e-?mail\s+externo|external\s+e-?mail)\b/iu', $firstLine)) {
+            if (preg_match('/\n[ \t]*\n/', $lead, $mm, PREG_OFFSET_CAPTURE)) {
+                $content = substr($lead, $mm[0][1] + strlen($mm[0][0]));
+            }
+        }
+
+        // Corta o histórico citado / rodapés de cliente no 1º separador conhecido.
         $cutPatterns = [
             '/^\s*-{2,}\s*Original Message\s*-{2,}.*$/im',
             '/^\s*De:\s.*$/im',
@@ -181,6 +190,8 @@ class GraphMailService
             '/^\s*Em\s.+escreveu:\s*$/im',
             '/^\s*On\s.+wrote:\s*$/im',
             '/^_{5,}\s*$/m',
+            // rodapés de app de e-mail
+            '/^\s*(Obter Outlook para|Get Outlook for|Baixe o Outlook|Enviado do meu|Sent from my)\b.*$/im',
         ];
         $cut = strlen($content);
         foreach ($cutPatterns as $re) {

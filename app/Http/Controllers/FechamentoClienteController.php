@@ -185,6 +185,20 @@ class FechamentoClienteController extends Controller
             ->get()
             ->keyBy('id');
 
+        // Consolida projeto FILHO no PAI: o fechamento do filho entra no contrato pai
+        // (o filho NÃO aparece como contrato separado). effective = parent_project_id ?? id.
+        $effectiveId = [];
+        foreach ($projects as $p) {
+            $effectiveId[$p->id] = $p->parent_project_id ?: $p->id;
+        }
+        $missingParents = array_diff(array_unique(array_values($effectiveId)), $projects->keys()->all());
+        if (!empty($missingParents)) {
+            Project::with(['contractType:id,name,code'])
+                ->whereIn('id', $missingParents)
+                ->get()
+                ->each(fn ($p) => $projects[$p->id] = $p);
+        }
+
         $timesheets = Timesheet::with('user:id,name')
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_titulo', 'movidesk_tickets.solicitante as ticket_solicitante')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
@@ -196,7 +210,7 @@ class FechamentoClienteController extends Controller
             ->orderBy('timesheets.date')
             ->get();
 
-        $byProject  = $timesheets->groupBy('project_id');
+        $byProject  = $timesheets->groupBy(fn ($t) => $effectiveId[$t->project_id] ?? $t->project_id);
         $projetos   = [];
         $totalHoras = 0.0;
         $totalGeral = 0.0;

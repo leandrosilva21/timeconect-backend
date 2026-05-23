@@ -393,8 +393,11 @@ class FechamentoParceiroController extends Controller
     /** E-mails dos parceiro_admin habilitados do parceiro. */
     private function parceiroAdminEmails(string $partnerId): array
     {
+        // "Sempre recebe" = só o(s) ADMIN do parceiro (perfil "Parceiro ADM" = is_executive),
+        // não todos os consultores vinculados (que também são type=parceiro_admin).
         return User::where('partner_id', $partnerId)
             ->where('type', 'parceiro_admin')
+            ->where('is_executive', true)
             ->where('enabled', true)
             ->whereNotNull('email')
             ->pluck('email')

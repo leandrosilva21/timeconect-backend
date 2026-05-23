@@ -69,7 +69,7 @@ class FechamentoClienteController extends Controller
             $f = $fechamentos->get($customer->id);
             return [
                 'customer_id'    => $customer->id,
-                'nome'           => $customer->company_name ?: $customer->name,
+                'nome'           => $customer->name ?: $customer->company_name, // nome fantasia (não a razão social)
                 'status'         => $f?->status ?? 'sem_registro',
                 'total_servicos' => (float) ($f?->total_servicos ?? 0),
                 'total_despesas' => (float) ($f?->total_despesas ?? 0),

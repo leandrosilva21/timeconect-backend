@@ -21,8 +21,8 @@ class PollFechamentoInbox extends Command
     protected $signature = 'fechamento:poll-inbox {--since= : ISO8601/data — sobrescreve a janela automática} {--top=50}';
     protected $description = 'Lê respostas dos consultores ao fechamento (caixa noreply via Graph) e encadeia na thread';
 
-    /** fech-{consultantId}-{YYYY-MM}-{uuid}@minutor.com.br */
-    private const OUR_ID_RE = '/^fech-(\d+)-(\d{4}-\d{2})-[0-9a-f-]+@minutor\.com\.br$/i';
+    /** fech-{consultantId}-{YYYY-MM}-{sufixo}@minutor.com.br (uuid no uso real; tolerante a qualquer sufixo) */
+    private const OUR_ID_RE = '/^fech-(\d+)-(\d{4}-\d{2})-[0-9A-Za-z-]+@minutor\.com\.br$/i';
 
     public function handle(GraphMailService $graph): int
     {

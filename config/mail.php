@@ -134,4 +134,16 @@ return [
     */
     'financeiro_cc' => env('MAIL_FINANCEIRO_CC', 'financeiro@erpserv.com.br'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Reply-To dos fechamentos (caixa de resposta)
+    |--------------------------------------------------------------------------
+    | Endereço pra onde a resposta do consultor vai (Reply-To) e que o Minutor
+    | LÊ via Graph (Fase 2). Separado do From: o From pode ser o noreply (que
+    | costuma ter regra descartando e-mail externo), mas a resposta precisa cair
+    | numa caixa que ACEITE externo. Default = o próprio From.
+    | Mantenha igual ao GRAPH_MAILBOX (a caixa lida).
+    */
+    'fechamento_reply_to' => env('MAIL_FECHAMENTO_REPLY_TO', env('MAIL_FROM_ADDRESS')),
+
 ];

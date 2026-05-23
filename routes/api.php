@@ -908,6 +908,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/apontamentos',        [\App\Http\Controllers\FechamentoConsultorController::class, 'apontamentos']);
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/banco-horas',         [\App\Http\Controllers\FechamentoConsultorController::class, 'bancoHoras']);
             Route::post('/fechamento-consultor/{userId}/{yearMonth}/enviar-email',       [\App\Http\Controllers\FechamentoConsultorController::class, 'enviarEmail']);
+            Route::get('/fechamento-consultor/{userId}/{yearMonth}/excel',               [\App\Http\Controllers\FechamentoConsultorController::class, 'excel']);
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/thread',              [\App\Http\Controllers\FechamentoConsultorController::class, 'thread']);
             Route::post('/fechamento-consultor/{userId}/{yearMonth}/sync-inbox',         [\App\Http\Controllers\FechamentoConsultorController::class, 'syncInbox']);
             Route::post('/fechamento-consultor/{userId}/{yearMonth}/continuar',          [\App\Http\Controllers\FechamentoConsultorController::class, 'continuar']);

@@ -531,6 +531,31 @@ class FechamentoConsultorController extends Controller
         ]);
     }
 
+    // ─── Download do Excel (XLSX) do fechamento ─────────────────────────────────
+    // Mesmo XLSX que vai como anexo no e-mail, baixável direto pela tela do relatório.
+    public function excel(Request $request, string $userId, string $yearMonth)
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
+        }
+        $consultant = User::find($userId);
+        if (!$consultant) {
+            return response()->json(['success' => false, 'message' => 'Consultor não encontrado.'], 404);
+        }
+
+        [$from, $to] = $this->period($yearMonth);
+        $periodo  = $this->periodoExtenso($yearMonth);
+        $closing  = $this->computeConsultantClosing($consultant, $yearMonth);
+        $apont    = $this->buildApontamentosRows($consultant->id, $from, $to, $consultant);
+        $export   = new FechamentoConsultorExport(
+            $apont['rows'], (float) $apont['effective_rate'], $consultant->name, $periodo, (float) $closing['total']
+        );
+        $fileName = "Fechamento_{$yearMonth}_" . $this->sanitizeFilename($consultant->name) . ".xlsx";
+
+        return Excel::download($export, $fileName);
+    }
+
     // ─── Thread (conversa do fechamento) ────────────────────────────────────────
     // Lista todas as mensagens de um consultor no período — saída (outbound: original +
     // continuações) E entrada (inbound: respostas lidas via Graph) — em ordem cronológica.

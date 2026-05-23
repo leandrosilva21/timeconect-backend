@@ -18,6 +18,7 @@ class Partner extends Model
         'name',
         'document',
         'email',
+        'fechamento_email',
         'phone',
         'active',
         'pricing_type',

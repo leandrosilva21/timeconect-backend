@@ -900,6 +900,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/apontamentos',               [\App\Http\Controllers\FechamentoParceiroController::class, 'apontamentos']);
             Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/fechar',                     [\App\Http\Controllers\FechamentoParceiroController::class, 'fechar']);
             Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/reabrir',                    [\App\Http\Controllers\FechamentoParceiroController::class, 'reabrir']);
+            Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/enviar-email',               [\App\Http\Controllers\FechamentoParceiroController::class, 'enviarEmail']);
+            Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/excel',                       [\App\Http\Controllers\FechamentoParceiroController::class, 'excel']);
+            Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/email-preview',              [\App\Http\Controllers\FechamentoParceiroController::class, 'emailPreview']);
+            Route::post('/fechamento-parceiro/{partnerId}/fechamento-email',                       [\App\Http\Controllers\FechamentoParceiroController::class, 'saveFechamentoEmail']);
         });
 
         // 👤 FECHAMENTO CONSULTOR

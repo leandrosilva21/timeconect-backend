@@ -494,6 +494,7 @@ class FechamentoConsultorController extends Controller
                 inReplyTo:      $inReplyTo,
                 threadKey:      $threadKey,
                 withAttachments: true,
+                senderEmail:    $sender->email, // Reply-To = quem enviou (trata a resposta no Outlook)
             );
             Mail::to($consultant->email)->send($mailable);
 

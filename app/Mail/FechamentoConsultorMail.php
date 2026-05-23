@@ -53,20 +53,20 @@ class FechamentoConsultorMail extends Mailable
         public ?string $bodyText = null,
         public bool $isContinuation = false,
         public bool $withAttachments = true,
+        public ?string $senderEmail = null,
     ) {
     }
 
     public function envelope(): Envelope
     {
         $from = config('mail.from.address');
-        // Reply-To = caixa de resposta configurável (mail.fechamento_reply_to), que precisa
-        // ACEITAR e-mail externo e é a mesma lida via Graph (Fase 2). Default = From.
-        // O noreply normalmente descarta externo, por isso a resposta vai pra outra caixa.
-        $replyTo = config('mail.fechamento_reply_to') ?: $from;
+        // Reply-To = e-mail de QUEM ENVIOU (cai no Outlook dele) — a resposta do consultor
+        // é tratada lá. Fallback: From. (Modelo simplificado: sem leitura via Graph.)
+        $replyTo = $this->senderEmail ?: $from;
 
         return new Envelope(
             from: new Address($from, $this->senderName),
-            replyTo: [new Address($replyTo, 'Minutor — Fechamento')],
+            replyTo: [new Address($replyTo, $this->senderName)],
             cc: $this->financeiroCc ? [$this->financeiroCc] : [],
             subject: $this->subjectLine,
         );

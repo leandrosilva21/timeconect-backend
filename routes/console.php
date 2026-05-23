@@ -119,11 +119,5 @@ Schedule::job(new CleanupContractEventsJob)
   ->description('Remove eventos de contrato com mais de 180 dias')
   ->withoutOverlapping();
 
-// Fase 2 do fechamento por e-mail: lê respostas dos consultores na caixa do noreply
-// via Microsoft Graph e encadeia na thread. No-op se o Graph não estiver configurado.
-Schedule::command('fechamento:poll-inbox')
-  ->cron('*/5 * * * *')
-  ->name('fechamento-poll-inbox')
-  ->description('Lê respostas dos consultores ao fechamento (caixa noreply via Graph)')
-  ->withoutOverlapping(10)
-  ->runInBackground();
+// (Removido) Fase 2 — leitura de respostas via Graph. Modelo simplificado: a resposta
+// do consultor volta pro Reply-To (quem enviou) e é tratada no Outlook, sem leitura no app.

@@ -407,6 +407,12 @@ class FechamentoConsultorController extends Controller
     }
 
 
+    /** Mensagem padrão (corpo) do e-mail de fechamento — editável na tela antes de enviar. */
+    private function defaultMensagem(string $periodo): string
+    {
+        return "Segue em anexo o fechamento referente ao período de {$periodo}.\n\nEm caso de dúvidas ou divergências, por gentileza entrar em contato.";
+    }
+
     // ─── Enviar fechamento por e-mail ───────────────────────────────────────────
     // Envia o fechamento do consultor por e-mail, com detalhamento em anexos (PDF + XLSX).
     // De = conta autenticada (mail.from) com o NOME do usuário logado (sem Send As).
@@ -423,8 +429,9 @@ class FechamentoConsultorController extends Controller
 
         // 'html' aceito por retrocompatibilidade do front, mas ignorado.
         $request->validate([
-            'html'    => 'nullable|string',
-            'subject' => 'nullable|string',
+            'html'     => 'nullable|string',
+            'subject'  => 'nullable|string',
+            'mensagem' => 'nullable|string', // corpo editável; vazio = mensagem padrão
         ]);
 
         $consultant = User::find($userId);
@@ -437,6 +444,8 @@ class FechamentoConsultorController extends Controller
 
         $periodo      = $this->periodoExtenso($yearMonth);
         $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
+        // Corpo editável (texto livre); vazio = mensagem padrão.
+        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo);
 
         // Message-ID determinístico DESTA mensagem (sempre persistido) + chave da thread.
         $messageId    = $this->buildMessageId($consultant->id, $yearMonth);
@@ -495,6 +504,7 @@ class FechamentoConsultorController extends Controller
                 threadKey:      $threadKey,
                 withAttachments: true,
                 senderEmail:    $sender->email, // Reply-To = quem enviou (trata a resposta no Outlook)
+                mensagem:       $mensagem,
             );
             Mail::to($consultant->email)->send($mailable);
 
@@ -554,6 +564,41 @@ class FechamentoConsultorController extends Controller
         $fileName = "Fechamento_{$yearMonth}_" . $this->sanitizeFilename($consultant->name) . ".xlsx";
 
         return Excel::download($export, $fileName);
+    }
+
+    // ─── Prévia do e-mail (template real) com a mensagem editável ───────────────
+    // Renderiza o MESMO template do envio, pra mostrar na tela e atualizar ao vivo
+    // conforme o admin edita a mensagem. Retorna o HTML + a mensagem padrão (1ª carga).
+    public function emailPreview(Request $request, string $userId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
+        }
+        $consultant = User::find($userId);
+        if (!$consultant) {
+            return response()->json(['success' => false, 'message' => 'Consultor não encontrado.'], 404);
+        }
+
+        $periodo        = $this->periodoExtenso($yearMonth);
+        $closing        = $this->computeConsultantClosing($consultant, $yearMonth);
+        $mensagemPadrao = $this->defaultMensagem($periodo);
+        $mensagem       = trim((string) $request->input('mensagem'));
+        $mensagem       = $mensagem !== '' ? $mensagem : $mensagemPadrao;
+
+        $html = view('emails.fechamento.consultor', [
+            'consultantName'  => $consultant->name,
+            'senderName'      => $sender->name,
+            'periodo'         => $periodo,
+            'valorTotal'      => $this->brl((float) $closing['total']),
+            'financeiroCc'    => (string) (config('mail.financeiro_cc') ?? ''),
+            'bodyText'        => null,
+            'isContinuation'  => false,
+            'withAttachments' => true,
+            'mensagem'        => $mensagem,
+        ])->render();
+
+        return response()->json(['html' => $html, 'mensagem_padrao' => $mensagemPadrao]);
     }
 
     // ─── Thread (conversa do fechamento) ────────────────────────────────────────

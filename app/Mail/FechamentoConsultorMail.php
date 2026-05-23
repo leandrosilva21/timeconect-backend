@@ -54,6 +54,7 @@ class FechamentoConsultorMail extends Mailable
         public bool $isContinuation = false,
         public bool $withAttachments = true,
         public ?string $senderEmail = null,
+        public ?string $mensagem = null, // corpo editável (texto livre); null = template usa default
     ) {
     }
 
@@ -124,6 +125,7 @@ class FechamentoConsultorMail extends Mailable
                 'bodyText'       => $this->bodyText,
                 'isContinuation' => $this->isContinuation,
                 'withAttachments' => $this->withAttachments,
+                'mensagem'       => $this->mensagem ?? '',
             ],
         );
     }

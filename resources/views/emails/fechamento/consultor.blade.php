@@ -103,9 +103,8 @@
               <h1 class="h1" style="margin:10px 0 4px;font-size:24px;font-weight:700;color:#111827;line-height:1.3;">
                 Olá, {{ $consultantName }}.
               </h1>
-              <p style="margin:8px 0 0;font-size:15px;color:#4B5563;line-height:1.6;">
-                Segue em anexo o fechamento referente ao período de <b style="color:#111827;">{{ $periodo }}</b>.
-              </p>
+              {{-- Mensagem editável (texto livre); cai pra default no controller se vazia. --}}
+              <div style="margin:8px 0 0;font-size:15px;color:#4B5563;line-height:1.65;white-space:pre-wrap;">{!! nl2br(e($mensagem ?? '')) !!}</div>
             </td>
           </tr>
           @endif
@@ -157,13 +156,10 @@
           </tr>
           @endif
 
-          {{-- ── CORPO ── --}}
+          {{-- ── CORPO (assinatura; a mensagem livre vai lá em cima, editável) ── --}}
           <tr>
             <td bgcolor="#FFFFFF" style="padding:24px 40px 0;background-color:#FFFFFF;">
               <p style="margin:0;font-size:14px;color:#4B5563;line-height:1.65;">
-                Em caso de dúvidas ou divergências, por gentileza entrar em contato.
-              </p>
-              <p style="margin:22px 0 0;font-size:14px;color:#4B5563;line-height:1.65;">
                 Atenciosamente,<br>
                 <b style="color:#111827;">{{ $senderName }}</b><br>
                 <span style="color:#6B7280;">ERPSERV Consultoria</span>

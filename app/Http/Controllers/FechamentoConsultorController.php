@@ -540,7 +540,47 @@ class FechamentoConsultorController extends Controller
             return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
         }
 
-        $messages = FechamentoConsultorEmail::with('sender:id,name')
+        return response()->json([
+            'data'          => $this->threadMessages($userId, $yearMonth),
+            'graph_enabled' => app(\App\Services\GraphMailService::class)->isConfigured(),
+        ]);
+    }
+
+    // ─── Atualizar / puxar respostas agora (botão "Atualizar" da conversa) ───────
+    // Dispara a leitura da caixa do noreply (Graph) na hora e devolve a thread já atualizada.
+    // Em prod o scheduler já roda de 5 em 5 min; este endpoint é o "puxar agora".
+    public function syncInbox(Request $request, string $userId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
+        }
+
+        $graph    = app(\App\Services\GraphMailService::class);
+        $enabled  = $graph->isConfigured();
+        $imported = 0;
+        if ($enabled) {
+            try {
+                \Illuminate\Support\Facades\Artisan::call('fechamento:poll-inbox');
+                if (preg_match('/importadas:\s*(\d+)/i', \Illuminate\Support\Facades\Artisan::output(), $mm)) {
+                    $imported = (int) $mm[1];
+                }
+            } catch (\Throwable $e) {
+                Log::warning('syncInbox: falha ao puxar respostas', ['erro' => $e->getMessage()]);
+            }
+        }
+
+        return response()->json([
+            'data'          => $this->threadMessages($userId, $yearMonth),
+            'graph_enabled' => $enabled,
+            'imported'      => $imported,
+        ]);
+    }
+
+    /** Mensagens da thread (saída + entrada) em ordem cronológica — payload compartilhado. */
+    private function threadMessages(string $userId, string $yearMonth): \Illuminate\Support\Collection
+    {
+        return FechamentoConsultorEmail::with('sender:id,name')
             ->where('consultant_user_id', $userId)
             ->where('year_month', $yearMonth)
             ->orderByRaw('COALESCE(sent_at, received_at, created_at) ASC') // cronológico (in + out)
@@ -569,8 +609,6 @@ class FechamentoConsultorController extends Controller
                 ];
             })
             ->values();
-
-        return response()->json(['data' => $messages]);
     }
 
     // ─── Continuar a conversa (resposta na mesma thread) ────────────────────────

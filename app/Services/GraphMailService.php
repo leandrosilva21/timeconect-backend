@@ -81,30 +81,40 @@ class GraphMailService
         }
 
         $mailbox = $this->mailbox();
-        $url = sprintf('%s/users/%s/mailFolders/inbox/messages', self::GRAPH_BASE, rawurlencode($mailbox));
+        // Lê Entrada E Lixo Eletrônico: resposta externa de domínio "novo" costuma
+        // ser jogada no Junk. NÃO lemos Itens Enviados (senão reimportaríamos nossos
+        // próprios envios, que carregam In-Reply-To casando com a thread).
+        $out = [];
+        $seen = [];
+        foreach (['inbox', 'junkemail'] as $folder) {
+            $url = sprintf('%s/users/%s/mailFolders/%s/messages', self::GRAPH_BASE, rawurlencode($mailbox), $folder);
+            try {
+                $resp = Http::withToken($token)
+                    ->withHeaders(['Prefer' => 'outlook.body-content-type="text"'])
+                    ->get($url, [
+                        '$top'     => $top,
+                        '$orderby' => 'receivedDateTime desc',
+                        '$filter'  => 'receivedDateTime ge ' . $since->toIso8601ZuluString(),
+                        '$select'  => 'id,internetMessageId,subject,from,receivedDateTime,body,internetMessageHeaders',
+                    ]);
 
-        try {
-            $resp = Http::withToken($token)
-                ->withHeaders(['Prefer' => 'outlook.body-content-type="text"'])
-                ->get($url, [
-                    '$top'     => $top,
-                    '$orderby' => 'receivedDateTime desc',
-                    '$filter'  => 'receivedDateTime ge ' . $since->toIso8601ZuluString(),
-                    '$select'  => 'id,internetMessageId,subject,from,receivedDateTime,body,internetMessageHeaders',
-                ]);
+                if (!$resp->successful()) {
+                    Log::error('Graph fetch: resposta não OK', ['folder' => $folder, 'status' => $resp->status(), 'body' => $resp->body()]);
+                    continue;
+                }
 
-            if (!$resp->successful()) {
-                Log::error('Graph fetch: resposta não OK', ['status' => $resp->status(), 'body' => $resp->body()]);
-                return [];
+                foreach ($resp->json('value', []) as $m) {
+                    $norm = $this->normalize($m);
+                    if ($norm['graph_id'] !== '' && !isset($seen[$norm['graph_id']])) {
+                        $seen[$norm['graph_id']] = true;
+                        $out[] = $norm;
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::error('Graph fetch: exceção', ['folder' => $folder, 'erro' => $e->getMessage()]);
             }
-
-            return collect($resp->json('value', []))
-                ->map(fn (array $m) => $this->normalize($m))
-                ->all();
-        } catch (\Throwable $e) {
-            Log::error('Graph fetch: exceção', ['erro' => $e->getMessage()]);
-            return [];
         }
+        return $out;
     }
 
     /** Normaliza uma mensagem da Graph para o shape consumido pelo polling. */

@@ -42,6 +42,10 @@ class PollFechamentoInbox extends Command
             if (empty($msg['graph_id'])) {
                 continue;
             }
+            // Ignora nossos próprios envios (cópia/Sent que porventura apareça): from = a caixa lida.
+            if (!empty($msg['from_email']) && strcasecmp($msg['from_email'], (string) $graph->mailbox()) === 0) {
+                continue;
+            }
             // Dedup: já importada?
             if (FechamentoConsultorEmail::where('graph_message_id', $msg['graph_id'])->exists()) {
                 continue;

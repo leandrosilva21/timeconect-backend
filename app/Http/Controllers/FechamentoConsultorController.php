@@ -598,6 +598,11 @@ class FechamentoConsultorController extends Controller
             'mensagem'        => $mensagem,
         ])->render();
 
+        // Prévia só: força o logo claro (escuro-colorido) a aparecer no card branco —
+        // o swap de dark-mode do template trocaria pro logo branco (invisível aqui).
+        $override = '<style>.erp-light{display:inline-block !important}.erp-dark{display:none !important}</style>';
+        $html = str_ireplace('</head>', $override . '</head>', $html);
+
         return response()->json(['html' => $html, 'mensagem_padrao' => $mensagemPadrao]);
     }
 

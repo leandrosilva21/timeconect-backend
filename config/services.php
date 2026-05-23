@@ -51,4 +51,19 @@ return [
         'ocr_model' => env('ANTHROPIC_OCR_MODEL', 'claude-haiku-4-5-20251001'),
     ],
 
+    /*
+     * Microsoft Graph — leitura da caixa do noreply para puxar as RESPOSTAS dos
+     * consultores ao fechamento (Fase 2). client-credentials (app-only).
+     * Sem as 4 variáveis abaixo o leitor fica DORMENTE (não quebra nada).
+     * Requer app registrado no Azure AD + permissão de aplicação Mail.Read
+     * (idealmente escopada à caixa via Application Access Policy no Exchange).
+     */
+    'microsoft_graph' => [
+        'tenant_id'     => env('GRAPH_TENANT_ID'),
+        'client_id'     => env('GRAPH_CLIENT_ID'),
+        'client_secret' => env('GRAPH_CLIENT_SECRET'),
+        // Caixa lida (UPN/e-mail). Default = mesma conta do remetente (noreply).
+        'mailbox'       => env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')),
+    ],
+
 ];

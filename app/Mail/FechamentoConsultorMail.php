@@ -16,7 +16,8 @@ use Illuminate\Queue\SerializesModels;
  *
  * De  = conta autenticada (mail.from.address) COM o nome do usuário logado.
  *       NÃO usa o e-mail do usuário no From: o O365 bloqueia Send As cross-domain.
- * Reply-To / CC = financeiro@erpserv.com.br (mail.financeiro_cc).
+ * Reply-To = a PRÓPRIA conta (noreply) — pra resposta do consultor cair na caixa que
+ *       o Minutor lê via Graph (Fase 2) e encadear na thread. CC = financeiro (visibilidade).
  * To  = consultor (definido no Mail::to()).
  *
  * Corpo minimalista; o detalhamento vai nos anexos PDF + XLSX.
@@ -57,15 +58,13 @@ class FechamentoConsultorMail extends Mailable
 
     public function envelope(): Envelope
     {
-        $from    = config('mail.from.address');
-        $replyTo = [];
-        if ($this->financeiroCc) {
-            $replyTo[] = new Address($this->financeiroCc, 'Financeiro ERPSERV');
-        }
+        $from = config('mail.from.address');
 
+        // Reply-To = própria conta (noreply): a resposta do consultor cai na caixa
+        // que o Minutor lê via Graph (Fase 2). Financeiro só em CC (visibilidade).
         return new Envelope(
             from: new Address($from, $this->senderName),
-            replyTo: $replyTo,
+            replyTo: [new Address($from, 'Minutor — Fechamento')],
             cc: $this->financeiroCc ? [$this->financeiroCc] : [],
             subject: $this->subjectLine,
         );

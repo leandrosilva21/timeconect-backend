@@ -531,8 +531,8 @@ class FechamentoConsultorController extends Controller
     }
 
     // ─── Thread (conversa do fechamento) ────────────────────────────────────────
-    // Lista todas as mensagens (envio original + continuações) de um consultor no período,
-    // ordenadas por sent_at/id. Fase 1 = só saída (outbound).
+    // Lista todas as mensagens de um consultor no período — saída (outbound: original +
+    // continuações) E entrada (inbound: respostas lidas via Graph) — em ordem cronológica.
     public function thread(Request $request, string $userId, string $yearMonth): JsonResponse
     {
         $sender = $request->user();
@@ -543,22 +543,31 @@ class FechamentoConsultorController extends Controller
         $messages = FechamentoConsultorEmail::with('sender:id,name')
             ->where('consultant_user_id', $userId)
             ->where('year_month', $yearMonth)
-            ->orderByRaw('sent_at IS NULL')      // enviados primeiro
-            ->orderBy('sent_at')
+            ->orderByRaw('COALESCE(sent_at, received_at, created_at) ASC') // cronológico (in + out)
             ->orderBy('id')
             ->get()
-            ->map(fn (FechamentoConsultorEmail $m) => [
-                'id'              => $m->id,
-                'subject'         => $m->subject,
-                'body'            => $m->body,
-                'is_continuation' => (bool) $m->is_continuation,
-                'has_attachments' => (bool) ($m->pdf_path || $m->xlsx_path),
-                'sender_name'     => $m->sender?->name,
-                'to_email'        => $m->to_email,
-                'cc_email'        => $m->cc_email,
-                'status'          => $m->status,
-                'sent_at'         => optional($m->sent_at)->toIso8601String(),
-            ])
+            ->map(function (FechamentoConsultorEmail $m) {
+                $isInbound = $m->direction === FechamentoConsultorEmail::DIRECTION_INBOUND;
+                $at        = $m->sent_at ?: $m->received_at;
+                return [
+                    'id'              => $m->id,
+                    'direction'       => $m->direction ?: FechamentoConsultorEmail::DIRECTION_OUTBOUND,
+                    'is_inbound'      => $isInbound,
+                    'subject'         => $m->subject,
+                    'body'            => $m->body,
+                    'is_continuation' => (bool) $m->is_continuation,
+                    'has_attachments' => (bool) ($m->pdf_path || $m->xlsx_path),
+                    // Inbound = remetente é o consultor (from_email); outbound = usuário logado.
+                    'sender_name'     => $isInbound ? ($m->from_email ?: 'Consultor') : $m->sender?->name,
+                    'from_email'      => $m->from_email,
+                    'to_email'        => $m->to_email,
+                    'cc_email'        => $m->cc_email,
+                    'status'          => $m->status,
+                    'sent_at'         => optional($m->sent_at)->toIso8601String(),
+                    'received_at'     => optional($m->received_at)->toIso8601String(),
+                    'at'              => optional($at)->toIso8601String(),
+                ];
+            })
             ->values();
 
         return response()->json(['data' => $messages]);

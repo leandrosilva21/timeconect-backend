@@ -73,9 +73,8 @@
           <thead>
             <tr>
               <th class="nowrap" style="width:62px;">Data</th>
-              <th style="width:90px;">Projeto</th>
-              <th style="width:70px;">Ticket</th>
-              <th>Descrição</th>
+              <th>Projeto</th>
+              <th style="width:90px;">Ticket</th>
               <th class="right nowrap" style="width:54px;">Horas</th>
             </tr>
           </thead>
@@ -85,12 +84,11 @@
                 <td class="nowrap">{{ $l['data'] }}</td>
                 <td>{{ $l['projeto'] }}</td>
                 <td>{{ $l['ticket'] ?: '—' }}</td>
-                <td>{{ $l['descricao'] ?: '—' }}</td>
                 <td class="right nowrap">{{ $l['horas_fmt'] }}</td>
               </tr>
             @endforeach
             <tr>
-              <td colspan="5" class="client-total">{{ $cliente['nome'] }}: {{ $cliente['horas_fmt'] }}</td>
+              <td colspan="4" class="client-total">{{ $cliente['nome'] }}: {{ $cliente['horas_fmt'] }}</td>
             </tr>
           </tbody>
         </table>

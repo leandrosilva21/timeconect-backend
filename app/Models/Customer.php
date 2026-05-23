@@ -24,6 +24,7 @@ class Customer extends Model
         'active',
         'executive_id',
         'code_prefix',
+        'fechamento_email',
     ];
 
     /**

@@ -890,6 +890,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/pagamento',                   [\App\Http\Controllers\FechamentoClienteController::class, 'pagamento']);
             Route::post('/fechamento-cliente/{customerId}/{yearMonth}/fechar',                     [\App\Http\Controllers\FechamentoClienteController::class, 'fechar']);
             Route::post('/fechamento-cliente/{customerId}/{yearMonth}/reabrir',                    [\App\Http\Controllers\FechamentoClienteController::class, 'reabrir']);
+            Route::post('/fechamento-cliente/{customerId}/{yearMonth}/enviar-email',               [\App\Http\Controllers\FechamentoClienteController::class, 'enviarEmail']);
+            Route::get('/fechamento-cliente/{customerId}/{yearMonth}/excel',                        [\App\Http\Controllers\FechamentoClienteController::class, 'excel']);
+            Route::post('/fechamento-cliente/{customerId}/{yearMonth}/email-preview',              [\App\Http\Controllers\FechamentoClienteController::class, 'emailPreview']);
+            Route::post('/fechamento-cliente/{customerId}/fechamento-email',                        [\App\Http\Controllers\FechamentoClienteController::class, 'saveFechamentoEmail']);
         });
 
         // 🤝 FECHAMENTO PARCEIRO

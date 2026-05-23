@@ -32,6 +32,16 @@
     .total-value { font-size: 18px; font-weight: bold; text-align: right; }
     .muted { color: #9ca3af; }
     .empty { padding: 20px; text-align: center; color: #9ca3af; font-style: italic; }
+
+    /* Apuração por Ticket (Vedamotors) — destaque roxo, print-friendly. */
+    .ticket-section { margin-top: 22px; }
+    .ticket-section h2 { font-size: 13px; font-weight: bold; color: #5b21b6; margin: 0 0 4px; }
+    .ticket-sub { font-size: 9px; color: #6b7280; margin: 0 0 8px; }
+    table.ticket-table { width: 100%; border-collapse: collapse; }
+    table.ticket-table th { background: #f5f3ff; border-bottom: 1px solid #ddd6fe; text-align: left; padding: 6px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: #5b21b6; }
+    table.ticket-table td { border-bottom: 1px solid #f3f4f6; padding: 5px 6px; font-size: 10px; vertical-align: top; }
+    table.ticket-table td.veda-life, table.ticket-table th.veda-life { color: #5b21b6; }
+    table.ticket-table tfoot td { border-top: 2px solid #ddd6fe; border-bottom: none; font-weight: bold; color: #5b21b6; background: #f5f3ff; padding: 7px 6px; }
   </style>
 </head>
 <body>
@@ -84,6 +94,42 @@
       </table>
       <div class="section-total">Subtotal {{ $grupo['projeto'] }}: {{ $grupo['horas_fmt'] }}</div>
     @endforeach
+  @endif
+
+  @if(!empty($vedamotors) && count($ticketRows ?? []))
+    <div class="ticket-section">
+      <h2>Apuração por Ticket</h2>
+      <p class="ticket-sub">Tickets com apontamento dentro do período, mostrando o total no período selecionado e o total acumulado desde o primeiro apontamento no sistema (mesmo cliente).</p>
+      <table class="ticket-table">
+        <thead>
+          <tr>
+            <th style="width:70px;">Ticket</th>
+            <th class="nowrap" style="width:96px;">Ticket Vedamotors</th>
+            <th>Solicitante</th>
+            <th class="right nowrap" style="width:90px;">Total no período</th>
+            <th class="right nowrap veda-life" style="width:90px;">Total histórico</th>
+          </tr>
+        </thead>
+        <tbody>
+          @foreach($ticketRows as $tk)
+            <tr>
+              <td class="nowrap">#{{ $tk['ticket'] }}</td>
+              <td class="nowrap">{{ $tk['veda_ticket'] }}</td>
+              <td>{{ $tk['requester'] ?: '—' }}</td>
+              <td class="right nowrap">{{ $tk['period_fmt'] }}</td>
+              <td class="right nowrap veda-life">{{ $tk['lifetime_fmt'] }}</td>
+            </tr>
+          @endforeach
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="3" class="right">Totais ({{ count($ticketRows) }} ticket{{ count($ticketRows) === 1 ? '' : 's' }})</td>
+            <td class="right nowrap">{{ $ticketTotPeriodFmt }}</td>
+            <td class="right nowrap veda-life">{{ $ticketTotLifetimeFmt }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
   @endif
 
   <table class="total-box" width="100%">

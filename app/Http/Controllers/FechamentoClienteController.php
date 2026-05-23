@@ -793,6 +793,90 @@ class FechamentoClienteController extends Controller
         return $rows;
     }
 
+    /**
+     * Apuração por Ticket (só Vedamotors) — espelha o totalizador da tela
+     * (TimesheetController::summaryByTicket). Para cada ticket que teve ao menos
+     * 1 apontamento no mês, devolve o total no período + o total histórico
+     * (lifetime: TODOS os apontamentos do mesmo ticket no mesmo cliente, desde o
+     * início no sistema, somando o saldo inicial cadastrado em
+     * ticket_initial_balances). Escopo idêntico ao apontamentosData do
+     * fechamento: projetos On Demand do cliente (não investimento_comercial),
+     * mesmos status excluídos, sem soft-deleted, e só tickets de 5 dígitos
+     * (padrão Movidesk).
+     *
+     * @return array<int,array{ticket:string,title:?string,veda_ticket:string,requester:?string,period_minutes:int,lifetime_minutes:int}>
+     */
+    private function clienteTicketSummary(int $customerId, string $yearMonth): array
+    {
+        [$from, $to] = $this->period($yearMonth);
+
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
+
+        // Projetos On Demand do cliente (mesma base que apontamentosData usa no fechamento).
+        $projectIds = Project::where('customer_id', $customerId)
+            ->where('is_investimento_comercial', false)
+            ->whereHas('contractType', fn ($q) => $q->where('code', 'on_demand'))
+            ->pluck('id');
+
+        if ($projectIds->isEmpty()) {
+            return [];
+        }
+
+        // Base: timesheets desses projetos, com ticket Movidesk válido (5 dígitos), fora dos status descartados.
+        $base = Timesheet::query()
+            ->whereIn('timesheets.project_id', $projectIds)
+            ->whereNotIn('timesheets.status', $excludeStatuses)
+            ->whereNull('timesheets.deleted_at')
+            ->whereNotNull('timesheets.ticket')
+            ->where('timesheets.ticket', '!=', '')
+            ->whereRaw("timesheets.ticket ~ '^[0-9]{5}$'");
+
+        // 1) Tickets que tiveram apontamento DENTRO do período.
+        $ticketsInPeriod = (clone $base)
+            ->whereBetween('timesheets.date', [$from, $to])
+            ->select('timesheets.ticket')
+            ->distinct()
+            ->pluck('timesheets.ticket')
+            ->toArray();
+
+        if (empty($ticketsInPeriod)) {
+            return [];
+        }
+
+        // 2) Agregação: lifetime (todos do ticket nesses projetos) + total no período.
+        $rows = (clone $base)
+            ->whereIn('timesheets.ticket', $ticketsInPeriod)
+            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+            ->selectRaw('timesheets.ticket as ticket')
+            ->selectRaw('MAX(movidesk_tickets.titulo) as title')
+            ->selectRaw("MAX(movidesk_tickets.solicitante::jsonb->>'name') as requester")
+            ->selectRaw('SUM(timesheets.effort_minutes) as lifetime_minutes')
+            ->selectRaw('SUM(CASE WHEN timesheets.date BETWEEN ? AND ? THEN timesheets.effort_minutes ELSE 0 END) as period_minutes', [$from, $to])
+            ->groupBy('timesheets.ticket')
+            ->orderBy('timesheets.ticket')
+            ->get();
+
+        // Saldos iniciais cadastrados pra esse cliente — somam SOMENTE no lifetime
+        // (histórico anterior à entrada do ticket no Minutor), nunca no período.
+        $initialByTicket = \DB::table('ticket_initial_balances')
+            ->whereNull('deleted_at')
+            ->where('customer_id', $customerId)
+            ->whereIn('ticket', $rows->pluck('ticket')->all())
+            ->pluck('initial_minutes', 'ticket');
+
+        return $rows->map(function ($r) use ($initialByTicket) {
+            $initial = (int) ($initialByTicket[$r->ticket] ?? 0);
+            return [
+                'ticket'           => $r->ticket,
+                'title'            => $r->title,
+                'veda_ticket'      => $this->vedaTicket($r->title),
+                'requester'        => $r->requester,
+                'period_minutes'   => (int) $r->period_minutes,
+                'lifetime_minutes' => (int) $r->lifetime_minutes + $initial,
+            ];
+        })->values()->toArray();
+    }
+
     /** Agrupa as linhas achatadas por projeto, para o PDF (Relatório de Apontamentos). */
     private function buildPdfGroups(array $rows): array
     {
@@ -856,14 +940,30 @@ class FechamentoClienteController extends Controller
             mkdir($dirFull, 0775, true);
         }
 
+        // Apuração por Ticket — só Vedamotors (espelha o totalizador da tela).
+        // Pré-formata horas em HH:MM (mesmo fmtHoras do resto do PDF) e os totais.
+        $ticketSummary = $vedamotors ? $this->clienteTicketSummary((int) $customer->id, $yearMonth) : [];
+        $ticketRows    = array_map(fn ($t) => [
+            'ticket'        => $t['ticket'],
+            'veda_ticket'   => $t['veda_ticket'],
+            'requester'     => $t['requester'],
+            'period_fmt'    => $this->fmtHoras($t['period_minutes'] / 60),
+            'lifetime_fmt'  => $this->fmtHoras($t['lifetime_minutes'] / 60),
+        ], $ticketSummary);
+        $ticketTotPeriodFmt   = $this->fmtHoras(array_sum(array_column($ticketSummary, 'period_minutes')) / 60);
+        $ticketTotLifetimeFmt = $this->fmtHoras(array_sum(array_column($ticketSummary, 'lifetime_minutes')) / 60);
+
         // ── PDF (agrupado por projeto, sem coluna de valor por linha) ──
         $pdf = Pdf::loadView('pdf.fechamento-cliente', [
-            'clienteName'   => $customer->name,
-            'periodo'       => $periodo,
-            'totalHorasFmt' => $this->fmtHoras($totalHoras),
-            'valorTotal'    => $this->brl($totalValue),
-            'grupos'        => $this->buildPdfGroups($rows),
-            'vedamotors'    => $vedamotors,
+            'clienteName'          => $customer->name,
+            'periodo'              => $periodo,
+            'totalHorasFmt'        => $this->fmtHoras($totalHoras),
+            'valorTotal'           => $this->brl($totalValue),
+            'grupos'               => $this->buildPdfGroups($rows),
+            'vedamotors'           => $vedamotors,
+            'ticketRows'           => $ticketRows,
+            'ticketTotPeriodFmt'   => $ticketTotPeriodFmt,
+            'ticketTotLifetimeFmt' => $ticketTotLifetimeFmt,
         ])->setPaper('a4', 'portrait');
         file_put_contents($pdfFullPath, $pdf->output());
 

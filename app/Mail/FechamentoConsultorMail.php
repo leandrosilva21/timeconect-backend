@@ -60,13 +60,22 @@ class FechamentoConsultorMail extends Mailable
     public function envelope(): Envelope
     {
         $from = config('mail.from.address');
-        // Reply-To = e-mail de QUEM ENVIOU (cai no Outlook dele) — a resposta do consultor
-        // é tratada lá. Fallback: From. (Modelo simplificado: sem leitura via Graph.)
-        $replyTo = $this->senderEmail ?: $from;
+        // Reply-To = QUEM ENVIOU + FINANCEIRO: a resposta do consultor (um "Responder"
+        // normal) volta pros DOIS, tratada no Outlook. Financeiro também vai em CC no envio.
+        $replyTo = [];
+        if ($this->senderEmail) {
+            $replyTo[] = new Address($this->senderEmail, $this->senderName);
+        }
+        if ($this->financeiroCc) {
+            $replyTo[] = new Address($this->financeiroCc, 'Financeiro ERPSERV');
+        }
+        if (empty($replyTo)) {
+            $replyTo[] = new Address($from, $this->senderName);
+        }
 
         return new Envelope(
             from: new Address($from, $this->senderName),
-            replyTo: [new Address($replyTo, $this->senderName)],
+            replyTo: $replyTo,
             cc: $this->financeiroCc ? [$this->financeiroCc] : [],
             subject: $this->subjectLine,
         );

@@ -224,7 +224,8 @@ class FechamentoParceiroController extends Controller
             ->get();
 
         $isFixed      = $partner->pricing_type === Partner::PRICING_FIXED;
-        $partnerRate  = (float) ($partner->hourly_rate ?? 0);
+        // Valor hora do parceiro vigente na competência (legado intacto ao mudar o valor).
+        $partnerRate  = (float) $partner->hourlyRateForCompetencia($yearMonth);
 
         $rows = [];
         foreach ($users as $user) {

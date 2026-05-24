@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Exports\FechamentoConsultorExport;
+use App\Exports\FechamentoConsultorListExport;
 use App\Mail\FechamentoConsultorMail;
 use App\Models\FechamentoConsultorEmail;
 use App\Models\Timesheet;
@@ -821,6 +822,12 @@ class FechamentoConsultorController extends Controller
 
     public function index(string $yearMonth): JsonResponse
     {
+        return response()->json(['data' => $this->buildConsultoresData($yearMonth)]);
+    }
+
+    /** Computa horistas/banco_horas/fixos + totais (compartilhado por index, exportExcel e folha). */
+    public function buildConsultoresData(string $yearMonth): array
+    {
         [$from, $to]     = $this->period($yearMonth);
         [$year, $month]  = array_map('intval', explode('-', $yearMonth));
 
@@ -828,7 +835,7 @@ class FechamentoConsultorController extends Controller
             ->whereNotIn('type', ['parceiro_admin', 'cliente'])
             ->whereNotNull('consultant_type')
             ->orderBy('name')
-            ->get(['id', 'name', 'email', 'type', 'consultant_type', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date', 'guaranteed_hours']);
+            ->get(['id', 'name', 'email', 'type', 'consultant_type', 'contract_type', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date', 'guaranteed_hours']);
 
         $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
 
@@ -883,6 +890,7 @@ class FechamentoConsultorController extends Controller
                 'email'             => $user->email,
                 'type'              => $user->type,
                 'consultant_type'   => $user->consultant_type,
+                'contract_type'     => $user->contract_type,
                 'horas_trabalhadas' => $horasTrabalhadas,
                 'valor_hora'        => $hourlyRate,
                 'rate_type'         => $rateType,
@@ -993,24 +1001,62 @@ class FechamentoConsultorController extends Controller
             }
         }
 
-        return response()->json([
-            'data' => [
-                'horistas'    => $horistas,
-                'banco_horas' => $bancoHoras,
-                'fixos'       => $fixos,
-                'totais' => [
-                    'total_horistas'    => round(collect($horistas)->sum('total'), 2),
-                    'total_banco_horas' => round(collect($bancoHoras)->sum('total'), 2),
-                    'total_fixos'       => round(collect($fixos)->sum('total'), 2),
-                    'total_geral'       => round(
-                        collect($horistas)->sum('total') +
-                        collect($bancoHoras)->sum('total') +
-                        collect($fixos)->sum('total'),
-                        2
-                    ),
-                ],
+        return [
+            'horistas'    => $horistas,
+            'banco_horas' => $bancoHoras,
+            'fixos'       => $fixos,
+            'totais' => [
+                'total_horistas'    => round(collect($horistas)->sum('total'), 2),
+                'total_banco_horas' => round(collect($bancoHoras)->sum('total'), 2),
+                'total_fixos'       => round(collect($fixos)->sum('total'), 2),
+                'total_geral'       => round(
+                    collect($horistas)->sum('total') +
+                    collect($bancoHoras)->sum('total') +
+                    collect($fixos)->sum('total'),
+                    2
+                ),
             ],
-        ]);
+        ];
+    }
+
+    /**
+     * Export Excel da lista de consultores do fechamento, com filtro opcional por
+     * tipo de contrato (cooperado|clt|pj) via ?contract_type=. Mantém o mesmo cálculo do index.
+     */
+    public function exportExcel(Request $request, string $yearMonth)
+    {
+        $data = $this->buildConsultoresData($yearMonth);
+
+        $vinculoLabel = [
+            'horista'        => 'Horista',
+            'banco_de_horas' => 'Banco de Horas',
+            'fixo'           => 'Fixo',
+        ];
+        $contratoLabel = ['cooperado' => 'Cooperado', 'clt' => 'CLT', 'pj' => 'PJ'];
+
+        $filter = $request->query('contract_type'); // null = todos
+        $rows = [];
+        foreach (['horistas', 'banco_horas', 'fixos'] as $bucket) {
+            foreach ($data[$bucket] as $c) {
+                if ($filter && ($c['contract_type'] ?? null) !== $filter) {
+                    continue;
+                }
+                $rows[] = [
+                    'consultor'      => $c['nome'],
+                    'email'          => $c['email'],
+                    'tipo_vinculo'   => $vinculoLabel[$c['consultant_type']] ?? $c['consultant_type'],
+                    'tipo_contrato'  => $contratoLabel[$c['contract_type'] ?? ''] ?? '—',
+                    'horas'          => $c['horas_a_pagar'] ?? $c['horas_trabalhadas'] ?? 0,
+                    'total'          => $c['total'] ?? 0,
+                ];
+            }
+        }
+        usort($rows, fn ($a, $b) => strcasecmp($a['consultor'], $b['consultor']));
+
+        $sufixo   = $filter ? '_' . strtoupper($filter) : '';
+        $fileName = "Fechamento_Consultores_{$yearMonth}{$sufixo}.xlsx";
+
+        return Excel::download(new FechamentoConsultorListExport($rows), $fileName);
     }
 
     // ─── Apontamentos ─────────────────────────────────────────────────────────

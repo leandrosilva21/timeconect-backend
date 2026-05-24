@@ -1062,6 +1062,19 @@ class FechamentoClienteController extends Controller
         )));
         $valorHoraResumo = count($ratesUnicas) === 1 ? $this->brl($ratesUnicas[0]) : null;
 
+        // Rótulo do projeto pro cabeçalho: 1 → "código — nome"; vários → "Todos".
+        $projetoLabel = match (count($projetosList)) {
+            0       => '—',
+            1       => trim(($projetosList[0]['codigo'] ?? '') . ' — ' . ($projetosList[0]['nome'] ?? '')),
+            default => 'Todos',
+        };
+
+        // Logo ERPSERV embutido (base64) — funciona no dompdf (PDF) e no iframe (tela).
+        $logoFile    = public_path('logo-erpserv.png');
+        $logoDataUri = is_file($logoFile)
+            ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($logoFile))
+            : null;
+
         // Apuração por Ticket — só Vedamotors (espelha o totalizador da tela).
         $ticketSummary = $vedamotors ? $this->clienteTicketSummary((int) $customer->id, $yearMonth) : [];
         $ticketRows    = array_map(fn ($t) => [
@@ -1075,6 +1088,9 @@ class FechamentoClienteController extends Controller
         return [
             'clienteName'          => $customer->name,
             'periodo'              => $periodo,
+            'logoDataUri'          => $logoDataUri,
+            'projetoLabel'         => $projetoLabel,
+            'emitidoEm'            => now()->format('d/m/Y'),
             'projetos'             => $projetosList,
             'totalHorasFmt'        => $this->fmtHoras($totalHoras),
             'valorTotal'           => $this->brl($totalValue),

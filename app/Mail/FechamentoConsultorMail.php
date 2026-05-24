@@ -75,7 +75,7 @@ class FechamentoConsultorMail extends Mailable
         }
 
         return new Envelope(
-            from: new Address($from, $this->senderName),
+            from: new Address($from, config('mail.fechamento_from_name', 'Fechamento ERPSERV')),
             replyTo: $replyTo,
             cc: $this->financeiroCc ? [$this->financeiroCc] : [],
             subject: $this->subjectLine,

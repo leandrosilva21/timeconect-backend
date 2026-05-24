@@ -146,4 +146,15 @@ return [
     */
     'fechamento_reply_to' => env('MAIL_FECHAMENTO_REPLY_TO', env('MAIL_FROM_ADDRESS')),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Nome de exibição do remetente (From) dos fechamentos
+    |--------------------------------------------------------------------------
+    | Identidade fixa do remetente nas rotinas de fechamento (consultor, parceiro,
+    | cliente). NÃO é o nome de quem enviou — esse continua no Reply-To e na
+    | assinatura do corpo. Fixo evita ainda o filtro anti-impersonation (nome de
+    | executivo no From de e-mail externo).
+    */
+    'fechamento_from_name' => env('MAIL_FECHAMENTO_FROM_NAME', 'Fechamento ERPSERV'),
+
 ];

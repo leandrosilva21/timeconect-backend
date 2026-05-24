@@ -990,9 +990,8 @@ class FechamentoClienteController extends Controller
         $vedamotors = $this->isVedamotors($customer);
         $rows       = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $vedamotors);
         $totalValue = $this->clienteTotal((int) $customer->id, $yearMonth);
-        $totalHoras = round(collect($rows)->sum('horas'), 2);
 
-        // Projeto(s) do fechamento (código + nome) — destaque no e-mail / PDF / relatório.
+        // Projeto(s) do fechamento (código + nome) — usado no retorno p/ o caller.
         $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand');
         $projetosList = array_values(array_map(
             fn ($p) => ['codigo' => $p['projeto_codigo'] ?? '—', 'nome' => $p['projeto_nome'] ?? '—'],
@@ -1014,32 +1013,9 @@ class FechamentoClienteController extends Controller
             mkdir($dirFull, 0775, true);
         }
 
-        // Apuração por Ticket — só Vedamotors (espelha o totalizador da tela).
-        // Pré-formata horas em HH:MM (mesmo fmtHoras do resto do PDF) e os totais.
-        $ticketSummary = $vedamotors ? $this->clienteTicketSummary((int) $customer->id, $yearMonth) : [];
-        $ticketRows    = array_map(fn ($t) => [
-            'ticket'        => $t['ticket'],
-            'veda_ticket'   => $t['veda_ticket'],
-            'requester'     => $t['requester'],
-            'period_fmt'    => $this->fmtHoras($t['period_minutes'] / 60),
-            'lifetime_fmt'  => $this->fmtHoras($t['lifetime_minutes'] / 60),
-        ], $ticketSummary);
-        $ticketTotPeriodFmt   = $this->fmtHoras(array_sum(array_column($ticketSummary, 'period_minutes')) / 60);
-        $ticketTotLifetimeFmt = $this->fmtHoras(array_sum(array_column($ticketSummary, 'lifetime_minutes')) / 60);
-
-        // ── PDF (agrupado por projeto, sem coluna de valor por linha) ──
-        $pdf = Pdf::loadView('pdf.fechamento-cliente', [
-            'clienteName'          => $customer->name,
-            'periodo'              => $periodo,
-            'projetos'             => $projetosList,
-            'totalHorasFmt'        => $this->fmtHoras($totalHoras),
-            'valorTotal'           => $this->brl($totalValue),
-            'grupos'               => $this->buildPdfGroups($rows),
-            'vedamotors'           => $vedamotors,
-            'ticketRows'           => $ticketRows,
-            'ticketTotPeriodFmt'   => $ticketTotPeriodFmt,
-            'ticketTotLifetimeFmt' => $ticketTotLifetimeFmt,
-        ])->setPaper('a4', 'portrait');
+        // ── PDF — MESMA view-data do preview da tela (fonte única = a Blade) ──
+        $pdf = Pdf::loadView('pdf.fechamento-cliente', $this->buildReportViewData($customer, $yearMonth))
+            ->setPaper('a4', 'portrait');
         file_put_contents($pdfFullPath, $pdf->output());
 
         // ── XLSX ──
@@ -1056,6 +1032,91 @@ class FechamentoClienteController extends Controller
             'total_value' => $totalValue,
             'projetos'    => $projetosList,
         ];
+    }
+
+    /**
+     * Dados da view do relatório de apontamentos do cliente — FONTE ÚNICA usada
+     * tanto pelo PDF (dompdf) quanto pelo preview da tela (reportHtml), pra garantir
+     * que o relatório visto na página e o documento enviado sejam IDÊNTICOS.
+     *
+     * @return array<string, mixed>
+     */
+    private function buildReportViewData(Customer $customer, string $yearMonth): array
+    {
+        $periodo    = $this->periodoExtenso($yearMonth);
+        $vedamotors = $this->isVedamotors($customer);
+        $rows       = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $vedamotors);
+        $totalValue = $this->clienteTotal((int) $customer->id, $yearMonth);
+        $totalHoras = round(collect($rows)->sum('horas'), 2);
+
+        $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand');
+        $projetosList = array_values(array_map(
+            fn ($p) => ['codigo' => $p['projeto_codigo'] ?? '—', 'nome' => $p['projeto_nome'] ?? '—'],
+            $apData['projetos'] ?? []
+        ));
+
+        // Valor hora p/ o resumo do topo: só quando há uma única taxa entre os projetos.
+        $ratesUnicas = array_values(array_unique(array_filter(
+            array_map(fn ($p) => (float) ($p['valor_hora'] ?? 0), $apData['projetos'] ?? []),
+            fn ($v) => $v > 0
+        )));
+        $valorHoraResumo = count($ratesUnicas) === 1 ? $this->brl($ratesUnicas[0]) : null;
+
+        // Rótulo do projeto pro cabeçalho: 1 → "código — nome"; vários → "Todos".
+        $projetoLabel = match (count($projetosList)) {
+            0       => '—',
+            1       => trim(($projetosList[0]['codigo'] ?? '') . ' — ' . ($projetosList[0]['nome'] ?? '')),
+            default => 'Todos',
+        };
+
+        // Logo ERPSERV embutido (base64) — funciona no dompdf (PDF) e no iframe (tela).
+        $logoFile    = public_path('logo-erpserv.png');
+        $logoDataUri = is_file($logoFile)
+            ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($logoFile))
+            : null;
+
+        // Apuração por Ticket — só Vedamotors (espelha o totalizador da tela).
+        $ticketSummary = $vedamotors ? $this->clienteTicketSummary((int) $customer->id, $yearMonth) : [];
+        $ticketRows    = array_map(fn ($t) => [
+            'ticket'       => $t['ticket'],
+            'veda_ticket'  => $t['veda_ticket'],
+            'requester'    => $t['requester'],
+            'period_fmt'   => $this->fmtHoras($t['period_minutes'] / 60),
+            'lifetime_fmt' => $this->fmtHoras($t['lifetime_minutes'] / 60),
+        ], $ticketSummary);
+
+        return [
+            'clienteName'          => $customer->name,
+            'periodo'              => $periodo,
+            'logoDataUri'          => $logoDataUri,
+            'projetoLabel'         => $projetoLabel,
+            'emitidoEm'            => now()->format('d/m/Y'),
+            'projetos'             => $projetosList,
+            'totalHorasFmt'        => $this->fmtHoras($totalHoras),
+            'valorTotal'           => $this->brl($totalValue),
+            'valorHoraResumo'      => $valorHoraResumo,
+            'grupos'               => $this->buildPdfGroups($rows),
+            'vedamotors'           => $vedamotors,
+            'ticketRows'           => $ticketRows,
+            'ticketTotPeriodFmt'   => $this->fmtHoras(array_sum(array_column($ticketSummary, 'period_minutes')) / 60),
+            'ticketTotLifetimeFmt' => $this->fmtHoras(array_sum(array_column($ticketSummary, 'lifetime_minutes')) / 60),
+        ];
+    }
+
+    /**
+     * HTML do relatório de apontamentos (a MESMA Blade do PDF enviado) — consumido
+     * pelo preview da tela, garantindo paridade total com o documento anexado.
+     */
+    public function reportHtml(Request $request, string $customerId, string $yearMonth): JsonResponse
+    {
+        $customer = Customer::find($customerId);
+        if (!$customer) {
+            return response()->json(['success' => false, 'message' => 'Cliente não encontrado.'], 404);
+        }
+
+        $html = view('pdf.fechamento-cliente', $this->buildReportViewData($customer, $yearMonth))->render();
+
+        return response()->json(['html' => $html]);
     }
 
     // ─── Prévia do e-mail (template real) com a mensagem editável ───────────────

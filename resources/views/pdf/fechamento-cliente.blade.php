@@ -4,33 +4,41 @@
   <meta charset="utf-8">
   <title>Relatório de Apontamentos — {{ $clienteName }} — {{ $periodo }}</title>
   <style>
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { font-family: 'DejaVu Sans', Arial, sans-serif; color: #1f2937; font-size: 11px; margin: 0; padding: 0; }
-    .header { border-bottom: 2px solid #0e7490; padding-bottom: 12px; margin-bottom: 16px; }
-    .brand { font-size: 20px; font-weight: bold; color: #111827; }
-    .brand-sub { font-size: 10px; color: #6b7280; margin-top: 2px; }
-    .doc-title { font-size: 15px; font-weight: bold; color: #155e75; margin-top: 10px; }
-    .doc-meta { font-size: 11px; color: #4b5563; margin-top: 2px; }
+
+    /* Cabeçalho — logo à esquerda + identificação à direita, régua roxa embaixo. */
+    table.header { width: 100%; border-collapse: collapse; border-bottom: 2px solid #5b21b6; margin-bottom: 18px; }
+    table.header td { padding: 0 0 14px; vertical-align: middle; }
+    .hd-logo { width: 50%; }
+    .hd-logo img { width: 150px; max-width: 100%; height: auto; }
+    .brand { font-size: 20px; font-weight: bold; color: #5b21b6; }
+    .hd-meta { text-align: right; }
+    .doc-title { font-size: 18px; font-weight: bold; color: #1f2937; }
+    .doc-sub { font-size: 11px; color: #6b7280; margin: 1px 0 6px; }
+    .doc-line { font-size: 11px; color: #4b5563; margin-top: 1px; }
+    .doc-line .lbl { font-weight: bold; color: #374151; }
+    .doc-emit { font-size: 10px; color: #9ca3af; margin-top: 3px; }
 
     .summary { width: 100%; margin: 14px 0 18px; border-collapse: collapse; }
-    .summary td { width: 50%; background: #ecfeff; border: 1px solid #cffafe; padding: 10px 12px; vertical-align: top; }
-    .summary-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: #0e7490; font-weight: bold; }
+    .summary td { width: 33.33%; background: #f5f3ff; border: 1px solid #ddd6fe; padding: 10px 12px; vertical-align: top; }
+    .summary-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: #6d28d9; font-weight: bold; }
     .summary-value { font-size: 15px; font-weight: bold; color: #111827; margin-top: 3px; }
 
-    .group-title { font-size: 12px; font-weight: bold; color: #155e75; background: #cffafe; padding: 6px 10px; margin-top: 14px; border-radius: 4px; }
+    .group-title { font-size: 12px; font-weight: bold; color: #5b21b6; background: #ede9fe; padding: 6px 10px; margin-top: 14px; border-radius: 4px; }
 
     table.rows { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
-    table.rows th { background: #f9fafb; border-bottom: 1px solid #e5e7eb; text-align: left; padding: 5px 6px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; }
+    table.rows th { background: #f5f3ff; border-bottom: 1px solid #ddd6fe; text-align: left; padding: 5px 6px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: #6d28d9; }
     table.rows td { border-bottom: 1px solid #f3f4f6; padding: 5px 6px; font-size: 10px; vertical-align: top; }
     .right { text-align: right; }
     .nowrap { white-space: nowrap; }
-    .section-total { font-size: 11px; font-weight: bold; color: #155e75; text-align: right; padding: 4px 6px; }
+    .section-total { font-size: 11px; font-weight: bold; color: #5b21b6; text-align: right; padding: 4px 6px; }
 
     /* Sub-projeto (filho consolidado dentro do contrato) — destaque roxo. */
     .sub-title { font-size: 11px; font-weight: bold; color: #5b21b6; background: #f5f3ff; padding: 4px 10px; margin-top: 8px; border-left: 3px solid #8b5cf6; }
     .sub-total { font-size: 10px; font-weight: bold; color: #5b21b6; text-align: right; padding: 3px 6px 2px; }
 
-    .total-box { margin-top: 22px; background: #0e7490; color: #fff; padding: 12px 16px; border-radius: 6px; }
+    .total-box { margin-top: 22px; background: #5b21b6; color: #fff; padding: 12px 16px; border-radius: 6px; }
     .total-box td { color: #fff; }
     .total-label { font-size: 12px; font-weight: bold; }
     .total-value { font-size: 18px; font-weight: bold; text-align: right; }
@@ -49,12 +57,25 @@
   </style>
 </head>
 <body>
-  <div class="header">
-    <div class="brand">ERPSERV Consultoria</div>
-    <div class="brand-sub">Minutor — Controle de horas e contratos</div>
-    <div class="doc-title">Relatório de Apontamentos</div>
-    <div class="doc-meta">{{ $clienteName }} &nbsp;·&nbsp; Competência: {{ $periodo }}</div>
-  </div>
+  <table class="header">
+    <tr>
+      <td class="hd-logo">
+        @if(!empty($logoDataUri))
+          <img src="{{ $logoDataUri }}" alt="ERPSERV Consultoria" />
+        @else
+          <span class="brand">ERPSERV Consultoria</span>
+        @endif
+      </td>
+      <td class="hd-meta">
+        <div class="doc-title">Relatório de Apontamentos</div>
+        <div class="doc-sub">Documento de cobrança e transparência</div>
+        <div class="doc-line"><span class="lbl">Cliente:</span> {{ $clienteName }}</div>
+        <div class="doc-line"><span class="lbl">Projeto:</span> {{ $projetoLabel ?? 'Todos' }}</div>
+        <div class="doc-line"><span class="lbl">Competência:</span> {{ $periodo }}</div>
+        <div class="doc-emit">Emitido em {{ $emitidoEm ?? '' }}</div>
+      </td>
+    </tr>
+  </table>
 
   <table class="summary">
     <tr>
@@ -63,26 +84,21 @@
         <div class="summary-value">{{ $totalHorasFmt }}</div>
       </td>
       <td>
+        <div class="summary-label">Valor Hora</div>
+        <div class="summary-value">{{ $valorHoraResumo ?? '—' }}</div>
+      </td>
+      <td>
         <div class="summary-label">Valor a Pagar</div>
-        <div class="summary-value" style="color:#0e7490;">{{ $valorTotal }}</div>
+        <div class="summary-value" style="color:#5b21b6;">{{ $valorTotal }}</div>
       </td>
     </tr>
   </table>
-
-  @if(!empty($projetos))
-  <div style="margin:0 0 14px;padding:10px 14px;background:#ecfeff;border:1px solid #a5f0f7;border-radius:8px;">
-    <div style="font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#0e7490;">{{ count($projetos) > 1 ? 'Projetos' : 'Projeto' }}</div>
-    @foreach($projetos as $p)
-    <div style="margin-top:3px;font-size:12px;font-weight:700;color:#0f3a42;"><span style="color:#0e7490;">{{ $p['codigo'] }}</span> &mdash; {{ $p['nome'] }}</div>
-    @endforeach
-  </div>
-  @endif
 
   @if(empty($grupos))
     <div class="empty">Nenhum apontamento considerado no período.</div>
   @else
     @foreach($grupos as $grupo)
-      <div class="group-title">{{ $grupo['projeto'] }} — {{ $grupo['horas_fmt'] }} &nbsp;·&nbsp; Valor hora: R$ {{ number_format($grupo['valor_hora'] ?? 0, 2, ',', '.') }}</div>
+      <div class="group-title">Projeto: {{ $grupo['projeto'] }} — {{ $grupo['horas_fmt'] }}</div>
       @if(!empty($grupo['multi_sub']))
         {{-- Contrato consolidado: um bloco por sub-projeto (filho), com sub-subtotal. --}}
         @foreach($grupo['subgrupos'] as $sub)

@@ -990,6 +990,13 @@ class FechamentoClienteController extends Controller
         $totalValue = $this->clienteTotal((int) $customer->id, $yearMonth);
         $totalHoras = round(collect($rows)->sum('horas'), 2);
 
+        // Projeto(s) do fechamento (código + nome) — destaque no e-mail / PDF / relatório.
+        $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand');
+        $projetosList = array_values(array_map(
+            fn ($p) => ['codigo' => $p['projeto_codigo'] ?? '—', 'nome' => $p['projeto_nome'] ?? '—'],
+            $apData['projetos'] ?? []
+        ));
+
         $safeName     = $this->sanitizeFilename($customer->name);
         $pdfFileName  = "Fechamento_{$yearMonth}_{$safeName}.pdf";
         $xlsxFileName = "Fechamento_{$yearMonth}_{$safeName}.xlsx";
@@ -1022,6 +1029,7 @@ class FechamentoClienteController extends Controller
         $pdf = Pdf::loadView('pdf.fechamento-cliente', [
             'clienteName'          => $customer->name,
             'periodo'              => $periodo,
+            'projetos'             => $projetosList,
             'totalHorasFmt'        => $this->fmtHoras($totalHoras),
             'valorTotal'           => $this->brl($totalValue),
             'grupos'               => $this->buildPdfGroups($rows),
@@ -1044,6 +1052,7 @@ class FechamentoClienteController extends Controller
             'pdf_name'    => $pdfFileName,
             'xlsx_name'   => $xlsxFileName,
             'total_value' => $totalValue,
+            'projetos'    => $projetosList,
         ];
     }
 
@@ -1066,6 +1075,12 @@ class FechamentoClienteController extends Controller
         $mensagem       = trim((string) $request->input('mensagem'));
         $mensagem       = $mensagem !== '' ? $mensagem : $mensagemPadrao;
 
+        $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand');
+        $projetosList = array_values(array_map(
+            fn ($p) => ['codigo' => $p['projeto_codigo'] ?? '—', 'nome' => $p['projeto_nome'] ?? '—'],
+            $apData['projetos'] ?? []
+        ));
+
         $html = view('emails.fechamento.cliente', [
             'clienteName'     => $customer->name,
             'senderName'      => $sender->name,
@@ -1073,6 +1088,7 @@ class FechamentoClienteController extends Controller
             'valorTotal'      => $this->brl($this->clienteTotal((int) $customer->id, $yearMonth)),
             'withAttachments' => true,
             'mensagem'        => $mensagem,
+            'projetos'        => $projetosList,
         ])->render();
 
         // Prévia só: força o logo claro (escuro-colorido) a aparecer no card branco —
@@ -1148,6 +1164,7 @@ class FechamentoClienteController extends Controller
                 senderEmail:     $sender->email,
                 financeiroCc:    $financeiroCc ?: null,
                 mensagem:        $mensagem,
+                projetos:        $files['projetos'] ?? [],
                 withAttachments: true,
             );
             Mail::to($to)->cc($cc)->send($mailable);

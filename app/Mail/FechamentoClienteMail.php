@@ -62,7 +62,7 @@ class FechamentoClienteMail extends Mailable
 
         // To/CC ficam por conta do controller (Mail::to()->cc()).
         return new Envelope(
-            from: new Address($from, $this->senderName),
+            from: new Address($from, config('mail.fechamento_from_name', 'Fechamento ERPSERV')),
             replyTo: $replyTo,
             subject: $this->subjectLine,
         );

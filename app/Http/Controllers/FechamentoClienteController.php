@@ -1169,7 +1169,7 @@ class FechamentoClienteController extends Controller
                 projetos:        $files['projetos'] ?? [],
                 withAttachments: true,
             );
-            Mail::to($to)->cc($cc)->send($mailable);
+            Mail::mailer(config('mail.fechamento_cliente_mailer', 'smtp'))->to($to)->cc($cc)->send($mailable);
 
             Log::info('Fechamento de cliente enviado por e-mail', [
                 'cliente' => $customer->id, 'remetente' => $sender->id,

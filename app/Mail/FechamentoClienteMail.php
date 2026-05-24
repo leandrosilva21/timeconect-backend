@@ -40,6 +40,7 @@ class FechamentoClienteMail extends Mailable
         public ?string $senderEmail = null,
         public ?string $financeiroCc = null,
         public ?string $mensagem = null, // corpo editável (texto livre); null = template usa default
+        public array $projetos = [],     // [{codigo, nome}] — destaque dos projetos do fechamento
         public bool $withAttachments = true,
     ) {
     }
@@ -78,6 +79,7 @@ class FechamentoClienteMail extends Mailable
                 'periodo'         => $this->periodo,
                 'valorTotal'      => $this->valorTotal,
                 'mensagem'        => $this->mensagem ?? '',
+                'projetos'        => $this->projetos,
                 'withAttachments' => $this->withAttachments,
             ],
         );

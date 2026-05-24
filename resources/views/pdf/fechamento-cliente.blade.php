@@ -69,6 +69,15 @@
     </tr>
   </table>
 
+  @if(!empty($projetos))
+  <div style="margin:0 0 14px;padding:10px 14px;background:#ecfeff;border:1px solid #a5f0f7;border-radius:8px;">
+    <div style="font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#0e7490;">{{ count($projetos) > 1 ? 'Projetos' : 'Projeto' }}</div>
+    @foreach($projetos as $p)
+    <div style="margin-top:3px;font-size:12px;font-weight:700;color:#0f3a42;"><span style="color:#0e7490;">{{ $p['codigo'] }}</span> &mdash; {{ $p['nome'] }}</div>
+    @endforeach
+  </div>
+  @endif
+
   @if(empty($grupos))
     <div class="empty">Nenhum apontamento considerado no período.</div>
   @else

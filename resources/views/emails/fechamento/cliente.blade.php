@@ -92,6 +92,29 @@
             </td>
           </tr>
 
+          {{-- ── PROJETO(S) (destaque: código + nome) ── --}}
+          @if(!empty($projetos))
+          <tr>
+            <td bgcolor="#FFFFFF" style="padding:20px 40px 0;background-color:#FFFFFF;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="#ECFEFF"
+                style="background-color:#ECFEFF;border-radius:12px;border:1px solid #A5F0F7;">
+                <tr>
+                  <td style="padding:16px 20px;">
+                    <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#0E7490;">
+                      {{ count($projetos) > 1 ? 'Projetos' : 'Projeto' }}
+                    </div>
+                    @foreach($projetos as $p)
+                    <div style="margin-top:6px;font-size:15px;font-weight:700;color:#0F3A42;line-height:1.4;">
+                      <span style="color:#0E7490;">{{ $p['codigo'] }}</span> &mdash; {{ $p['nome'] }}
+                    </div>
+                    @endforeach
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          @endif
+
           {{-- ── VALOR A PAGAR ── --}}
           <tr>
             <td bgcolor="#FFFFFF" style="padding:24px 40px 0;background-color:#FFFFFF;">

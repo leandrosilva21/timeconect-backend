@@ -82,7 +82,7 @@
     <div class="empty">Nenhum apontamento considerado no período.</div>
   @else
     @foreach($grupos as $grupo)
-      <div class="group-title">{{ $grupo['projeto'] }} — {{ $grupo['horas_fmt'] }}</div>
+      <div class="group-title">{{ $grupo['projeto'] }} — {{ $grupo['horas_fmt'] }} &nbsp;·&nbsp; Valor hora: R$ {{ number_format($grupo['valor_hora'] ?? 0, 2, ',', '.') }}</div>
       @if(!empty($grupo['multi_sub']))
         {{-- Contrato consolidado: um bloco por sub-projeto (filho), com sub-subtotal. --}}
         @foreach($grupo['subgrupos'] as $sub)

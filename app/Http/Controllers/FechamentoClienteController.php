@@ -800,6 +800,7 @@ class FechamentoClienteController extends Controller
                 $rows[] = [
                     // Contrato (projeto PAI consolidado) — usado p/ agrupar no PDF.
                     'contrato'    => $proj['projeto_nome'] ?? '—',
+                    'valor_hora'  => (float) ($proj['valor_hora'] ?? 0),
                     // Sub-projeto real do apontamento (projeto FILHO, ou o próprio pai).
                     'projeto'    => $ap['sub_projeto_nome'] ?? ($proj['projeto_nome'] ?? '—'),
                     'data'       => $ap['data'] ?? null,
@@ -962,7 +963,8 @@ class FechamentoClienteController extends Controller
             }
 
             $grupos[] = [
-                'projeto'   => $contrato,
+                'projeto'    => $contrato,
+                'valor_hora' => (float) ($items[0]['valor_hora'] ?? 0),
                 'horas_fmt' => $this->fmtHoras($horasContrato),
                 // >1 sub-projeto = filho consolidado: renderiza sub-cabeçalhos + sub-subtotais.
                 'multi_sub' => count($subgrupos) > 1,

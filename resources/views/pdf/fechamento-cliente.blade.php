@@ -13,7 +13,7 @@
     .doc-meta { font-size: 11px; color: #4b5563; margin-top: 2px; }
 
     .summary { width: 100%; margin: 14px 0 18px; border-collapse: collapse; }
-    .summary td { width: 50%; background: #ecfeff; border: 1px solid #cffafe; padding: 10px 12px; vertical-align: top; }
+    .summary td { width: 33.33%; background: #ecfeff; border: 1px solid #cffafe; padding: 10px 12px; vertical-align: top; }
     .summary-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: #0e7490; font-weight: bold; }
     .summary-value { font-size: 15px; font-weight: bold; color: #111827; margin-top: 3px; }
 
@@ -63,6 +63,10 @@
         <div class="summary-value">{{ $totalHorasFmt }}</div>
       </td>
       <td>
+        <div class="summary-label">Valor Hora</div>
+        <div class="summary-value">{{ $valorHoraResumo ?? '—' }}</div>
+      </td>
+      <td>
         <div class="summary-label">Valor a Pagar</div>
         <div class="summary-value" style="color:#0e7490;">{{ $valorTotal }}</div>
       </td>
@@ -82,7 +86,7 @@
     <div class="empty">Nenhum apontamento considerado no período.</div>
   @else
     @foreach($grupos as $grupo)
-      <div class="group-title">{{ $grupo['projeto'] }} — {{ $grupo['horas_fmt'] }} &nbsp;·&nbsp; Valor hora: R$ {{ number_format($grupo['valor_hora'] ?? 0, 2, ',', '.') }}</div>
+      <div class="group-title">{{ $grupo['projeto'] }} — {{ $grupo['horas_fmt'] }}</div>
       @if(!empty($grupo['multi_sub']))
         {{-- Contrato consolidado: um bloco por sub-projeto (filho), com sub-subtotal. --}}
         @foreach($grupo['subgrupos'] as $sub)

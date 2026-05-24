@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Models\Partner;
 use App\Models\User;
 use App\Models\UserHourlyRateLog;
 use App\Http\Traits\ResponseHelpers;
@@ -272,6 +273,86 @@ class UserController extends Controller
      *     )
      * )
      */
+    /**
+     * Tipo de contrato (cooperado/clt/pj): regra "trava em todos".
+     *  - Parceiro (parceiro_admin com partner_id): grava no parceiro e PROPAGA p/ todos
+     *    os usuários daquele partner_id (só quando o valor é enviado, p/ não zerar em update parcial).
+     *  - Consultor vinculado a parceiro: SEMPRE herda do parceiro (ignora qualquer input).
+     *  - Sem parceiro: o valor próprio já foi gravado via fillable — nada a propagar.
+     */
+    private function syncContractType(User $user, Request $request): void
+    {
+        if (!$user->partner_id) {
+            return;
+        }
+        $partner = Partner::find($user->partner_id);
+        if (!$partner) {
+            return;
+        }
+
+        if ($user->type === 'parceiro_admin') {
+            if ($request->has('contract_type')) {
+                $ct = $request->input('contract_type');
+                $partner->contract_type = $ct;
+                $partner->save();
+                User::where('partner_id', $partner->id)->update(['contract_type' => $ct]);
+            }
+        } else {
+            if ($user->contract_type !== $partner->contract_type) {
+                $user->forceFill(['contract_type' => $partner->contract_type])->save();
+            }
+        }
+    }
+
+    /**
+     * Atualização em massa do tipo de contrato (cooperado/clt/pj) para usuários selecionados.
+     * Respeita a trava: consultor vinculado a parceiro é pulado (herda do parceiro);
+     * se um parceiro_admin estiver na seleção, propaga p/ todos os usuários daquele parceiro.
+     */
+    public function bulkContractType(Request $request): JsonResponse
+    {
+        $currentUser = Auth::user();
+        if (!($currentUser->isAdmin() || $currentUser->hasAccess('users.update'))) {
+            return $this->accessDeniedResponse('Você não tem permissão para atualizar usuários.');
+        }
+
+        $validator = Validator::make($request->all(), [
+            'user_ids'      => 'required|array|min:1',
+            'user_ids.*'    => 'integer|exists:users,id',
+            'contract_type' => 'nullable|in:cooperado,clt,pj',
+        ]);
+        if ($validator->fails()) {
+            return $this->validationErrorResponse($validator->errors()->all());
+        }
+
+        $ct  = $request->input('contract_type');
+        $ids = $request->input('user_ids');
+
+        DB::beginTransaction();
+        try {
+            $applied = 0;
+            $skipped = 0;
+            foreach (User::whereIn('id', $ids)->get() as $u) {
+                if ($u->type === 'parceiro_admin' && $u->partner_id) {
+                    Partner::where('id', $u->partner_id)->update(['contract_type' => $ct]);
+                    User::where('partner_id', $u->partner_id)->update(['contract_type' => $ct]);
+                    $applied++;
+                } elseif ($u->partner_id) {
+                    // Consultor vinculado: herda do parceiro (trava) — não altera direto.
+                    $skipped++;
+                } else {
+                    $u->forceFill(['contract_type' => $ct])->save();
+                    $applied++;
+                }
+            }
+            DB::commit();
+            return response()->json(['applied' => $applied, 'skipped' => $skipped]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return $this->serverErrorResponse('Erro na atualização em massa: ' . $e->getMessage());
+        }
+    }
+
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -282,6 +363,11 @@ class UserController extends Controller
             'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'rate_type' => 'nullable|in:hourly,monthly',
             'consultant_type' => 'nullable|in:horista,banco_de_horas,fixo',
+            'contract_type' => 'nullable|in:cooperado,clt,pj',
+            'full_name'      => 'nullable|string|max:255',
+            'cpf'            => 'nullable|string|max:20',
+            'matricula'      => 'nullable|string|max:30',
+            'payroll_status' => 'nullable|string|max:40',
             'bank_hours_start_date' => 'nullable|date',
             'guaranteed_hours'      => 'nullable|numeric|min:0|max:744',
             'customer_id'  => 'nullable|exists:customers,id',
@@ -334,6 +420,9 @@ class UserController extends Controller
             if (!empty($protectedData)) {
                 $user->forceFill($protectedData)->save();
             }
+
+            // Tipo de contrato: parceiro define p/ todos; consultor vinculado herda (trava)
+            $this->syncContractType($user, $request);
 
             // Definir senha com hash correto via DB direto (evita duplo hash pelo cast 'hashed')
             $user->setTemporaryPassword($temporaryPassword, 24);
@@ -491,6 +580,11 @@ class UserController extends Controller
             'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'rate_type' => 'nullable|in:hourly,monthly',
             'consultant_type' => 'nullable|in:horista,banco_de_horas,fixo',
+            'contract_type' => 'nullable|in:cooperado,clt,pj',
+            'full_name'      => 'nullable|string|max:255',
+            'cpf'            => 'nullable|string|max:20',
+            'matricula'      => 'nullable|string|max:30',
+            'payroll_status' => 'nullable|string|max:40',
             'bank_hours_start_date' => 'nullable|date',
             'guaranteed_hours'      => 'nullable|numeric|min:0|max:744',
             'customer_id'  => 'nullable|exists:customers,id',
@@ -550,6 +644,9 @@ class UserController extends Controller
             if (!empty($protectedData)) {
                 $user->forceFill($protectedData)->save();
             }
+
+            // Tipo de contrato: parceiro define p/ todos; consultor vinculado herda (trava)
+            $this->syncContractType($user, $request);
 
             // Registrar log de alteração de valor ou tipo de contrato
             if ($shouldLog) {

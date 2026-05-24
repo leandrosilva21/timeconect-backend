@@ -22,6 +22,7 @@ class Partner extends Model
         'phone',
         'active',
         'pricing_type',
+        'contract_type',
         'hourly_rate',
     ];
 

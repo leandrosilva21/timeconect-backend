@@ -605,6 +605,9 @@ Route::prefix('v1')->group(function () {
         Route::put('/users/{user}', [UserController::class, 'update'])->name('users.update');
         Route::patch('/users/{user}', [UserController::class, 'update'])->name('users.patch');
 
+        // Atualização em massa do tipo de contrato (cooperado/clt/pj)
+        Route::post('/users/bulk-contract-type', [UserController::class, 'bulkContractType'])->name('users.bulk-contract-type');
+
         Route::middleware('permission.or.admin:users.delete')->group(function () {
             Route::delete('/users/{user}',    [UserController::class, 'destroy'])->name('users.destroy');
             Route::delete('/users',           [UserController::class, 'bulkDestroy'])->name('users.bulk-destroy');
@@ -769,6 +772,15 @@ Route::prefix('v1')->group(function () {
         // 👤 FECHAMENTO CONSULTOR
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/fechamento-consultor/{yearMonth}',                              [\App\Http\Controllers\FechamentoConsultorController::class, 'index']);
+            Route::get('/fechamento-consultor/{yearMonth}/export-excel',                 [\App\Http\Controllers\FechamentoConsultorController::class, 'exportExcel']);
+
+            // Folha Cooperativa (planilha de importação)
+            Route::get('/fechamento-folha/{yearMonth}',          [\App\Http\Controllers\FolhaPagamentoController::class, 'grid']);
+            Route::post('/fechamento-folha/{yearMonth}',         [\App\Http\Controllers\FolhaPagamentoController::class, 'save']);
+            Route::get('/fechamento-folha/{yearMonth}/export',   [\App\Http\Controllers\FolhaPagamentoController::class, 'export']);
+            Route::delete('/fechamento-folha/{yearMonth}/manual/{socioKey}', [\App\Http\Controllers\FolhaPagamentoController::class, 'deleteRow']);
+            Route::post('/fechamento-folha/{yearMonth}/cancel',  [\App\Http\Controllers\FolhaPagamentoController::class, 'cancelRow']);
+
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/apontamentos',        [\App\Http\Controllers\FechamentoConsultorController::class, 'apontamentos']);
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/banco-horas',         [\App\Http\Controllers\FechamentoConsultorController::class, 'bancoHoras']);
             Route::post('/fechamento-consultor/{userId}/{yearMonth}/enviar-email',       [\App\Http\Controllers\FechamentoConsultorController::class, 'enviarEmail']);

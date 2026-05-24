@@ -180,7 +180,7 @@ class FechamentoClienteController extends Controller
             return ['projetos' => [], 'total_horas' => 0.0, 'total_geral' => 0.0];
         }
 
-        $projects = Project::with(['contractType:id,name,code'])
+        $projects = Project::with(['contractType:id,name,code', 'hourlyRateChanges'])
             ->whereIn('id', $projectIds)
             ->get()
             ->keyBy('id');
@@ -193,7 +193,7 @@ class FechamentoClienteController extends Controller
         }
         $missingParents = array_diff(array_unique(array_values($effectiveId)), $projects->keys()->all());
         if (!empty($missingParents)) {
-            Project::with(['contractType:id,name,code'])
+            Project::with(['contractType:id,name,code', 'hourlyRateChanges'])
                 ->whereIn('id', $missingParents)
                 ->get()
                 ->each(fn ($p) => $projects[$p->id] = $p);
@@ -216,8 +216,9 @@ class FechamentoClienteController extends Controller
         $totalGeral = 0.0;
 
         foreach ($byProject as $projId => $pts) {
-            $project    = $projects[$projId] ?? null;
-            $hourlyRate = (float) ($project?->hourly_rate ?? 0);
+            $project     = $projects[$projId] ?? null;
+            // Taxa do projeto p/ a competência de fechamento (cabeçalho/coluna do projeto).
+            $projetoRate = (float) ($project?->hourlyRateForCompetencia($toMonth) ?? 0);
 
             $horasProjeto  = 0.0;
             $basesProjeto  = 0.0;
@@ -231,8 +232,10 @@ class FechamentoClienteController extends Controller
                 }
                 $solicitante = is_array($solicitanteRaw) ? ($solicitanteRaw['name'] ?? null) : null;
 
-                $horas   = $t->effort_minutes / 60;
-                $mult    = 1 + (((float) ($t->client_extra_pct ?? 0)) / 100);
+                $horas      = $t->effort_minutes / 60;
+                // Valoriza cada apontamento pela taxa vigente NO MÊS do apontamento — legado intacto.
+                $hourlyRate = (float) ($project?->hourlyRateForCompetencia($t->date->format('Y-m')) ?? 0);
+                $mult       = 1 + (((float) ($t->client_extra_pct ?? 0)) / 100);
                 $valorTs = round($horas * $hourlyRate * $mult, 2);
 
                 $horasProjeto += $horas;
@@ -270,7 +273,7 @@ class FechamentoClienteController extends Controller
                 'projeto_codigo' => $project?->code ?? '—',
                 'tipo_contrato'  => $project?->contractType?->name ?? '—',
                 'horas'          => $horasProjeto,
-                'valor_hora'     => $hourlyRate,
+                'valor_hora'     => $projetoRate,
                 'total_receita'  => $totalProjeto,
                 'extra_receita'  => round($totalProjeto - $basesProjeto, 2),
                 'apontamentos'   => $apontamentos,
@@ -457,7 +460,7 @@ class FechamentoClienteController extends Controller
             return [];
         }
 
-        $projects = Project::with(['contractType:id,name,code'])
+        $projects = Project::with(['contractType:id,name,code', 'hourlyRateChanges'])
             ->whereIn('id', $projectIds)
             ->get();
 
@@ -516,7 +519,7 @@ class FechamentoClienteController extends Controller
             $totalHours   = round((int) ($hoursByProject[$project->id] ?? 0) / 60, 2);
             $consumedAll  = round((int) ($totalConsumedByProject[$project->id] ?? 0) / 60, 2);
             $contractCode = strtolower($project->contractType->code ?? '');
-            $hourlyRate   = (float) ($project->hourly_rate ?? 0);
+            $hourlyRate   = (float) ($project->hourlyRateForCompetencia($yearMonth) ?? 0);
             $projectValue = (float) ($project->project_value ?? 0);
             $soldHours    = (float) ($project->sold_hours ?? 0);
 

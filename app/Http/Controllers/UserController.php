@@ -652,20 +652,45 @@ class UserController extends Controller
 
             // Registrar log de alteração de valor ou tipo de contrato
             if ($shouldLog) {
-                UserHourlyRateLog::create([
-                    'user_id'              => $user->id,
-                    'changed_by'           => $currentUser->id,
-                    'old_hourly_rate'      => $oldHourlyRate,
-                    'new_hourly_rate'      => $user->fresh()->hourly_rate,
-                    'old_rate_type'        => $oldRateType,
-                    'new_rate_type'        => $user->fresh()->rate_type,
-                    'old_consultant_type'  => $oldConsultantType,
-                    'new_consultant_type'  => $user->fresh()->consultant_type,
-                    'reason'               => $request->input('rate_change_reason'),
-                    'effective_from'       => $request->input('hourly_rate_effective_from')
-                        ? \Carbon\Carbon::parse($request->input('hourly_rate_effective_from'))->startOfMonth()->toDateString()
-                        : null,
-                ]);
+                $fresh = $user->fresh();
+
+                // Dedup mesmo-dia: se já existe um log para este usuário criado HOJE,
+                // atualiza-o com os valores mais recentes (mantendo os old_* do início do dia)
+                // em vez de empilhar uma nova linha por alteração.
+                $todayLog = UserHourlyRateLog::where('user_id', $user->id)
+                    ->whereDate('created_at', now()->toDateString())
+                    ->orderByDesc('id')
+                    ->first();
+
+                $newEffectiveFrom = $request->input('hourly_rate_effective_from')
+                    ? \Carbon\Carbon::parse($request->input('hourly_rate_effective_from'))->startOfMonth()->toDateString()
+                    : null;
+
+                if ($todayLog) {
+                    $todayLog->new_hourly_rate     = $fresh->hourly_rate;
+                    $todayLog->new_rate_type       = $fresh->rate_type;
+                    $todayLog->new_consultant_type = $fresh->consultant_type;
+                    $todayLog->changed_by          = $currentUser->id;
+                    $todayLog->reason              = $request->input('rate_change_reason');
+                    // effective_from não-destrutivo: só sobrescreve se uma nova data foi enviada
+                    if ($newEffectiveFrom !== null) {
+                        $todayLog->effective_from = $newEffectiveFrom;
+                    }
+                    $todayLog->save();
+                } else {
+                    UserHourlyRateLog::create([
+                        'user_id'              => $user->id,
+                        'changed_by'           => $currentUser->id,
+                        'old_hourly_rate'      => $oldHourlyRate,
+                        'new_hourly_rate'      => $fresh->hourly_rate,
+                        'old_rate_type'        => $oldRateType,
+                        'new_rate_type'        => $fresh->rate_type,
+                        'old_consultant_type'  => $oldConsultantType,
+                        'new_consultant_type'  => $fresh->consultant_type,
+                        'reason'               => $request->input('rate_change_reason'),
+                        'effective_from'       => $newEffectiveFrom,
+                    ]);
+                }
             }
 
             // Sincronizar tipos de dashboard se fornecidos

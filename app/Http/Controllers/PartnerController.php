@@ -86,14 +86,36 @@ class PartnerController extends Controller
 
         // Registra a vigência do novo valor hora (a partir do mês escolhido). Legado intacto.
         if (array_key_exists('hourly_rate', $data) && (float) $partner->hourly_rate !== (float) $oldRate) {
-            PartnerHourlyRateLog::create([
-                'partner_id'      => $partner->id,
-                'changed_by'      => Auth::id(),
-                'old_hourly_rate' => $oldRate,
-                'new_hourly_rate' => $partner->hourly_rate,
-                'effective_from'  => $effectiveFrom ? Carbon::parse($effectiveFrom)->startOfMonth()->toDateString() : null,
-                'reason'          => $request->input('rate_change_reason'),
-            ]);
+            $newEffectiveFrom = $effectiveFrom
+                ? Carbon::parse($effectiveFrom)->startOfMonth()->toDateString()
+                : null;
+
+            // Dedup mesmo-dia: se já existe um log para este parceiro criado HOJE,
+            // atualiza-o com o valor mais recente (mantendo old_hourly_rate do início do dia).
+            $todayLog = PartnerHourlyRateLog::where('partner_id', $partner->id)
+                ->whereDate('created_at', now()->toDateString())
+                ->orderByDesc('id')
+                ->first();
+
+            if ($todayLog) {
+                $todayLog->new_hourly_rate = $partner->hourly_rate;
+                $todayLog->changed_by      = Auth::id();
+                $todayLog->reason          = $request->input('rate_change_reason');
+                // effective_from não-destrutivo: só sobrescreve se uma nova data foi enviada
+                if ($newEffectiveFrom !== null) {
+                    $todayLog->effective_from = $newEffectiveFrom;
+                }
+                $todayLog->save();
+            } else {
+                PartnerHourlyRateLog::create([
+                    'partner_id'      => $partner->id,
+                    'changed_by'      => Auth::id(),
+                    'old_hourly_rate' => $oldRate,
+                    'new_hourly_rate' => $partner->hourly_rate,
+                    'effective_from'  => $newEffectiveFrom,
+                    'reason'          => $request->input('rate_change_reason'),
+                ]);
+            }
         }
 
         return response()->json($partner);

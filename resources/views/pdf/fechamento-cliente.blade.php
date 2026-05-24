@@ -26,6 +26,10 @@
     .nowrap { white-space: nowrap; }
     .section-total { font-size: 11px; font-weight: bold; color: #155e75; text-align: right; padding: 4px 6px; }
 
+    /* Sub-projeto (filho consolidado dentro do contrato) — destaque roxo. */
+    .sub-title { font-size: 11px; font-weight: bold; color: #5b21b6; background: #f5f3ff; padding: 4px 10px; margin-top: 8px; border-left: 3px solid #8b5cf6; }
+    .sub-total { font-size: 10px; font-weight: bold; color: #5b21b6; text-align: right; padding: 3px 6px 2px; }
+
     .total-box { margin-top: 22px; background: #0e7490; color: #fff; padding: 12px 16px; border-radius: 6px; }
     .total-box td { color: #fff; }
     .total-label { font-size: 12px; font-weight: bold; }
@@ -70,28 +74,59 @@
   @else
     @foreach($grupos as $grupo)
       <div class="group-title">{{ $grupo['projeto'] }} — {{ $grupo['horas_fmt'] }}</div>
-      <table class="rows">
-        <thead>
-          <tr>
-            <th class="nowrap" style="width:62px;">Data</th>
-            <th>Consultor</th>
-            <th style="width:96px;">{{ ($vedamotors ?? false) ? 'Ticket ERPSERV' : 'Ticket' }}</th>
-            <th>{{ ($vedamotors ?? false) ? 'Ticket Vedamotors' : 'Título' }}</th>
-            <th class="right nowrap" style="width:54px;">Horas</th>
-          </tr>
-        </thead>
-        <tbody>
-          @foreach($grupo['linhas'] as $l)
+      @if(!empty($grupo['multi_sub']))
+        {{-- Contrato consolidado: um bloco por sub-projeto (filho), com sub-subtotal. --}}
+        @foreach($grupo['subgrupos'] as $sub)
+          <div class="sub-title">{{ $sub['projeto'] }}</div>
+          <table class="rows">
+            <thead>
+              <tr>
+                <th class="nowrap" style="width:62px;">Data</th>
+                <th>Consultor</th>
+                <th style="width:96px;">{{ ($vedamotors ?? false) ? 'Ticket ERPSERV' : 'Ticket' }}</th>
+                <th>{{ ($vedamotors ?? false) ? 'Ticket Vedamotors' : 'Título' }}</th>
+                <th class="right nowrap" style="width:54px;">Horas</th>
+              </tr>
+            </thead>
+            <tbody>
+              @foreach($sub['linhas'] as $l)
+                <tr>
+                  <td class="nowrap">{{ $l['data'] }}</td>
+                  <td>{{ $l['consultor'] }}</td>
+                  <td>{{ $l['ticket'] ?: '—' }}</td>
+                  <td>{{ $l['titulo'] ?: '—' }}</td>
+                  <td class="right nowrap">{{ $l['horas_fmt'] }}</td>
+                </tr>
+              @endforeach
+            </tbody>
+          </table>
+          <div class="sub-total">Subtotal {{ $sub['projeto'] }}: {{ $sub['horas_fmt'] }}</div>
+        @endforeach
+      @else
+        {{-- Caso normal (um único sub-projeto): renderiza plano, como antes. --}}
+        <table class="rows">
+          <thead>
             <tr>
-              <td class="nowrap">{{ $l['data'] }}</td>
-              <td>{{ $l['consultor'] }}</td>
-              <td>{{ $l['ticket'] ?: '—' }}</td>
-              <td>{{ $l['titulo'] ?: '—' }}</td>
-              <td class="right nowrap">{{ $l['horas_fmt'] }}</td>
+              <th class="nowrap" style="width:62px;">Data</th>
+              <th>Consultor</th>
+              <th style="width:96px;">{{ ($vedamotors ?? false) ? 'Ticket ERPSERV' : 'Ticket' }}</th>
+              <th>{{ ($vedamotors ?? false) ? 'Ticket Vedamotors' : 'Título' }}</th>
+              <th class="right nowrap" style="width:54px;">Horas</th>
             </tr>
-          @endforeach
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            @foreach($grupo['linhas'] as $l)
+              <tr>
+                <td class="nowrap">{{ $l['data'] }}</td>
+                <td>{{ $l['consultor'] }}</td>
+                <td>{{ $l['ticket'] ?: '—' }}</td>
+                <td>{{ $l['titulo'] ?: '—' }}</td>
+                <td class="right nowrap">{{ $l['horas_fmt'] }}</td>
+              </tr>
+            @endforeach
+          </tbody>
+        </table>
+      @endif
       <div class="section-total">Subtotal {{ $grupo['projeto'] }}: {{ $grupo['horas_fmt'] }}</div>
     @endforeach
   @endif

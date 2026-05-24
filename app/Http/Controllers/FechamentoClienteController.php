@@ -239,10 +239,15 @@ class FechamentoClienteController extends Controller
                 $basesProjeto += $horas * $hourlyRate;
                 $totalProjeto += $valorTs;
 
+                $subProj = $projects[$t->project_id] ?? null;
                 $apontamentos[] = [
-                    'id'               => $t->id,
-                    'data'             => $t->date->format('Y-m-d'),
-                    'colaborador'      => $t->user?->name ?? '—',
+                    'id'                 => $t->id,
+                    'data'               => $t->date->format('Y-m-d'),
+                    'colaborador'        => $t->user?->name ?? '—',
+                    // Sub-projeto real (p/ separar filho dentro do contrato pai no relatório).
+                    'sub_projeto_id'     => $t->project_id,
+                    'sub_projeto_codigo' => $subProj?->code ?? '—',
+                    'sub_projeto_nome'   => $subProj?->name ?? '—',
                     'horas'            => round($horas, 2),
                     'ticket'           => $t->ticket,
                     'titulo'           => $t->ticket_titulo,
@@ -793,7 +798,10 @@ class FechamentoClienteController extends Controller
                     : ($ap['titulo'] ?? '');
 
                 $rows[] = [
-                    'projeto'    => $proj['projeto_nome'] ?? '—',
+                    // Contrato (projeto PAI consolidado) — usado p/ agrupar no PDF.
+                    'contrato'    => $proj['projeto_nome'] ?? '—',
+                    // Sub-projeto real do apontamento (projeto FILHO, ou o próprio pai).
+                    'projeto'    => $ap['sub_projeto_nome'] ?? ($proj['projeto_nome'] ?? '—'),
                     'data'       => $ap['data'] ?? null,
                     'consultor'  => $ap['colaborador'] ?? '—',
                     'ticket'     => $ap['ticket'] ?? '',
@@ -891,32 +899,75 @@ class FechamentoClienteController extends Controller
         })->values()->toArray();
     }
 
-    /** Agrupa as linhas achatadas por projeto, para o PDF (Relatório de Apontamentos). */
+    /**
+     * Agrupa as linhas achatadas para o PDF (Relatório de Apontamentos).
+     *
+     * Agrupa por CONTRATO (projeto pai consolidado) e, dentro de cada contrato,
+     * sub-agrupa por SUB-PROJETO (projeto filho real do apontamento). Isso espelha
+     * o relatório em tela: contrato pai + blocos filhos com sub-subtotais e um único
+     * total por contrato.
+     *
+     * Cada grupo devolve:
+     *   - projeto:    nome do contrato (cabeçalho + subtotal geral)
+     *   - horas_fmt:  total de horas do contrato (subtotal geral)
+     *   - multi_sub:  bool — true se o contrato tem >1 sub-projeto (renderiza
+     *                 cabeçalhos/sub-subtotais); false renderiza plano (caso normal)
+     *   - linhas:     todas as linhas do contrato (usado quando multi_sub = false)
+     *   - subgrupos:  [{ projeto, horas_fmt, linhas }] (usado quando multi_sub = true)
+     */
     private function buildPdfGroups(array $rows): array
     {
-        $byProjeto = [];
+        // 1) Agrupa por contrato (pai), preservando ordem de aparição.
+        $byContrato = [];
         foreach ($rows as $r) {
-            $byProjeto[$r['projeto'] ?? '—'][] = $r;
+            $byContrato[$r['contrato'] ?? ($r['projeto'] ?? '—')][] = $r;
         }
 
+        $fmtLinha = fn (array $l): array => [
+            'data'      => isset($l['data']) ? Carbon::parse($l['data'])->format('d/m/Y') : '',
+            'consultor' => $l['consultor'] ?? '—',
+            'ticket'    => $l['ticket'] ?? '',
+            'titulo'    => $l['titulo'] ?? '',
+            'horas_fmt' => $this->fmtHoras((float) ($l['horas'] ?? 0)),
+        ];
+
         $grupos = [];
-        foreach ($byProjeto as $projeto => $items) {
-            $horas  = 0.0;
-            $linhas = [];
-            foreach ($items as $l) {
-                $horas += (float) ($l['horas'] ?? 0);
-                $linhas[] = [
-                    'data'      => isset($l['data']) ? Carbon::parse($l['data'])->format('d/m/Y') : '',
-                    'consultor' => $l['consultor'] ?? '—',
-                    'ticket'    => $l['ticket'] ?? '',
-                    'titulo'    => $l['titulo'] ?? '',
-                    'horas_fmt' => $this->fmtHoras((float) ($l['horas'] ?? 0)),
+        foreach ($byContrato as $contrato => $items) {
+            // 2) Sub-agrupa por sub-projeto (filho real), preservando ordem.
+            $bySub = [];
+            foreach ($items as $r) {
+                $bySub[$r['projeto'] ?? $contrato][] = $r;
+            }
+
+            $horasContrato = 0.0;
+            $linhasFlat    = [];   // todas as linhas (caso plano, 1 sub-projeto)
+            $subgrupos     = [];   // blocos por sub-projeto (caso consolidado)
+
+            foreach ($bySub as $sub => $subItems) {
+                $horasSub   = 0.0;
+                $linhasSub  = [];
+                foreach ($subItems as $l) {
+                    $h = (float) ($l['horas'] ?? 0);
+                    $horasSub      += $h;
+                    $horasContrato += $h;
+                    $linha          = $fmtLinha($l);
+                    $linhasSub[]    = $linha;
+                    $linhasFlat[]   = $linha;
+                }
+                $subgrupos[] = [
+                    'projeto'   => $sub,
+                    'linhas'    => $linhasSub,
+                    'horas_fmt' => $this->fmtHoras($horasSub),
                 ];
             }
+
             $grupos[] = [
-                'projeto'   => $projeto,
-                'linhas'    => $linhas,
-                'horas_fmt' => $this->fmtHoras($horas),
+                'projeto'   => $contrato,
+                'horas_fmt' => $this->fmtHoras($horasContrato),
+                // >1 sub-projeto = filho consolidado: renderiza sub-cabeçalhos + sub-subtotais.
+                'multi_sub' => count($subgrupos) > 1,
+                'linhas'    => $linhasFlat,
+                'subgrupos' => $subgrupos,
             ];
         }
 

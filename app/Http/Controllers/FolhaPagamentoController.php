@@ -28,12 +28,12 @@ class FolhaPagamentoController extends Controller
 
     /** Sócios: linhas FIXAS, manuais e totalmente editáveis (destacadas), independentes de cadastro. */
     private const SOCIOS = [
-        ['key' => 'ricardo_silva',      'nome' => 'RICARDO DE OLIVEIRA SILVA',           'cpf' => '313.017.868-61', 'status' => 'Contratado', 'hm' => 'Mensalista'],
-        ['key' => 'caio_maior',         'nome' => 'CAIO MAIOR GARCIA',                   'cpf' => '370.373.308-09', 'status' => 'Contratado', 'hm' => 'Horista'],
-        ['key' => 'ricardo_badawi',     'nome' => 'RICARDO BADAWI SANTOS',               'cpf' => '358.075.828-45', 'status' => 'Contratado', 'hm' => 'Horista'],
-        ['key' => 'leandro_silva',      'nome' => 'LEANDRO SANTOS E SILVA',              'cpf' => '328.265.748-09', 'status' => 'Contratado', 'hm' => 'Horista'],
-        ['key' => 'guilherme_junior',   'nome' => 'GUILHERME MATIAS DE OLIVEIRA JUNIOR', 'cpf' => '422.075.628-08', 'status' => 'Contratado', 'hm' => 'Horista'],
-        ['key' => 'daniel_albuquerque', 'nome' => 'DANIEL OLIVEIRA DE ALBUQUERQUE',      'cpf' => '003.701.572-90', 'status' => 'Contratado', 'hm' => 'Horista'],
+        ['key' => 'ricardo_silva',      'nome' => 'RICARDO DE OLIVEIRA SILVA',           'cpf' => '313.017.868-61', 'matricula' => '46761', 'status' => 'Contratado', 'hm' => 'Mensalista'],
+        ['key' => 'caio_maior',         'nome' => 'CAIO MAIOR GARCIA',                   'cpf' => '370.373.308-09', 'matricula' => '16383', 'status' => 'Contratado', 'hm' => 'Horista'],
+        ['key' => 'ricardo_badawi',     'nome' => 'RICARDO BADAWI SANTOS',               'cpf' => '358.075.828-45', 'matricula' => '29653', 'status' => 'Contratado', 'hm' => 'Horista'],
+        ['key' => 'leandro_silva',      'nome' => 'LEANDRO SANTOS E SILVA',              'cpf' => '328.265.748-09', 'matricula' => '1968',  'status' => 'Contratado', 'hm' => 'Horista'],
+        ['key' => 'guilherme_junior',   'nome' => 'GUILHERME MATIAS DE OLIVEIRA JUNIOR', 'cpf' => '422.075.628-08', 'matricula' => '38046', 'status' => 'Contratado', 'hm' => 'Horista'],
+        ['key' => 'daniel_albuquerque', 'nome' => 'DANIEL OLIVEIRA DE ALBUQUERQUE',      'cpf' => '003.701.572-90', 'matricula' => '16408', 'status' => 'Contratado', 'hm' => 'Horista'],
     ];
 
     private function normName(string $s): string
@@ -71,22 +71,23 @@ class FolhaPagamentoController extends Controller
         $data = $fc->buildConsultoresData($yearMonth);
         $byUser = collect(array_merge($data['horistas'], $data['banco_horas'], $data['fixos']))->keyBy('user_id');
 
-        $users = User::whereIn('id', $byUser->keys()->all())->get()->keyBy('id');
         $all   = FechamentoFolha::where('year_month', $yearMonth)->get();
         $folhaByUser  = $all->whereNotNull('user_id')->keyBy('user_id');
         $folhaBySocio = $all->whereNotNull('socio_key')->keyBy('socio_key');
 
         $rows = [];
 
-        // ── Cooperados regulares (exclui sócios, que entram como linha própria) ──
-        foreach ($byUser as $uid => $c) {
-            $u = $users[$uid] ?? null;
-            if (($u?->contract_type) !== 'cooperado') {
-                continue; // planilha da cooperativa = só cooperados
-            }
-            if ($this->matchesSocio($u?->name ?? ($c['nome'] ?? ''))) {
+        // ── Cooperados: TODO usuário (qualquer perfil exceto cliente) marcado cooperado.
+        // Exclui os sócios (entram como linha própria). Produção/horas vêm do fechamento
+        // do consultor quando houver apontamentos; senão 0 / 180.
+        $cooperados = User::where('contract_type', 'cooperado')->where('enabled', true)
+            ->whereNotIn('type', ['cliente'])->orderBy('name')->get();
+        foreach ($cooperados as $u) {
+            if ($this->matchesSocio($u->name)) {
                 continue; // sócio aparece como linha-sócio editável
             }
+            $uid = $u->id;
+            $c   = $byUser[$uid] ?? []; // dados do fechamento (se for consultor com apontamento)
 
             $f = $folhaByUser[$uid] ?? null;
 
@@ -103,7 +104,7 @@ class FolhaPagamentoController extends Controller
             $adiantamento = $f ? (float) $f->adiantamento : 0.0;
             $hm           = $f && $f->horista_mensalista
                 ? $f->horista_mensalista
-                : (($c['consultant_type'] ?? null) === 'horista' ? 'Horista' : 'Mensalista');
+                : (($c['consultant_type'] ?? $u->consultant_type) === 'horista' ? 'Horista' : 'Mensalista');
 
             $totalRend    = round($producao + $variavel + $reemb, 2);
             $totalDebitos = round($descontos + $adiantamento, 2);
@@ -158,7 +159,7 @@ class FolhaPagamentoController extends Controller
                 'user_id'            => null,
                 'socio_key'          => $s['key'],
                 'cpf'                => $f?->cpf ?? $s['cpf'],
-                'matricula'          => $f?->matricula ?? '',
+                'matricula'          => $f?->matricula ?? $s['matricula'],
                 'status'             => $f?->status ?? $s['status'],
                 'nome'               => $f?->nome ?? $s['nome'],
                 'dias'               => $f ? (float) $f->dias_trabalhados : 0.0,

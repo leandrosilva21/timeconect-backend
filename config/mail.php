@@ -60,14 +60,26 @@ return [
         ],
 
         // Conta NF-e — usada SOMENTE no fechamento do cliente (nfe@erpserv.com.br).
+        // Espelha o mailer 'smtp' (mesmo local_domain/EHLO + ssl) trocando só as credenciais.
         'nfe' => [
             'transport' => 'smtp',
+            'scheme' => env('MAIL_SCHEME'),
             'host' => env('MAIL_NFE_HOST', env('MAIL_HOST', 'smtp.office365.com')),
             'port' => env('MAIL_NFE_PORT', env('MAIL_PORT', 587)),
             'username' => env('MAIL_NFE_USERNAME', 'nfe@erpserv.com.br'),
             'password' => env('MAIL_NFE_PASSWORD'),
             'timeout' => env('MAIL_TIMEOUT', 60),
+            'local_domain' => env('MAIL_EHLO_DOMAIN', parse_url((string) env('APP_URL', 'http://localhost'), PHP_URL_HOST)),
             'encryption' => env('MAIL_NFE_ENCRYPTION', env('MAIL_ENCRYPTION', 'tls')),
+            'verify_peer' => true,
+            'allow_self_signed' => false,
+            'stream_context_options' => [
+                'ssl' => [
+                    'verify_peer' => true,
+                    'verify_peer_name' => true,
+                    'allow_self_signed' => false,
+                ]
+            ],
         ],
 
         'ses' => [

@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <title>Relatório de Apontamentos — {{ $clienteName }} — {{ $periodo }}</title>
   <style>
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { font-family: 'DejaVu Sans', Arial, sans-serif; color: #1f2937; font-size: 11px; margin: 0; padding: 0; }
 
     /* Cabeçalho — logo à esquerda + identificação à direita, régua roxa embaixo. */
     table.header { width: 100%; border-collapse: collapse; border-bottom: 2px solid #5b21b6; margin-bottom: 18px; }
     table.header td { padding: 0 0 14px; vertical-align: middle; }
     .hd-logo { width: 50%; }
-    .hd-logo img { width: 210px; max-width: 100%; height: auto; }
+    .hd-logo img { width: 150px; max-width: 100%; height: auto; }
     .brand { font-size: 20px; font-weight: bold; color: #5b21b6; }
     .hd-meta { text-align: right; }
     .doc-title { font-size: 18px; font-weight: bold; color: #1f2937; }

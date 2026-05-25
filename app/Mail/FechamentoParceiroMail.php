@@ -41,6 +41,10 @@ class FechamentoParceiroMail extends Mailable
         public ?string $financeiroCc = null,
         public ?string $mensagem = null, // corpo editável (texto livre); null = template usa default
         public bool $withAttachments = true,
+        // From sobrescrito quando o remetente envia COMO ele mesmo (App Password O365).
+        // Null em ambos = mantém o From padrão (config-based) — comportamento atual.
+        public ?string $fromAddress = null,
+        public ?string $fromName = null,
     ) {
     }
 
@@ -62,7 +66,9 @@ class FechamentoParceiroMail extends Mailable
 
         // To/CC ficam por conta do controller (Mail::to()->cc()).
         return new Envelope(
-            from: new Address($from, config('mail.fechamento_from_name', 'Fechamento ERPSERV')),
+            from: $this->fromAddress
+                ? new Address($this->fromAddress, $this->fromName ?? config('mail.fechamento_from_name', 'Fechamento ERPSERV'))
+                : new Address($from, config('mail.fechamento_from_name', 'Fechamento ERPSERV')),
             replyTo: $replyTo,
             subject: $this->subjectLine,
         );

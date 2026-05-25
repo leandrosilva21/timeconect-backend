@@ -381,6 +381,7 @@ class UserController extends Controller
             'can_timesheet_sustentacao' => 'sometimes|boolean',
             'extra_permissions'   => 'nullable|array',
             'extra_permissions.*' => 'string',
+            'smtp_app_password'   => 'nullable|string|max:255',
         ], [
             'name.required'  => 'O nome é obrigatório.',
             'email.required' => 'O e-mail é obrigatório.',
@@ -408,7 +409,9 @@ class UserController extends Controller
 
             // Remover dashboard_types dos dados do usuário (campo auxiliar, não coluna)
             $dashboardTypes = $userData['dashboard_types'] ?? [];
-            unset($userData['dashboard_types'], $userData['password']);
+            // smtp_app_password: setado explicitamente após o save (fora do mass-assignment).
+            $smtpAppPassword = $userData['smtp_app_password'] ?? null;
+            unset($userData['dashboard_types'], $userData['password'], $userData['smtp_app_password']);
 
             // Criar usuário com senha placeholder (setTemporaryPassword irá sobrescrever com hash correto)
             $userData['password'] = 'placeholder';
@@ -427,6 +430,12 @@ class UserController extends Controller
 
             // Definir senha com hash correto via DB direto (evita duplo hash pelo cast 'hashed')
             $user->setTemporaryPassword($temporaryPassword, 24);
+
+            // App Password de SMTP (O365): só grava se veio NÃO-vazio; o cast criptografa.
+            if (filled($smtpAppPassword)) {
+                $user->smtp_app_password = $smtpAppPassword;
+                $user->save();
+            }
 
             // Sincronizar tipos de dashboard permitidos
             if (!empty($dashboardTypes)) {
@@ -599,6 +608,7 @@ class UserController extends Controller
             'can_timesheet_sustentacao' => 'sometimes|boolean',
             'extra_permissions'   => 'sometimes|nullable|array',
             'extra_permissions.*' => 'string',
+            'smtp_app_password'   => 'nullable|string|max:255',
         ], [
             'email.email'  => 'O e-mail informado é inválido.',
             'email.unique' => 'Este e-mail já está cadastrado no sistema.',
@@ -636,7 +646,10 @@ class UserController extends Controller
 
             // Remover campos desnecessários
             $dashboardTypes = $updateData['dashboard_types'] ?? null;
-            unset($updateData['dashboard_types'], $updateData['password_confirmation'], $updateData['hourly_rate_effective_from']);
+            // smtp_app_password: setado explicitamente após o update (fora do mass-assignment);
+            // só sobrescreve se veio NÃO-vazio — vazio/ausente preserva o valor atual.
+            $smtpAppPassword = $updateData['smtp_app_password'] ?? null;
+            unset($updateData['dashboard_types'], $updateData['password_confirmation'], $updateData['hourly_rate_effective_from'], $updateData['smtp_app_password']);
 
             // Separar campos protegidos (fora de $fillable) — admin pode setar via forceFill
             $protectedData = array_intersect_key($updateData, array_flip(User::PROTECTED_FIELDS));
@@ -645,6 +658,13 @@ class UserController extends Controller
             $user->update($fillableData);
             if (!empty($protectedData)) {
                 $user->forceFill($protectedData)->save();
+            }
+
+            // App Password de SMTP (O365): só grava se veio NÃO-vazio; o cast criptografa.
+            // Vazio/ausente NÃO sobrescreve o valor existente.
+            if (filled($smtpAppPassword)) {
+                $user->smtp_app_password = $smtpAppPassword;
+                $user->save();
             }
 
             // Tipo de contrato: parceiro define p/ todos; consultor vinculado herda (trava)

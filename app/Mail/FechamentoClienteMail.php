@@ -42,6 +42,10 @@ class FechamentoClienteMail extends Mailable
         public ?string $mensagem = null, // corpo editável (texto livre); null = template usa default
         public array $projetos = [],     // [{codigo, nome}] — destaque dos projetos do fechamento
         public bool $withAttachments = true,
+        // From sobrescrito quando o remetente envia COMO ele mesmo (App Password O365).
+        // Null em ambos = mantém o From padrão (NF-e/config-based) — comportamento atual.
+        public ?string $fromAddress = null,
+        public ?string $fromName = null,
     ) {
     }
 
@@ -63,10 +67,15 @@ class FechamentoClienteMail extends Mailable
 
         // To/CC ficam por conta do controller (Mail::to()->cc()).
         return new Envelope(
-            from: new Address(
-                config('mail.fechamento_cliente_from', $from),
-                config('mail.fechamento_cliente_from_name', config('mail.fechamento_from_name', 'Fechamento ERPSERV')),
-            ),
+            from: $this->fromAddress
+                ? new Address(
+                    $this->fromAddress,
+                    $this->fromName ?? config('mail.fechamento_cliente_from_name', config('mail.fechamento_from_name', 'Fechamento ERPSERV')),
+                )
+                : new Address(
+                    config('mail.fechamento_cliente_from', $from),
+                    config('mail.fechamento_cliente_from_name', config('mail.fechamento_from_name', 'Fechamento ERPSERV')),
+                ),
             replyTo: $replyTo,
             subject: $this->subjectLine,
         );

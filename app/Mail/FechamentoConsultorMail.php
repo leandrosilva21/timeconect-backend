@@ -55,6 +55,10 @@ class FechamentoConsultorMail extends Mailable
         public bool $withAttachments = true,
         public ?string $senderEmail = null,
         public ?string $mensagem = null, // corpo editável (texto livre); null = template usa default
+        // From sobrescrito quando o remetente envia COMO ele mesmo (App Password O365).
+        // Null em ambos = mantém o From padrão (config-based) — comportamento atual.
+        public ?string $fromAddress = null,
+        public ?string $fromName = null,
     ) {
     }
 
@@ -75,7 +79,9 @@ class FechamentoConsultorMail extends Mailable
         }
 
         return new Envelope(
-            from: new Address($from, config('mail.fechamento_from_name', 'Fechamento ERPSERV')),
+            from: $this->fromAddress
+                ? new Address($this->fromAddress, $this->fromName ?? config('mail.fechamento_from_name', 'Fechamento ERPSERV'))
+                : new Address($from, config('mail.fechamento_from_name', 'Fechamento ERPSERV')),
             replyTo: $replyTo,
             cc: $this->financeiroCc ? [$this->financeiroCc] : [],
             subject: $this->subjectLine,

@@ -589,6 +589,14 @@ class FechamentoParceiroController extends Controller
         $files      = $this->generateParceiroFiles($partner, $yearMonth);
         $totalValue = $files['total_value'];
 
+        // Envia COMO o remetente (App Password O365) quando configurado; senão, remetente padrão.
+        $mc = \App\Services\SenderMailer::for(
+            $sender,
+            'smtp',
+            (string) config('mail.from.address'),
+            config('mail.fechamento_from_name', 'Fechamento ERPSERV'),
+        );
+
         try {
             $mailable = new FechamentoParceiroMail(
                 parceiroName:    $partner->name,
@@ -604,8 +612,10 @@ class FechamentoParceiroController extends Controller
                 financeiroCc:    $financeiroCc ?: null,
                 mensagem:        $mensagem,
                 withAttachments: true,
+                fromAddress:     $mc['from_address'],
+                fromName:        $mc['from_name'],
             );
-            Mail::to($to)->cc($cc)->send($mailable);
+            Mail::mailer($mc['mailer'])->to($to)->cc($cc)->send($mailable);
 
             Log::info('Fechamento de parceiro enviado por e-mail', [
                 'parceiro' => $partner->id, 'remetente' => $sender->id,

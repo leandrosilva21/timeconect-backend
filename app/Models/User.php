@@ -100,6 +100,8 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
+        // App Password de SMTP do usuário — NUNCA serializar em JSON/API.
+        'smtp_app_password',
     ];
 
     /**
@@ -124,7 +126,18 @@ class User extends Authenticatable
             'extra_permissions'     => 'array',
             'segments' => 'array',
             'extra_permissions' => 'array',
+            // Criptografa em repouso com APP_KEY; descriptografa na leitura.
+            'smtp_app_password' => 'encrypted',
         ];
+    }
+
+    /**
+     * Pode enviar e-mail COMO ele mesmo (From = próprio e-mail) via App Password O365?
+     * Exige App Password configurado E e-mail cadastrado. Caso contrário, usa o remetente padrão.
+     */
+    public function canSendAsSelf(): bool
+    {
+        return filled($this->smtp_app_password) && filled($this->email);
     }
 
     /**

@@ -749,8 +749,6 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/despesas',                    [\App\Http\Controllers\FechamentoClienteController::class, 'despesas']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/pendencias',                  [\App\Http\Controllers\FechamentoClienteController::class, 'pendencias']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/pagamento',                   [\App\Http\Controllers\FechamentoClienteController::class, 'pagamento']);
-            Route::post('/fechamento-cliente/{customerId}/{yearMonth}/fechar',                     [\App\Http\Controllers\FechamentoClienteController::class, 'fechar']);
-            Route::post('/fechamento-cliente/{customerId}/{yearMonth}/reabrir',                    [\App\Http\Controllers\FechamentoClienteController::class, 'reabrir']);
             Route::post('/fechamento-cliente/{customerId}/{yearMonth}/enviar-email',               [\App\Http\Controllers\FechamentoClienteController::class, 'enviarEmail']);
             Route::post('/fechamento-cliente/{customerId}/{yearMonth}/limpar-envio',               [\App\Http\Controllers\FechamentoClienteController::class, 'limparEnvio']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/excel',                       [\App\Http\Controllers\FechamentoClienteController::class, 'excel']);
@@ -764,8 +762,6 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/consultores',                 [\App\Http\Controllers\FechamentoParceiroController::class, 'consultores']);
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/despesas',                    [\App\Http\Controllers\FechamentoParceiroController::class, 'despesas']);
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/apontamentos',               [\App\Http\Controllers\FechamentoParceiroController::class, 'apontamentos']);
-            Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/fechar',                     [\App\Http\Controllers\FechamentoParceiroController::class, 'fechar']);
-            Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/reabrir',                    [\App\Http\Controllers\FechamentoParceiroController::class, 'reabrir']);
             Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/enviar-email',               [\App\Http\Controllers\FechamentoParceiroController::class, 'enviarEmail']);
             Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/limpar-envio',               [\App\Http\Controllers\FechamentoParceiroController::class, 'limparEnvio']);
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/excel',                       [\App\Http\Controllers\FechamentoParceiroController::class, 'excel']);

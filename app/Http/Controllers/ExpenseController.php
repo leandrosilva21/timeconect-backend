@@ -324,6 +324,14 @@ class ExpenseController extends Controller
             $query->whereHas('project.coordinators', fn ($q) => $q->where('users.id', $request->coordinator_id));
         }
 
+        // has_partner=1 → só usuários de parceiro ("No Fechamento"); =0 → só não-parceiro
+        // ("A pagar" avulso); ausente → todos.
+        if ($request->has('has_partner') && $request->input('has_partner') !== '') {
+            $request->boolean('has_partner')
+                ? $query->whereHas('user', fn ($q) => $q->whereNotNull('partner_id'))
+                : $query->whereHas('user', fn ($q) => $q->whereNull('partner_id'));
+        }
+
         if ($request->filled('status')) {
             // Aceita status único (?status=pending) ou múltiplos (?status[]=pending&status[]=rejected).
             $statusVal = $request->status;

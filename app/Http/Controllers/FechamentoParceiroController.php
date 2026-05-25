@@ -224,9 +224,7 @@ class FechamentoParceiroController extends Controller
     {
         [$from, $to] = $this->period($yearMonth);
 
-        $users = User::where('partner_id', $partner->id)
-            ->where('type', 'parceiro_admin')
-            ->where('enabled', true)
+        $users = User::where('partner_id', $partner->id)            ->where('enabled', true)
             ->get();
 
         $isFixed      = $partner->pricing_type === Partner::PRICING_FIXED;
@@ -271,9 +269,7 @@ class FechamentoParceiroController extends Controller
     {
         [$from, $to] = $this->period($yearMonth);
 
-        $userIds = User::where('partner_id', $partnerId)
-            ->where('type', 'parceiro_admin')
-            ->pluck('id');
+        $userIds = User::where('partner_id', $partnerId)            ->pluck('id');
 
         if ($userIds->isEmpty()) {
             return [];
@@ -281,25 +277,31 @@ class FechamentoParceiroController extends Controller
 
         $excludeStatuses = [Expense::STATUS_ADJUSTMENT_REQUESTED, Expense::STATUS_REJECTED];
 
+        // Inclui pagas e não-pagas. Para o parceiro, is_paid=true significa "paga
+        // antecipadamente" (fora do fechamento, via Pagamento de Despesas) — aparece
+        // no relatório com indicador, mas NÃO entra no total a pagar do fechamento.
         return Expense::with([
             'user:id,name',
             'project:id,name,code',
             'category:id,name',
+            'paidByUser:id,name',
         ])
             ->whereIn('user_id', $userIds)
             ->whereNotIn('status', $excludeStatuses)
-            ->where('is_paid', false)
             ->whereBetween('expense_date', [$from, $to])
             ->get()
             ->map(fn ($e) => [
-                'id'          => $e->id,
-                'data'        => $e->expense_date->format('Y-m-d'),
-                'descricao'   => $e->description,
-                'categoria'   => $e->category->name ?? '—',
-                'colaborador' => $e->user->name ?? '—',
-                'projeto'     => $e->project->name ?? '—',
-                'valor'       => (float) $e->amount,
-                'status'      => $e->status,
+                'id'           => $e->id,
+                'data'         => $e->expense_date->format('Y-m-d'),
+                'descricao'    => $e->description,
+                'categoria'    => $e->category->name ?? '—',
+                'colaborador'  => $e->user->name ?? '—',
+                'projeto'      => $e->project->name ?? '—',
+                'valor'        => (float) $e->amount,
+                'status'       => $e->status,
+                'is_paid'      => (bool) $e->is_paid,           // true = paga antecipadamente (fora do fechamento)
+                'paid_at'      => $e->paid_at?->toISOString(),
+                'paid_by_name' => $e->paidByUser->name ?? null,
             ])
             ->toArray();
     }
@@ -321,9 +323,7 @@ class FechamentoParceiroController extends Controller
     {
         [$from, $to] = $this->period($yearMonth);
 
-        $userIds = User::where('partner_id', $partnerId)
-            ->where('type', 'parceiro_admin')
-            ->where('enabled', true)
+        $userIds = User::where('partner_id', $partnerId)            ->where('enabled', true)
             ->pluck('id');
 
         if ($userIds->isEmpty()) {
@@ -392,7 +392,8 @@ class FechamentoParceiroController extends Controller
         $consultores   = $this->consultoresData($partner, $yearMonth);
         $despesas      = $this->despesasData((int) $partner->id, $yearMonth);
         $totalServicos = round(collect($consultores)->sum('total'), 2);
-        $totalDespesas = round(collect($despesas)->sum('valor'), 2);
+        // Antecipadas (is_paid=true) já foram pagas fora do fechamento → fora do total.
+        $totalDespesas = round(collect($despesas)->where('is_paid', false)->sum('valor'), 2);
 
         return round($totalServicos + $totalDespesas, 2);
     }
@@ -402,9 +403,7 @@ class FechamentoParceiroController extends Controller
     {
         // "Sempre recebe" = só o(s) ADMIN do parceiro (perfil "Parceiro ADM" = is_executive),
         // não todos os consultores vinculados (que também são type=parceiro_admin).
-        return User::where('partner_id', $partnerId)
-            ->where('type', 'parceiro_admin')
-            ->where('is_executive', true)
+        return User::where('partner_id', $partnerId)            ->where('is_executive', true)
             ->where('enabled', true)
             ->whereNotNull('email')
             ->pluck('email')
@@ -475,13 +474,26 @@ class FechamentoParceiroController extends Controller
             mkdir($dirFull, 0775, true);
         }
 
+        // ── Despesas (pagas junto no fechamento). Antecipadas (is_paid) aparecem
+        //    com indicador mas NÃO entram no total. ──
+        $despesasAll       = $this->despesasData((int) $partner->id, $yearMonth);
+        $despesas          = array_values(array_filter($despesasAll, fn ($d) => !$d['is_paid']));
+        $despesasAntecip   = array_values(array_filter($despesasAll, fn ($d) => $d['is_paid']));
+        $totalServicos     = round($totalValue - round(collect($despesas)->sum('valor'), 2), 2);
+        $totalDespesas     = round(collect($despesas)->sum('valor'), 2);
+
         // ── PDF ──
         $pdf = Pdf::loadView('pdf.fechamento-parceiro', [
-            'parceiroName'  => $partner->name,
-            'periodo'       => $periodo,
-            'totalHorasFmt' => $this->fmtHoras($totalHoras),
-            'valorTotal'    => $this->brl($totalValue),
-            'grupos'        => $this->buildPdfGroups($rows),
+            'parceiroName'     => $partner->name,
+            'periodo'          => $periodo,
+            'totalHorasFmt'    => $this->fmtHoras($totalHoras),
+            'valorTotal'       => $this->brl($totalValue),
+            'grupos'           => $this->buildPdfGroups($rows),
+            'despesas'         => $despesas,
+            'despesasAntecip'  => $despesasAntecip,
+            'totalServicosFmt' => $this->brl($totalServicos),
+            'totalDespesasFmt' => $this->brl($totalDespesas),
+            'brl'              => fn ($v) => $this->brl((float) $v),
         ])->setPaper('a4', 'portrait');
         file_put_contents($pdfFullPath, $pdf->output());
 

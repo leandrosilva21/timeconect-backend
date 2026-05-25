@@ -84,6 +84,66 @@
     @endforeach
   @endif
 
+  {{-- ── Despesas (pagas junto no fechamento) ── --}}
+  @if(!empty($despesas) || !empty($despesasAntecip))
+    <div class="group-title" style="margin-top:18px;">Despesas</div>
+    @if(!empty($despesas))
+      <table class="rows">
+        <thead>
+          <tr>
+            <th class="nowrap" style="width:62px;">Data</th>
+            <th>Descrição</th>
+            <th style="width:110px;">Categoria</th>
+            <th>Colaborador</th>
+            <th class="right nowrap" style="width:90px;">Valor</th>
+          </tr>
+        </thead>
+        <tbody>
+          @foreach($despesas as $d)
+            <tr>
+              <td class="nowrap">{{ \Carbon\Carbon::parse($d['data'])->format('d/m/Y') }}</td>
+              <td>{{ $d['descricao'] }}</td>
+              <td>{{ $d['categoria'] }}</td>
+              <td>{{ $d['colaborador'] }}</td>
+              <td class="right nowrap">{{ $brl($d['valor']) }}</td>
+            </tr>
+          @endforeach
+        </tbody>
+      </table>
+      <div class="section-total">Subtotal Despesas: {{ $totalDespesasFmt }}</div>
+    @endif
+
+    @if(!empty($despesasAntecip))
+      <div class="group-title" style="margin-top:10px; color:#92400e;">Despesas pagas antecipadamente — fora do fechamento (não inclusas no total)</div>
+      <table class="rows">
+        <thead>
+          <tr>
+            <th class="nowrap" style="width:62px;">Data</th>
+            <th>Descrição</th>
+            <th>Colaborador</th>
+            <th class="nowrap" style="width:130px;">Paga em</th>
+            <th class="right nowrap" style="width:90px;">Valor</th>
+          </tr>
+        </thead>
+        <tbody>
+          @foreach($despesasAntecip as $d)
+            <tr style="color:#92400e;">
+              <td class="nowrap">{{ \Carbon\Carbon::parse($d['data'])->format('d/m/Y') }}</td>
+              <td>{{ $d['descricao'] }}</td>
+              <td>{{ $d['colaborador'] }}</td>
+              <td class="nowrap">{{ $d['paid_at'] ? \Carbon\Carbon::parse($d['paid_at'])->format('d/m/Y') : '—' }}{{ $d['paid_by_name'] ? ' · '.$d['paid_by_name'] : '' }}</td>
+              <td class="right nowrap" style="text-decoration:line-through;">{{ $brl($d['valor']) }}</td>
+            </tr>
+          @endforeach
+        </tbody>
+      </table>
+    @endif
+  @endif
+
+  <table width="100%" style="margin-top:18px; font-size:11px;">
+    <tr><td style="color:#555; padding:2px 6px;">Serviços</td><td class="right" style="padding:2px 6px;">{{ $totalServicosFmt }}</td></tr>
+    <tr><td style="color:#555; padding:2px 6px;">Despesas (no fechamento)</td><td class="right" style="padding:2px 6px;">{{ $totalDespesasFmt }}</td></tr>
+  </table>
   <table class="total-box" width="100%">
     <tr>
       <td class="total-label">TOTAL A PAGAR — {{ strtoupper($parceiroName) }}</td>

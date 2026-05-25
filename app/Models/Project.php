@@ -257,6 +257,44 @@ class Project extends Model
         return $this->hasMany(ProjectSoldHoursHistory::class)->orderBy('effective_from');
     }
 
+    /**
+     * Alterações de valor hora COM vigência (effective_from), ordenadas — base do
+     * histórico temporal. Vêm de project_change_logs (field_name='hourly_rate').
+     */
+    public function hourlyRateChanges(): HasMany
+    {
+        return $this->hasMany(\App\Models\ProjectChangeLog::class)
+            ->where('field_name', 'hourly_rate')
+            ->whereNotNull('effective_from')
+            ->orderBy('effective_from');
+    }
+
+    /**
+     * Valor hora vigente numa competência (YYYY-MM): a vigência mais recente com
+     * effective_from <= competência; antes da 1ª vigência usa o valor anterior a ela;
+     * sem vigências registradas, cai no hourly_rate atual. Garante que mudar o valor
+     * NÃO altere fechamentos de meses anteriores ("legado intacto").
+     */
+    public function hourlyRateForCompetencia(string $yearMonth): float
+    {
+        $changes = $this->relationLoaded('hourlyRateChanges')
+            ? $this->hourlyRateChanges
+            : $this->hourlyRateChanges()->get();
+
+        if ($changes->isEmpty()) {
+            return (float) ($this->hourly_rate ?? 0);
+        }
+
+        $comp = \Carbon\Carbon::parse($yearMonth . '-01')->startOfMonth();
+        $aplicavel = $changes->last(
+            fn ($c) => \Carbon\Carbon::parse($c->effective_from)->startOfMonth()->lessThanOrEqualTo($comp)
+        );
+
+        return $aplicavel
+            ? (float) $aplicavel->new_value
+            : (float) ($changes->first()->old_value ?? $this->hourly_rate ?? 0);
+    }
+
     public function contract(): BelongsTo
     {
         return $this->belongsTo(Contract::class);

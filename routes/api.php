@@ -705,6 +705,7 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:partners.update')->group(function () {
             Route::put('/partners/{partner}', [PartnerController::class, 'update'])->name('partners.update');
+            Route::get('/partners/{partner}/hourly-rate-history', [PartnerController::class, 'getHourlyRateHistory'])->name('partners.hourly-rate-history');
         });
 
         Route::middleware('permission.or.admin:partners.delete')->group(function () {

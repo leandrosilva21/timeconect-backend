@@ -1089,7 +1089,9 @@ class FechamentoConsultorController extends Controller
             $startDate
         );
 
-        $fixedSalary    = (float) ($user->hourly_rate ?? 0);
+        // Respeita a vigência do valor hora (consultor/coordenador) na competência.
+        $histExtra      = UserHourlyRateLog::effectiveValuesAt($user->id, $user, sprintf('%04d-%02d-01', $year, $month));
+        $fixedSalary    = (float) ($histExtra['hourly_rate'] ?? $user->hourly_rate ?? 0);
         $valorHoraExtra = $fixedSalary > 0 ? round($fixedSalary / 180, 4) : 0;
         $horasExtras    = $calc['paid_hours'];
         $totalExtra     = round($horasExtras * $valorHoraExtra, 2);

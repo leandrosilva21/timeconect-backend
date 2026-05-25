@@ -25,18 +25,33 @@ class UserHourlyRateLog extends Model
         'reason',
         'old_consultant_type',
         'new_consultant_type',
+        'effective_from',
     ];
 
     /**
-     * Retorna os valores (hourly_rate, rate_type, consultant_type) em vigor no 1º dia do mês informado.
-     * Regra: mudanças feitas DURANTE o mês só valem a partir do mês seguinte.
+     * Retorna os valores (hourly_rate, rate_type, consultant_type) em vigor na competência.
+     * Vigência por log: a data ESCOLHIDA (effective_from) tem prioridade; logs legados sem
+     * vigência caem no comportamento antigo (mudança vale a partir do MÊS SEGUINTE à troca).
+     * Garante que alterar o valor NÃO mude fechamentos de meses anteriores ("legado intacto").
      */
     public static function effectiveValuesAt(int $userId, \App\Models\User $user, string $firstDayOfMonth): array
     {
-        $log = static::where('user_id', $userId)
-            ->whereDate('created_at', '<', $firstDayOfMonth)
-            ->orderBy('created_at', 'desc')
-            ->first();
+        $comp = \Carbon\Carbon::parse($firstDayOfMonth)->startOfMonth();
+
+        $applicable = static::where('user_id', $userId)
+            ->orderBy('created_at')
+            ->get()
+            ->map(fn ($l) => [
+                'log' => $l,
+                'eff' => $l->effective_from
+                    ? \Carbon\Carbon::parse($l->effective_from)->startOfMonth()
+                    : \Carbon\Carbon::parse($l->created_at)->startOfMonth()->addMonthNoOverflow(),
+            ])
+            ->filter(fn ($x) => $x['eff']->lessThanOrEqualTo($comp))
+            ->sortBy(fn ($x) => $x['eff']->timestamp)
+            ->last();
+
+        $log = $applicable ? $applicable['log'] : null;
 
         return [
             'hourly_rate'     => $log?->new_hourly_rate    ?? $user->hourly_rate,
@@ -55,6 +70,7 @@ class UserHourlyRateLog extends Model
         return [
             'old_hourly_rate' => 'decimal:2',
             'new_hourly_rate' => 'decimal:2',
+            'effective_from'  => 'date:Y-m-d',
         ];
     }
 

@@ -1504,17 +1504,33 @@ class ProjectController extends Controller
             }
         }
 
-        // Se hourly_rate mudou e foi enviada uma data de vigência, atualizar o change log
-        if ($hourlyRateEffectiveFrom && $project->wasChanged('hourly_rate')) {
+        // Dedup mesmo-dia do change log de hourly_rate: o Observer cria uma nova linha a cada
+        // alteração. Se hourly_rate mudou, colapsamos as linhas de HOJE deste projeto numa só —
+        // mantendo a MAIS ANTIGA (que tem o old_value do início do dia), atualizando seu new_value
+        // para o valor atual e aplicando effective_from quando enviado; as demais de hoje são removidas.
+        if ($project->wasChanged('hourly_rate')) {
             try {
-                ProjectChangeLog::where('project_id', $project->id)
+                $todayLogs = ProjectChangeLog::where('project_id', $project->id)
                     ->where('field_name', 'hourly_rate')
-                    ->where('changed_by', auth()->id())
-                    ->latest()
-                    ->first()
-                    ?->update(['effective_from' => $hourlyRateEffectiveFrom]);
+                    ->whereDate('created_at', now()->toDateString())
+                    ->orderBy('id')
+                    ->get();
+
+                if ($todayLogs->isNotEmpty()) {
+                    $survivor = $todayLogs->first(); // mais antiga = old_value do início do dia
+                    $survivor->new_value = (string) $project->hourly_rate;
+                    if ($hourlyRateEffectiveFrom !== null) {
+                        $survivor->effective_from = $hourlyRateEffectiveFrom;
+                    }
+                    $survivor->save();
+
+                    $duplicateIds = $todayLogs->slice(1)->pluck('id');
+                    if ($duplicateIds->isNotEmpty()) {
+                        ProjectChangeLog::whereIn('id', $duplicateIds)->delete();
+                    }
+                }
             } catch (\Exception $e) {
-                \Log::warning('ProjectController@update: falha ao registrar effective_from no change log de hourly_rate', ['error' => $e->getMessage()]);
+                \Log::warning('ProjectController@update: falha ao consolidar change log de hourly_rate do dia', ['error' => $e->getMessage()]);
             }
         }
 

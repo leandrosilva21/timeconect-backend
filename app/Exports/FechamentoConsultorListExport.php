@@ -16,6 +16,7 @@ use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
  * Planilha da lista de consultores do fechamento (com tipo de vínculo e tipo de contrato).
  * Recebe linhas já achatadas/filtradas pelo controller:
  *   ['consultor','email','tipo_vinculo','tipo_contrato','horas','total'].
+ * (A coluna de Total (R$) foi removida — a lista mostra só horas.)
  */
 class FechamentoConsultorListExport implements FromArray, WithHeadings, WithStyles, WithColumnWidths, WithTitle
 {
@@ -36,47 +37,46 @@ class FechamentoConsultorListExport implements FromArray, WithHeadings, WithStyl
 
     public function headings(): array
     {
-        return ['Consultor', 'E-mail', 'Tipo de Vínculo', 'Tipo de Contrato', 'Horas', 'Total (R$)'];
+        return ['Consultor', 'E-mail', 'Tipo de Vínculo', 'Tipo de Contrato', 'Horas'];
     }
 
     public function array(): array
     {
         $out  = [];
         $line = 1; // cabeçalho ocupa a linha 1
-        $totalGeral = 0.0;
+        $totalHoras = 0.0;
 
         if (empty($this->rows)) {
-            $out[] = ['Nenhum consultor no período/filtro.', '', '', '', '', ''];
+            $out[] = ['Nenhum consultor no período/filtro.', '', '', '', ''];
         }
 
         foreach ($this->rows as $r) {
             $line++;
-            $totalGeral += (float) ($r['total'] ?? 0);
+            $totalHoras += (float) ($r['horas'] ?? 0);
             $out[] = [
                 $r['consultor'] ?? '—',
                 $r['email'] ?? '',
                 $r['tipo_vinculo'] ?? '—',
                 $r['tipo_contrato'] ?? '—',
                 round((float) ($r['horas'] ?? 0), 2),
-                round((float) ($r['total'] ?? 0), 2),
             ];
         }
 
         $line++;
         $this->totalRow = $line;
-        $out[] = ['TOTAL GERAL', '', '', '', '', round($totalGeral, 2)];
+        $out[] = ['TOTAL DE HORAS', '', '', '', round($totalHoras, 2)];
 
         return $out;
     }
 
     public function columnWidths(): array
     {
-        return ['A' => 28, 'B' => 32, 'C' => 18, 'D' => 18, 'E' => 10, 'F' => 14];
+        return ['A' => 28, 'B' => 32, 'C' => 18, 'D' => 18, 'E' => 10];
     }
 
     public function styles(Worksheet $sheet): array
     {
-        $lastCol = 'F';
+        $lastCol = 'E';
 
         $sheet->getStyle("A1:{$lastCol}1")->applyFromArray([
             'font' => ['bold' => true, 'color' => ['rgb' => 'FFFFFF']],
@@ -86,7 +86,6 @@ class FechamentoConsultorListExport implements FromArray, WithHeadings, WithStyl
 
         $highestRow = $sheet->getHighestRow();
         $sheet->getStyle("E2:E{$highestRow}")->getNumberFormat()->setFormatCode('#,##0.00');
-        $sheet->getStyle("F2:F{$highestRow}")->getNumberFormat()->setFormatCode('#,##0.00');
 
         if ($this->totalRow > 0) {
             $sheet->getStyle("A{$this->totalRow}:{$lastCol}{$this->totalRow}")->applyFromArray([

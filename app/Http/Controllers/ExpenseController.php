@@ -235,7 +235,7 @@ class ExpenseController extends Controller
         $pageSize = min((int) $request->get('pageSize', 20), 100);
         $page = (int) $request->get('page', 1);
 
-        $query = Expense::with(['user', 'project.customer', 'project.contractType', 'project.serviceType', 'category', 'reviewedBy']);
+        $query = Expense::with(['user', 'project.customer', 'project.contractType', 'project.serviceType', 'project.coordinators:id,name', 'category', 'reviewedBy']);
 
         // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
         if ($request->get('scope') === 'sustentacao') {
@@ -319,8 +319,17 @@ class ExpenseController extends Controller
             $query->whereIn('user_id', $filterUserIds);
         }
 
+        // Filtro por coordenador (despesas de projetos coordenados pelo usuário escolhido).
+        if ($request->filled('coordinator_id')) {
+            $query->whereHas('project.coordinators', fn ($q) => $q->where('users.id', $request->coordinator_id));
+        }
+
         if ($request->filled('status')) {
-            $query->where('status', $request->status);
+            // Aceita status único (?status=pending) ou múltiplos (?status[]=pending&status[]=rejected).
+            $statusVal = $request->status;
+            is_array($statusVal)
+                ? $query->whereIn('status', $statusVal)
+                : $query->where('status', $statusVal);
         }
 
         if ($request->filled('expense_type')) {

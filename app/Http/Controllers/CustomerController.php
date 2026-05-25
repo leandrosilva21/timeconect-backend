@@ -451,6 +451,13 @@ class CustomerController extends Controller
         // Apenas admin retorna TODOS os clientes; demais usuários (incluindo coordenador) são limitados à sua alocação
         if ($targetUser && $targetUser->isAdmin()) {
             $query = Customer::query();
+        } elseif ($targetUser && $targetUser->isCoordenador() && $targetUser->coordinator_type === 'sustentacao') {
+            // Coordenador de SUSTENTAÇÃO não está no pivô de projetos: vê os clientes com projetos
+            // de sustentação/cloud — MESMO escopo dos apontamentos dele (TimesheetController:199).
+            $customerIds = Customer::whereHas('projects.serviceType', function ($q) {
+                $q->whereIn('code', ['sustentacao', 'cloud']);
+            })->pluck('id');
+            $query = Customer::whereIn('id', $customerIds);
         } else {
             // Para usuários não-admin, busca apenas clientes onde o usuário é consultor ou aprovador
             $customerIds = Customer::whereHas('projects', function ($query) use ($targetUserId) {

@@ -517,7 +517,20 @@ class FechamentoConsultorController extends Controller
                 fromAddress:    $mc['from_address'],
                 fromName:       $mc['from_name'],
             );
-            Mail::mailer($mc['mailer'])->to($consultant->email)->send($mailable);
+
+            // Microsoft Graph (Send As do remetente) quando configurado; senão, SMTP atual.
+            if (\App\Services\GraphMailer::enabled() && filled($sender->email)) {
+                \App\Services\GraphMailer::sendAs(
+                    $sender->email,
+                    [$consultant->email],
+                    array_filter([$financeiroCc]),
+                    $subject,
+                    $mailable->render(),
+                    [$files['pdf_full'], $files['xlsx_full']],
+                );
+            } else {
+                Mail::mailer($mc['mailer'])->to($consultant->email)->send($mailable);
+            }
 
             $log->fill([
                 'pdf_path'          => $files['pdf_rel'],
@@ -805,7 +818,23 @@ class FechamentoConsultorController extends Controller
                 fromAddress:    $mc['from_address'],
                 fromName:       $mc['from_name'],
             );
-            Mail::mailer($mc['mailer'])->to($consultant->email)->send($mailable);
+
+            // Microsoft Graph (Send As do remetente) quando configurado; senão, SMTP atual.
+            if (\App\Services\GraphMailer::enabled() && filled($sender->email)) {
+                $attachmentPaths = ($attachFechamento && $files)
+                    ? [$files['pdf_full'], $files['xlsx_full']]
+                    : [];
+                \App\Services\GraphMailer::sendAs(
+                    $sender->email,
+                    [$consultant->email],
+                    array_filter([$financeiroCc]),
+                    $subject,
+                    $mailable->render(),
+                    $attachmentPaths,
+                );
+            } else {
+                Mail::mailer($mc['mailer'])->to($consultant->email)->send($mailable);
+            }
 
             $log->fill([
                 'pdf_path'          => $attachFechamento && $files ? $files['pdf_rel']  : null,

@@ -615,7 +615,20 @@ class FechamentoParceiroController extends Controller
                 fromAddress:     $mc['from_address'],
                 fromName:        $mc['from_name'],
             );
-            Mail::mailer($mc['mailer'])->to($to)->cc($cc)->send($mailable);
+
+            // Microsoft Graph (Send As do remetente) quando configurado; senão, SMTP atual.
+            if (\App\Services\GraphMailer::enabled() && filled($sender->email)) {
+                \App\Services\GraphMailer::sendAs(
+                    $sender->email,
+                    $to,
+                    $cc,
+                    $subject,
+                    $mailable->render(),
+                    [$files['pdf_full'], $files['xlsx_full']],
+                );
+            } else {
+                Mail::mailer($mc['mailer'])->to($to)->cc($cc)->send($mailable);
+            }
 
             Log::info('Fechamento de parceiro enviado por e-mail', [
                 'parceiro' => $partner->id, 'remetente' => $sender->id,

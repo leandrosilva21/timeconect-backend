@@ -1243,7 +1243,20 @@ class FechamentoClienteController extends Controller
                 fromAddress:     $mc['from_address'],
                 fromName:        $mc['from_name'],
             );
-            Mail::mailer($mc['mailer'])->to($to)->cc($cc)->send($mailable);
+
+            // Microsoft Graph (Send As do remetente) quando configurado; senão, SMTP/NF-e atual.
+            if (\App\Services\GraphMailer::enabled() && filled($sender->email)) {
+                \App\Services\GraphMailer::sendAs(
+                    $sender->email,
+                    $to,
+                    $cc,
+                    $subject,
+                    $mailable->render(),
+                    [$files['pdf_full'], $files['xlsx_full']],
+                );
+            } else {
+                Mail::mailer($mc['mailer'])->to($to)->cc($cc)->send($mailable);
+            }
 
             Log::info('Fechamento de cliente enviado por e-mail', [
                 'cliente' => $customer->id, 'remetente' => $sender->id,

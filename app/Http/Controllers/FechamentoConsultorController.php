@@ -486,6 +486,14 @@ class FechamentoConsultorController extends Controller
             'total_value'        => $totalValue,
         ]);
 
+        // Envia COMO o remetente (App Password O365) quando configurado; senão, remetente padrão.
+        $mc = \App\Services\SenderMailer::for(
+            $sender,
+            'smtp',
+            (string) config('mail.from.address'),
+            config('mail.fechamento_from_name', 'Fechamento ERPSERV'),
+        );
+
         try {
             // ── E-mail ──
             $mailable = new FechamentoConsultorMail(
@@ -506,8 +514,10 @@ class FechamentoConsultorController extends Controller
                 withAttachments: true,
                 senderEmail:    $sender->email, // Reply-To = quem enviou (trata a resposta no Outlook)
                 mensagem:       $mensagem,
+                fromAddress:    $mc['from_address'],
+                fromName:       $mc['from_name'],
             );
-            Mail::to($consultant->email)->send($mailable);
+            Mail::mailer($mc['mailer'])->to($consultant->email)->send($mailable);
 
             $log->fill([
                 'pdf_path'          => $files['pdf_rel'],
@@ -765,6 +775,14 @@ class FechamentoConsultorController extends Controller
             'total_value'        => $totalValue,
         ]);
 
+        // Mesma identidade do envio original: COMO o remetente (App Password) quando configurado.
+        $mc = \App\Services\SenderMailer::for(
+            $sender,
+            'smtp',
+            (string) config('mail.from.address'),
+            config('mail.fechamento_from_name', 'Fechamento ERPSERV'),
+        );
+
         try {
             $mailable = new FechamentoConsultorMail(
                 consultantName: $consultant->name,
@@ -784,8 +802,10 @@ class FechamentoConsultorController extends Controller
                 bodyText:       $bodyText,
                 isContinuation: true,
                 withAttachments: $attachFechamento,
+                fromAddress:    $mc['from_address'],
+                fromName:       $mc['from_name'],
             );
-            Mail::to($consultant->email)->send($mailable);
+            Mail::mailer($mc['mailer'])->to($consultant->email)->send($mailable);
 
             $log->fill([
                 'pdf_path'          => $attachFechamento && $files ? $files['pdf_rel']  : null,

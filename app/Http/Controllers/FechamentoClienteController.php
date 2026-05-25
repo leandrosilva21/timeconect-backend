@@ -1216,6 +1216,14 @@ class FechamentoClienteController extends Controller
         $files      = $this->generateClienteFiles($customer, $yearMonth);
         $totalValue = $files['total_value'];
 
+        // Envia COMO o remetente (App Password O365) quando configurado; senão, conta NF-e (fallback atual).
+        $mc = \App\Services\SenderMailer::for(
+            $sender,
+            (string) config('mail.fechamento_cliente_mailer', 'nfe'),
+            (string) config('mail.fechamento_cliente_from', config('mail.from.address')),
+            config('mail.fechamento_cliente_from_name', config('mail.fechamento_from_name', 'Fechamento ERPSERV')),
+        );
+
         try {
             $mailable = new FechamentoClienteMail(
                 clienteName:     $customer->name,
@@ -1232,8 +1240,10 @@ class FechamentoClienteController extends Controller
                 mensagem:        $mensagem,
                 projetos:        $files['projetos'] ?? [],
                 withAttachments: true,
+                fromAddress:     $mc['from_address'],
+                fromName:        $mc['from_name'],
             );
-            Mail::mailer(config('mail.fechamento_cliente_mailer', 'smtp'))->to($to)->cc($cc)->send($mailable);
+            Mail::mailer($mc['mailer'])->to($to)->cc($cc)->send($mailable);
 
             Log::info('Fechamento de cliente enviado por e-mail', [
                 'cliente' => $customer->id, 'remetente' => $sender->id,

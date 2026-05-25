@@ -100,7 +100,11 @@ class FechamentoParceiroController extends Controller
                 ->keyBy('partner_id')
             : collect();
 
-        $data = $partners->map(function ($partner) use ($fechamentos) {
+        $envioMap = \App\Models\FechamentoSendStatus::mapFor(
+            \App\Models\FechamentoSendStatus::TIPO_PARCEIRO, $yearMonth, $partners->pluck('id')->all(),
+        );
+
+        $data = $partners->map(function ($partner) use ($fechamentos, $envioMap) {
             $f = $fechamentos->get($partner->id);
             return [
                 'partner_id'     => $partner->id,
@@ -113,6 +117,8 @@ class FechamentoParceiroController extends Controller
                 'total_a_pagar'  => (float) ($f?->total_a_pagar ?? 0),
                 'closed_at'      => $f?->closed_at?->toISOString(),
                 'closed_by_name' => $f?->closedByUser?->name,
+                'envio_em'       => $envioMap[$partner->id]['envio_em'] ?? null,
+                'envio_por'      => $envioMap[$partner->id]['envio_por'] ?? null,
             ];
         });
 
@@ -630,6 +636,10 @@ class FechamentoParceiroController extends Controller
                 Mail::mailer($mc['mailer'])->to($to)->cc($cc)->send($mailable);
             }
 
+            \App\Models\FechamentoSendStatus::marcarEnviado(
+                \App\Models\FechamentoSendStatus::TIPO_PARCEIRO, (int) $partner->id, $yearMonth, (int) $sender->id,
+            );
+
             Log::info('Fechamento de parceiro enviado por e-mail', [
                 'parceiro' => $partner->id, 'remetente' => $sender->id,
                 'to' => $to, 'cc' => $cc, 'total' => $totalValue,
@@ -646,6 +656,21 @@ class FechamentoParceiroController extends Controller
             'success' => true,
             'message' => "Fechamento enviado para {$toLabel}" . (!empty($cc) ? ' (cópia: ' . implode(', ', $cc) . ')' : '') . '.',
         ]);
+    }
+
+    // ─── Limpar status de envio ─────────────────────────────────────────────────
+    public function limparEnvio(Request $request, string $partnerId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
+        }
+
+        \App\Models\FechamentoSendStatus::limpar(
+            \App\Models\FechamentoSendStatus::TIPO_PARCEIRO, (int) $partnerId, $yearMonth,
+        );
+
+        return response()->json(['success' => true, 'message' => 'Status de envio limpo.']);
     }
 
     // ─── Download do Excel (XLSX) do fechamento ─────────────────────────────────

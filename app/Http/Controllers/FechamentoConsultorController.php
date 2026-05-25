@@ -540,6 +540,10 @@ class FechamentoConsultorController extends Controller
                 'sent_at'           => now(),
             ])->save();
 
+            \App\Models\FechamentoSendStatus::marcarEnviado(
+                \App\Models\FechamentoSendStatus::TIPO_CONSULTOR, (int) $consultant->id, $yearMonth, (int) $sender->id,
+            );
+
             Log::info('Fechamento de consultor enviado por e-mail', [
                 'consultor' => $consultant->id, 'remetente' => $sender->id,
                 'pdf' => $files['pdf_rel'], 'xlsx' => $files['xlsx_rel'], 'total' => $totalValue,
@@ -563,6 +567,23 @@ class FechamentoConsultorController extends Controller
             'success' => true,
             'message' => "Fechamento enviado para {$consultant->email}" . ($financeiroCc ? " (cópia: {$financeiroCc})" : '') . '.',
         ]);
+    }
+
+    // ─── Limpar status de envio ─────────────────────────────────────────────────
+    // Reseta o "enviado" do consultor/mês (volta a "não enviado"). NÃO apaga a thread
+    // de e-mails (fechamento_consultor_emails), só o indicador de status.
+    public function limparEnvio(Request $request, string $userId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
+        }
+
+        \App\Models\FechamentoSendStatus::limpar(
+            \App\Models\FechamentoSendStatus::TIPO_CONSULTOR, (int) $userId, $yearMonth,
+        );
+
+        return response()->json(['success' => true, 'message' => 'Status de envio limpo.']);
     }
 
     // ─── Download do Excel (XLSX) do fechamento ─────────────────────────────────
@@ -920,6 +941,11 @@ class FechamentoConsultorController extends Controller
         $bancoHoras = [];
         $fixos      = [];
 
+        // Status de envio do fechamento por consultor (último envio: quando + por quem).
+        $envioMap = \App\Models\FechamentoSendStatus::mapFor(
+            \App\Models\FechamentoSendStatus::TIPO_CONSULTOR, $yearMonth, $users->pluck('id')->all(),
+        );
+
         foreach ($users as $user) {
             $hist             = UserHourlyRateLog::effectiveValuesAt($user->id, $user, $from);
             $hourlyRate       = (float) ($hist['hourly_rate'] ?? 0);
@@ -944,6 +970,8 @@ class FechamentoConsultorController extends Controller
                 'valor_hora'        => $hourlyRate,
                 'rate_type'         => $rateType,
                 'effective_rate'    => $effectiveRate,
+                'envio_em'          => $envioMap[$user->id]['envio_em'] ?? null,
+                'envio_por'         => $envioMap[$user->id]['envio_por'] ?? null,
             ];
 
             // Proporcionalidade: se data_inicio cai no mês atual

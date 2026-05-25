@@ -65,7 +65,11 @@ class FechamentoClienteController extends Controller
                 ->keyBy('customer_id')
             : collect();
 
-        $data = $customers->map(function ($customer) use ($fechamentos) {
+        $envioMap = \App\Models\FechamentoSendStatus::mapFor(
+            \App\Models\FechamentoSendStatus::TIPO_CLIENTE, $yearMonth, $customers->pluck('id')->all(),
+        );
+
+        $data = $customers->map(function ($customer) use ($fechamentos, $envioMap) {
             $f = $fechamentos->get($customer->id);
             return [
                 'customer_id'    => $customer->id,
@@ -76,6 +80,8 @@ class FechamentoClienteController extends Controller
                 'total_geral'    => (float) ($f?->total_geral ?? 0),
                 'closed_at'      => $f?->closed_at?->toISOString(),
                 'closed_by_name' => $f?->closedByUser?->name,
+                'envio_em'       => $envioMap[$customer->id]['envio_em'] ?? null,
+                'envio_por'      => $envioMap[$customer->id]['envio_por'] ?? null,
             ];
         });
 
@@ -1258,6 +1264,10 @@ class FechamentoClienteController extends Controller
                 Mail::mailer($mc['mailer'])->to($to)->cc($cc)->send($mailable);
             }
 
+            \App\Models\FechamentoSendStatus::marcarEnviado(
+                \App\Models\FechamentoSendStatus::TIPO_CLIENTE, (int) $customer->id, $yearMonth, (int) $sender->id,
+            );
+
             Log::info('Fechamento de cliente enviado por e-mail', [
                 'cliente' => $customer->id, 'remetente' => $sender->id,
                 'to' => $to, 'cc' => $cc, 'total' => $totalValue,
@@ -1274,6 +1284,21 @@ class FechamentoClienteController extends Controller
             'success' => true,
             'message' => "Fechamento enviado para {$toLabel}" . (!empty($cc) ? ' (cópia: ' . implode(', ', $cc) . ')' : '') . '.',
         ]);
+    }
+
+    // ─── Limpar status de envio ─────────────────────────────────────────────────
+    public function limparEnvio(Request $request, string $customerId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
+        }
+
+        \App\Models\FechamentoSendStatus::limpar(
+            \App\Models\FechamentoSendStatus::TIPO_CLIENTE, (int) $customerId, $yearMonth,
+        );
+
+        return response()->json(['success' => true, 'message' => 'Status de envio limpo.']);
     }
 
     // ─── Download do Excel (XLSX) do fechamento ─────────────────────────────────

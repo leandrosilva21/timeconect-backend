@@ -15,8 +15,9 @@ use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 /**
  * Planilha do detalhamento do fechamento de um consultor.
  *
- * Colunas: cliente, projeto, ticket, data, descrição, horas, valor.
- * Inclui subtotais por grupo (tipo de contrato) e uma linha de TOTAL GERAL.
+ * Colunas: cliente, projeto, ticket, data, descrição, horas.
+ * (A coluna de Valor foi removida — o relatório do consultor mostra só horas.)
+ * Inclui subtotais por grupo (tipo de contrato) e uma linha de TOTAL DE HORAS.
  *
  * Recebe linhas já no formato de apontamentos() do controller (arrays).
  */
@@ -55,7 +56,7 @@ class FechamentoConsultorExport implements FromArray, WithHeadings, WithStyles, 
 
     public function headings(): array
     {
-        return ['Cliente', 'Projeto', 'Ticket', 'Data', 'Descrição', 'Horas', 'Valor'];
+        return ['Cliente', 'Projeto', 'Ticket', 'Data', 'Descrição', 'Horas'];
     }
 
     public function array(): array
@@ -73,21 +74,18 @@ class FechamentoConsultorExport implements FromArray, WithHeadings, WithStyles, 
 
         if (empty($grouped)) {
             $line++;
-            $out[] = ['Nenhum apontamento no período.', '', '', '', '', '', ''];
+            $out[] = ['Nenhum apontamento no período.', '', '', '', '', ''];
         }
 
         $totalHorasGeral = 0.0;
 
         foreach ($grouped as $tipo => $items) {
             $subtotalHoras = 0.0;
-            $subtotalValor = 0.0;
 
             foreach ($items as $r) {
                 $line++;
                 $horas = (float) ($r['horas'] ?? 0);
-                $valor = round($horas * $this->effectiveRate, 2);
                 $subtotalHoras += $horas;
-                $subtotalValor += $valor;
                 $totalHorasGeral += $horas;
 
                 $descricao = $r['observacao']
@@ -101,7 +99,6 @@ class FechamentoConsultorExport implements FromArray, WithHeadings, WithStyles, 
                     isset($r['data']) ? \Carbon\Carbon::parse($r['data'])->format('d/m/Y') : '',
                     $descricao,
                     $horas,
-                    $valor,
                 ];
             }
 
@@ -111,18 +108,15 @@ class FechamentoConsultorExport implements FromArray, WithHeadings, WithStyles, 
             $out[] = [
                 "Subtotal — {$tipo}", '', '', '', '',
                 round($subtotalHoras, 2),
-                round($subtotalValor, 2),
             ];
         }
 
-        // Linha de TOTAL GERAL (usa o total a pagar do fechamento, que pode incluir
-        // extras/banco de horas que não derivam linearmente das horas brutas).
+        // Linha de TOTAL DE HORAS (soma das horas dos apontamentos exibidos).
         $line++;
         $this->totalRow = $line;
         $out[] = [
-            'TOTAL A PAGAR', '', '', '', '',
+            'TOTAL DE HORAS', '', '', '', '',
             round($totalHorasGeral, 2),
-            round($this->totalPagar, 2),
         ];
 
         return $out;
@@ -137,13 +131,12 @@ class FechamentoConsultorExport implements FromArray, WithHeadings, WithStyles, 
             'D' => 12, // data
             'E' => 60, // descrição
             'F' => 10, // horas
-            'G' => 16, // valor
         ];
     }
 
     public function styles(Worksheet $sheet): array
     {
-        $lastCol = 'G';
+        $lastCol = 'F';
 
         // Cabeçalho
         $sheet->getStyle("A1:{$lastCol}1")->applyFromArray([
@@ -155,10 +148,8 @@ class FechamentoConsultorExport implements FromArray, WithHeadings, WithStyles, 
             'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
         ]);
 
-        // Formato monetário (coluna G) e horas (coluna F) — aplica em toda a coluna usada.
+        // Formato de horas (coluna F) — aplica em toda a coluna usada.
         $highestRow = $sheet->getHighestRow();
-        $sheet->getStyle("G2:G{$highestRow}")
-            ->getNumberFormat()->setFormatCode('"R$" #,##0.00');
         $sheet->getStyle("F2:F{$highestRow}")
             ->getNumberFormat()->setFormatCode('#,##0.00');
 

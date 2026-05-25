@@ -566,8 +566,8 @@ class ContractController extends Controller
             'contract:id,project_name',
             'coordinators:id,name',
             'consultants:id,name',
-            'contractType:id,name',
-            'serviceType:id,name',
+            'contractType:id,name,code',
+            'serviceType:id,name,code',
             'executivoConta:id,name',
         ])->where(function ($q) use ($demandProjectIds) {
             $q->where(function ($inner) {
@@ -577,10 +577,20 @@ class ContractController extends Controller
             if (!empty($demandProjectIds)) {
                 $q->orWhereIn('id', $demandProjectIds);
             }
-            // Projetos importados diretamente (sem contract_id) mas com coordenador vinculado
+            // Projetos importados diretamente (sem contract_id):
+            //  - com coordenador vinculado (fila de um coordenador de projeto), ou
+            //  - de sustentação (entram sempre: vão p/ a coluna de sustentação do seu tipo,
+            //    ou p/ a fila do coordenador quando há override) — exceto encerrados/pausados.
             $q->orWhere(function ($inner) {
                 $inner->whereNull('contract_id')
                       ->whereHas('coordinators');
+            });
+            $q->orWhere(function ($inner) {
+                $inner->whereNull('contract_id')
+                      ->whereNotIn('status', ['finished', 'cancelled', 'paused'])
+                      ->whereHas('serviceType', fn($sq) =>
+                          // 'sustent' (não 'sustentac') p/ casar 'Sustentação' com cedilha
+                          $sq->whereRaw("LOWER(name) SIMILAR TO '%(sustent|cloud|bizify)%'"));
             });
         })->orderBy('updated_at', 'desc');
 
@@ -607,7 +617,24 @@ class ContractController extends Controller
                 ->toArray()
             : [];
 
-        $projectCards = $projects->map(fn($p) => $this->formatProjectCard($p, (float) ($timesheetSums[$p->id] ?? 0)));
+        // Regra de negócio: um projeto de SUSTENTAÇÃO só fica na fila de um coordenador
+        // de projeto quando o override (kanban_coordinator_override_id) está preenchido.
+        // Sem override, ele pertence à coluna de sustentação do seu tipo de contrato —
+        // tenha ou não um Contract gerado. Particiona aqui; o merge nas colunas de
+        // sustentação acontece logo abaixo (bloco $sustentacaoGroups).
+        $projectCards         = collect();
+        $sustProjectsByColumn = [];
+        foreach ($projects as $p) {
+            $logged  = (float) ($timesheetSums[$p->id] ?? 0);
+            $sustCol = (!$isConsultor && !$isCliente) ? $this->sustColumnForProject($p) : null;
+            if ($sustCol && $p->kanban_coordinator_override_id === null) {
+                $formatted = $this->formatProjectCard($p, $logged);
+                $formatted['sustentacao_column'] = $sustCol;
+                $sustProjectsByColumn[$sustCol][] = $formatted;
+            } else {
+                $projectCards->push($this->formatProjectCard($p, $logged));
+            }
+        }
 
         // ── Coordenadores ativos (apenas projetos — sustentação tem colunas próprias)
         // Inclui:
@@ -689,6 +716,15 @@ class ContractController extends Controller
                 $formatted['sustentacao_column'] = $col;
                 $sustentacaoGroups[$col][] = $formatted;
                 $sustentacaoAutoCards[] = $formatted;
+            }
+
+            // Projetos de sustentação sem override (incl. sem contrato) — colados na
+            // coluna do seu tipo de contrato (regra: override vazio ⇒ fila de sustentação).
+            foreach ($sustProjectsByColumn as $col => $cards) {
+                foreach ($cards as $fc) {
+                    $sustentacaoGroups[$col][] = $fc;
+                    $sustentacaoAutoCards[] = $fc;
+                }
             }
         }
 
@@ -1410,6 +1446,42 @@ class ContractController extends Controller
             'is_complete'           => true,
             'created_at'            => $project->created_at,
         ];
+    }
+
+    /**
+     * Coluna de sustentação a que um PROJETO pertence pelo seu tipo de serviço/contrato.
+     * Usada quando o projeto não tem override de coordenador (regra: override vazio ⇒
+     * o card fica na fila de sustentação do tipo, não na fila de um coordenador).
+     * Retorna null se o projeto não for de sustentação (segue fluxo normal de projeto).
+     */
+    private function sustColumnForProject(\App\Models\Project $project): ?string
+    {
+        $svcCode = strtolower($project->serviceType?->code ?? '');
+        $svcName = strtolower($project->serviceType?->name ?? '');
+        $ctCode  = strtolower($project->contractType?->code ?? '');
+        $ctName  = strtolower($project->contractType?->name ?? '');
+
+        $isSust = $svcCode === 'sustentacao'
+            || str_contains($svcName, 'sustent')
+            || $svcCode === 'bizify' || str_contains($svcName, 'bizify')
+            || str_contains($svcName, 'cloud');
+        if (!$isSust) {
+            return null;
+        }
+
+        if ($svcCode === 'bizify' || str_contains($svcName, 'bizify') || str_contains($ctName, 'bizify')) {
+            return 'sust_bizify';
+        }
+        if (str_contains($svcName, 'cloud') || $ctCode === 'cloud' || str_contains($ctName, 'cloud')) {
+            return 'sust_cloud';
+        }
+        if ($ctCode === 'monthly_hours' || str_contains($ctName, 'mensal')) {
+            return 'sust_bh_mensal';
+        }
+        if ($ctCode === 'on_demand' || str_contains($ctName, 'on demand') || str_contains($ctName, 'on-demand')) {
+            return 'sust_on_demand';
+        }
+        return 'sust_bh_fixo';
     }
 
     /**

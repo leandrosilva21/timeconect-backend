@@ -66,4 +66,18 @@ return [
         'mailbox'       => env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')),
     ],
 
+    /*
+     * Microsoft Graph — ENVIO dos fechamentos pela caixa do REMETENTE logado
+     * (Send As via permissão de aplicação Mail.Send escopada por Application Access
+     * Policy). client-credentials (app-only), SEM SMTP / SEM app password.
+     * Sem as 3 variáveis abaixo o envio via Graph fica DORMENTE — GraphMailer::enabled()
+     * retorna false e o envio cai no fluxo SMTP/SenderMailer atual (idêntico a hoje).
+     * Requer app registrado no Azure AD + permissão de aplicação Mail.Send.
+     */
+    'graph' => [
+        'tenant_id'     => env('MAIL_GRAPH_TENANT_ID'),
+        'client_id'     => env('MAIL_GRAPH_CLIENT_ID'),
+        'client_secret' => env('MAIL_GRAPH_CLIENT_SECRET'),
+    ],
+
 ];

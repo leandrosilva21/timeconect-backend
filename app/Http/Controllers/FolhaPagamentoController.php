@@ -46,6 +46,24 @@ class FolhaPagamentoController extends Controller
         // Bizify: folha 100% manual (lançamentos/importação de planilha) — colunas próprias,
         // sem cooperados/sócios/Raho. ERPSERV segue a lógica completa abaixo.
         if ($empresa === 'bizify') {
+            // Carry-forward: se o mês ainda não tem lançamentos, carrega do ÚLTIMO mês
+            // anterior que tiver (só ajustes mês a mês). Os meses passados ficam
+            // gravados (independentes) e NUNCA são sobrescritos — isto é só prefill.
+            if ($all->whereNotNull('socio_key')->isEmpty()) {
+                $prevMonth = FechamentoFolha::where('empresa', 'bizify')
+                    ->whereNotNull('socio_key')
+                    ->where('cancelado', false)
+                    ->where('year_month', '<', $yearMonth)
+                    ->max('year_month');
+                if ($prevMonth) {
+                    $prev = FechamentoFolha::where('empresa', 'bizify')
+                        ->where('year_month', $prevMonth)
+                        ->whereNotNull('socio_key')
+                        ->where('cancelado', false)
+                        ->get();
+                    return $this->buildBizifyRows($prev, true); // carried = vindo do mês anterior
+                }
+            }
             return $this->buildBizifyRows($all);
         }
 
@@ -282,7 +300,7 @@ class FolhaPagamentoController extends Controller
      * Colunas próprias: Produção, Variável, Aj Custo, Reemb, Adto (créditos) / Descontos,
      * Adiantamento (débitos). Totais calculados. socio_key = matrícula.
      */
-    private function buildBizifyRows($all): array
+    private function buildBizifyRows($all, bool $carried = false): array
     {
         $rows = [];
         foreach ($all->whereNotNull('socio_key') as $f) {
@@ -303,7 +321,8 @@ class FolhaPagamentoController extends Controller
                 'is_socio'       => false,
                 'is_raho'        => false,
                 'inativo'        => false,
-                'cancelado'      => (bool) $f->cancelado,
+                'carried'        => $carried, // veio do mês anterior (prefill, ainda não salvo neste mês)
+                'cancelado'      => $carried ? false : (bool) $f->cancelado,
                 'user_id'        => null,
                 'socio_key'      => $f->socio_key,
                 'matricula'      => $f->matricula ?? '',

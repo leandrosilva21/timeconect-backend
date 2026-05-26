@@ -486,7 +486,7 @@ class ProjectController extends Controller
                 ->selectRaw('project_id, COALESCE(SUM(effort_minutes), 0) as total_logged_minutes')
                 ->whereIn('project_id', $allIdsToSum)
                 ->whereNull('deleted_at')
-                ->whereNotIn('status', ['rejected', 'conflicted', 'adjustment_requested'])
+                ->whereIn('status', ['approved', 'pending'])
                 ->groupBy('project_id')
                 ->pluck('total_logged_minutes', 'project_id');
             $timesheetsMap = $rows->toArray();
@@ -1030,7 +1030,7 @@ class ProjectController extends Controller
         $project->total_logged_minutes = DB::table('timesheets')
             ->where('project_id', $project->id)
             ->whereNull('deleted_at')
-            ->whereNotIn('status', ['rejected', 'conflicted', 'adjustment_requested', 'internal'])
+            ->whereIn('status', ['approved', 'pending'])
             ->sum('effort_minutes') ?? 0;
 
         $this->invalidateListCache('projects');

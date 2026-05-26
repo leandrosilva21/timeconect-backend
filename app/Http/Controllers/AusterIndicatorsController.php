@@ -53,7 +53,7 @@ class AusterIndicatorsController extends Controller
 
         $loggedMap = DB::table('timesheets')
             ->whereIn('project_id', $ids)
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->selectRaw('project_id, COALESCE(SUM(effort_minutes), 0) AS minutes')
             ->groupBy('project_id')
             ->pluck('minutes', 'project_id');
@@ -124,7 +124,7 @@ class AusterIndicatorsController extends Controller
 
         $loggedMap = DB::table('timesheets')
             ->whereIn('project_id', $ids)
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->selectRaw('project_id, COALESCE(SUM(effort_minutes), 0) AS minutes')
             ->groupBy('project_id')
             ->pluck('minutes', 'project_id');

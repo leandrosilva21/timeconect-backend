@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exports\FolhaBizifyExport;
 use App\Exports\FolhaPagamentoExport;
 use App\Models\FechamentoFolha;
 use App\Models\User;
@@ -537,12 +538,18 @@ class FolhaPagamentoController extends Controller
         if ($r = $this->guard($request)) {
             return $r;
         }
+        $empresa = $request->query('empresa') === 'bizify' ? 'bizify' : 'erpserv';
         [$year, $month] = explode('-', $yearMonth);
-        $fileName = "{$month}_{$year}_M_ERPSERV CONSULTORIA DE SISTEMAS LTDA.xls";
 
         // O .xls não leva linhas canceladas (elas estão na aba "Canceladas").
-        $rows = array_values(array_filter($this->buildRows($yearMonth), fn ($r) => empty($r['cancelado'])));
+        $rows = array_values(array_filter($this->buildRows($yearMonth, $empresa), fn ($r) => empty($r['cancelado'])));
 
+        if ($empresa === 'bizify') {
+            $fileName = "{$month}_{$year}_BIZIFY SOLUCOES TECNOLOGICAS LTDA.xls";
+            return Excel::download(new FolhaBizifyExport($rows), $fileName, ExcelType::XLS);
+        }
+
+        $fileName = "{$month}_{$year}_M_ERPSERV CONSULTORIA DE SISTEMAS LTDA.xls";
         return Excel::download(new FolhaPagamentoExport($rows), $fileName, ExcelType::XLS);
     }
 }

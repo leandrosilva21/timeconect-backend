@@ -47,12 +47,16 @@ class FechamentoClienteController extends Controller
         // de investimento (is_investimento_comercial=true: "Investimento Comercial",
         // "Investimento Suporte", "Investimento Projetos"), que tecnicamente têm
         // contract_type=on_demand mas não são contratos com o cliente.
+        // Além disso, o contrato on_demand precisa ser PAI (parent_project_id null);
+        // projeto FILHO on_demand (sub-contrato de um pai de outro tipo) NÃO habilita
+        // o cliente na rotina de fechamento On Demand.
         $customers = Customer::whereRaw('"active" = true')
             ->whereHas('projects', function ($q) {
                 $q->where(function ($qq) {
                         $qq->where('is_investimento_comercial', false)
                            ->orWhereNull('is_investimento_comercial');
                     })
+                  ->whereNull('parent_project_id')
                   ->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand'));
             })
             ->orderBy('name')

@@ -1858,6 +1858,9 @@ class ContractController extends Controller
             'contratos_proximos'    => $prox->count(),
             'valor_total_reajustar' => round($venc->sum('valor_estimado_reajuste') + $prox->sum('valor_estimado_reajuste'), 2),
             'valor_total_contratos' => round($rows->sum('valor_atual'), 2),
+            // Acumulado desde a assinatura (toda a vida dos contratos).
+            'valor_total_acumulado' => round($rows->sum(fn ($r) => $r['valor_acumulado'] ?? $r['valor_atual']), 2),
+            'defasagem_acumulada'   => round($rows->sum(fn ($r) => $r['valor_acumulado'] !== null ? $r['valor_acumulado'] - $r['valor_atual'] : 0), 2),
             'indices'               => ['IPCA' => $this->estimativaIndice('IPCA'), 'IGPM' => $this->estimativaIndice('IGPM')],
         ]);
     }
@@ -1956,6 +1959,13 @@ class ContractController extends Controller
 
         [$ps, $pe] = $this->reajustePeriodo($c);
 
+        // Acumulado "desde o início": índice do contrato da assinatura até o último mês fechado.
+        $pctAcum   = $this->acumuladoDesdeInicio($c, $taxaCanon);
+        $valorIni  = $c->valor_inicial !== null ? (float) $c->valor_inicial : $valorAtual;
+        $valorAcum = $pctAcum !== null ? round($valorIni * (1 + $pctAcum / 100), 2) : null;
+        $aIni      = $c->data_assinatura ? Carbon::parse($c->data_assinatura)->startOfMonth() : null;
+        $aFim      = Carbon::now()->subMonthNoOverflow()->endOfMonth();
+
         return [
             'id'                      => $c->id,
             'cliente_nome'            => $c->customer?->name,
@@ -1977,6 +1987,14 @@ class ContractController extends Controller
                 'fim'    => $pe->toDateString(),
                 'label'  => $this->periodoFormatado($ps, $pe),
             ],
+            // Reajuste acumulado desde a assinatura (toda a vida do contrato).
+            'percentual_acumulado'    => $pctAcum,
+            'valor_acumulado'         => $valorAcum,
+            'periodo_acumulado'       => ($pctAcum !== null && $aIni) ? [
+                'inicio' => $aIni->toDateString(),
+                'fim'    => $aFim->toDateString(),
+                'label'  => $this->periodoFormatado($aIni, $aFim),
+            ] : null,
         ];
     }
 
@@ -1993,6 +2011,50 @@ class ContractController extends Controller
                 return 0.0;
             }
         });
+    }
+
+    /** Série mensal do índice (map 'AAAA-MM' => variação %), cacheada 12h (1 chamada BCB por índice). */
+    private function serieMensal(string $canon): array
+    {
+        return cache()->remember("reajuste_serie_{$canon}", now()->addHours(12), function () use ($canon) {
+            try {
+                $end   = Carbon::now()->subMonthNoOverflow()->endOfMonth();
+                $start = Carbon::create(2010, 1, 1);
+                $res   = app(EconomicIndexService::class)->accumulated($canon, $start, $end);
+                $map = [];
+                foreach ($res['meses'] as $m) {
+                    if (!empty($m['mes'])) {
+                        [, $mo, $y] = explode('/', $m['mes']);
+                        $map["{$y}-{$mo}"] = $m['valor'];
+                    }
+                }
+                return $map;
+            } catch (\Throwable $e) {
+                return [];
+            }
+        });
+    }
+
+    /** % acumulado do índice do contrato da assinatura até o último mês fechado (composto). */
+    private function acumuladoDesdeInicio(Contract $c, string $canon): ?float
+    {
+        if (!$c->data_assinatura) {
+            return null;
+        }
+        $serie = $this->serieMensal($canon);
+        if (!$serie) {
+            return null;
+        }
+        $startYm = Carbon::parse($c->data_assinatura)->format('Y-m');
+        $endYm   = Carbon::now()->subMonthNoOverflow()->format('Y-m');
+        $fator = 1.0; $achou = false;
+        foreach ($serie as $ym => $v) {
+            if (strcmp($ym, $startYm) >= 0 && strcmp($ym, $endYm) <= 0) {
+                $fator *= (1 + $v / 100);
+                $achou = true;
+            }
+        }
+        return $achou ? round(($fator - 1) * 100, 4) : null;
     }
 
 }

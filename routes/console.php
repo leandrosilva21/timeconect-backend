@@ -121,3 +121,21 @@ Schedule::job(new CleanupContractEventsJob)
 
 // (Removido) Fase 2 — leitura de respostas via Graph. Modelo simplificado: a resposta
 // do consultor volta pro Reply-To (quem enviou) e é tratada no Outlook, sem leitura no app.
+
+// Health Engine — varre customers e gera eventos de risco/oportunidade no Operational Feed
+// Roda toda segunda-feira às 06:00 (espelha cadência semanal do n8n original)
+Schedule::command('health:scan')
+  ->weeklyOn(1, '06:00')
+  ->name('operational-feed-health-scan')
+  ->description('Health Engine: tickets + saldo de horas → eventos no Operational Feed')
+  ->withoutOverlapping(30)
+  ->runInBackground();
+
+// IA diagnóstico — após o Health Engine, dispara IA para os top-20 customers em risco
+// Roda toda segunda-feira às 07:00 (1h depois do health:scan, dá tempo de eventos estarem gravados)
+Schedule::command('ai:scan-customers-at-risk --days=7 --max=20 --sync')
+  ->weeklyOn(1, '07:00')
+  ->name('operational-feed-ai-insights')
+  ->description('IA: gera diagnóstico para customers com eventos recentes de risco no Operational Feed')
+  ->withoutOverlapping(60)
+  ->runInBackground();

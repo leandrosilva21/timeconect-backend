@@ -1123,5 +1123,69 @@ Route::prefix('v1')->group(function () {
         Route::post('/projects/{id}/allocate',        [GapController::class, 'allocate'])->name('projects.allocate');
         Route::get('/projects/{id}/team-recommendation', [GapController::class, 'teamRecommendation'])->name('projects.team-recommendation');
         Route::post('/projects/{id}/allocate-team',    [GapController::class, 'allocateTeam'])->name('projects.allocate-team');
+
+        // 📡 OPERATIONAL FEED — Timeline operacional (eventos, IA, alertas, riscos)
+        Route::prefix('operational-feed')->group(function () {
+            Route::get('/',      [\App\Http\Controllers\OperationalFeedController::class, 'index'])->name('operational-feed.index');
+            Route::get('/{id}',  [\App\Http\Controllers\OperationalFeedController::class, 'show'])->name('operational-feed.show');
+            Route::post('/',     [\App\Http\Controllers\OperationalFeedController::class, 'store'])->name('operational-feed.store');
+            Route::delete('/{id}', [\App\Http\Controllers\OperationalFeedController::class, 'destroy'])->name('operational-feed.destroy');
+        });
+
+        // 📬 INBOX — Conversations + Messages do BOT Minutor
+        Route::prefix('inbox')->group(function () {
+            Route::get('/conversations',                 [\App\Http\Controllers\InboxController::class, 'conversations'])->name('inbox.conversations');
+            Route::get('/conversations/{id}',            [\App\Http\Controllers\InboxController::class, 'show'])->name('inbox.show');
+            Route::get('/conversations/{id}/messages',   [\App\Http\Controllers\InboxController::class, 'messages'])->name('inbox.messages');
+            Route::post('/conversations/{id}/messages',  [\App\Http\Controllers\InboxController::class, 'send'])->name('inbox.send');
+            Route::post('/conversations/{id}/read',      [\App\Http\Controllers\InboxController::class, 'markRead'])->name('inbox.read');
+            Route::patch('/messages/{id}/status',        [\App\Http\Controllers\InboxController::class, 'updateMessageStatus'])->name('inbox.message.status');
+            Route::get('/unread-summary',                [\App\Http\Controllers\InboxController::class, 'unreadSummary'])->name('inbox.unread');
+        });
+
+        // 👤 PRESENCE — status online/away/offline
+        Route::prefix('presence')->group(function () {
+            Route::post('/heartbeat', [\App\Http\Controllers\PresenceController::class, 'heartbeat'])->name('presence.heartbeat');
+            Route::get('/',           [\App\Http\Controllers\PresenceController::class, 'index'])->name('presence.index');
+        });
+
+        // 💬 CONVERSATIONS — criar DM/grupo, gerenciar participantes, listar usuários para abrir chat
+        Route::prefix('conversations')->group(function () {
+            Route::get('/users',                                  [\App\Http\Controllers\ConversationController::class, 'usersForChat'])->name('conversations.users');
+            Route::post('/',                                      [\App\Http\Controllers\ConversationController::class, 'store'])->name('conversations.store');
+            Route::post('/{id}/participants',                     [\App\Http\Controllers\ConversationController::class, 'addParticipant'])->name('conversations.participants.add');
+            Route::delete('/{id}/participants/{userId}',          [\App\Http\Controllers\ConversationController::class, 'removeParticipant'])->name('conversations.participants.remove');
+            Route::post('/{id}/bot-query',                        [\App\Http\Controllers\BotQueryController::class, 'ask'])->name('conversations.bot-query');
+        });
+
+        // 🤖 BOT MINUTOR CONFIG — providers/agents/skills/rules/general
+        Route::prefix('bot')->group(function () {
+            Route::get('/config',          [\App\Http\Controllers\BotConfigController::class, 'showConfig'])->name('bot.config.show');
+            Route::put('/config',          [\App\Http\Controllers\BotConfigController::class, 'updateConfig'])->name('bot.config.update');
+            Route::get('/providers',       [\App\Http\Controllers\BotConfigController::class, 'providers'])->name('bot.providers');
+            Route::put('/providers/{id}',  [\App\Http\Controllers\BotConfigController::class, 'updateProvider'])->name('bot.providers.update');
+            Route::get('/agents',          [\App\Http\Controllers\BotConfigController::class, 'agents'])->name('bot.agents');
+            Route::put('/agents/{id}',     [\App\Http\Controllers\BotConfigController::class, 'updateAgent'])->name('bot.agents.update');
+            Route::get('/skills',          [\App\Http\Controllers\BotConfigController::class, 'skills'])->name('bot.skills');
+            Route::put('/skills/{id}',     [\App\Http\Controllers\BotConfigController::class, 'updateSkill'])->name('bot.skills.update');
+            // Grupos operacionais (admin/executivo)
+            Route::get('/groups',                      [\App\Http\Controllers\GroupAdminController::class, 'index'])->name('bot.groups');
+            Route::get('/groups/available-users',      [\App\Http\Controllers\GroupAdminController::class, 'availableUsers'])->name('bot.groups.users');
+            Route::post('/groups',                     [\App\Http\Controllers\GroupAdminController::class, 'store'])->name('bot.groups.store');
+            Route::post('/groups/seed-defaults',       [\App\Http\Controllers\GroupAdminController::class, 'seedDefaults'])->name('bot.groups.seed');
+            Route::get('/groups/{id}/members',         [\App\Http\Controllers\GroupAdminController::class, 'members'])->name('bot.groups.members');
+            Route::patch('/groups/{id}',               [\App\Http\Controllers\GroupAdminController::class, 'rename'])->name('bot.groups.rename');
+            Route::delete('/groups/{id}',              [\App\Http\Controllers\GroupAdminController::class, 'destroy'])->name('bot.groups.destroy');
+            Route::post('/groups/{id}/members',        [\App\Http\Controllers\GroupAdminController::class, 'addMember'])->name('bot.groups.members.add');
+            Route::delete('/groups/{id}/members/{userId}', [\App\Http\Controllers\GroupAdminController::class, 'removeMember'])->name('bot.groups.members.remove');
+
+            Route::get('/rules',                [\App\Http\Controllers\BotConfigController::class, 'rules'])->name('bot.rules');
+            Route::get('/rules/options',        [\App\Http\Controllers\BotConfigController::class, 'ruleOptions'])->name('bot.rules.options');
+            Route::post('/rules',               [\App\Http\Controllers\BotConfigController::class, 'storeRule'])->name('bot.rules.store');
+            Route::put('/rules/{id}',           [\App\Http\Controllers\BotConfigController::class, 'updateRule'])->name('bot.rules.update');
+            Route::delete('/rules/{id}',        [\App\Http\Controllers\BotConfigController::class, 'destroyRule'])->name('bot.rules.destroy');
+            Route::post('/rules/{id}/test',          [\App\Http\Controllers\BotConfigController::class, 'testRule'])->name('bot.rules.test');
+            Route::post('/rules/{id}/dispatch-test', [\App\Http\Controllers\BotConfigController::class, 'dispatchTestRule'])->name('bot.rules.dispatch-test');
+        });
     });
 });

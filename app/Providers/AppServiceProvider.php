@@ -9,8 +9,10 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Mail\Events\MessageSent;
 use App\Events\ContractEventCreated;
+use App\Events\OperationalFeedCreated;
 use App\Listeners\ContractEventListener;
 use App\Listeners\EmailSentListener;
+use App\Listeners\RouteFeedToInbox;
 use App\Models\Contract;
 use App\Models\Project;
 use App\Models\Timesheet;
@@ -42,6 +44,10 @@ class AppServiceProvider extends ServiceProvider
 
         // Snapshot em tempo real — reage à criação de eventos de contrato
         Event::listen(ContractEventCreated::class, ContractEventListener::class);
+
+        // Operational Feed → Inbox: cada feed dispara NotificationEngine que entrega
+        // mensagens nas conversations `bot` dos usuários conforme `bot_notification_rules`.
+        Event::listen(OperationalFeedCreated::class, RouteFeedToInbox::class);
 
         // Registrar observers
         Project::observe(ProjectObserver::class);

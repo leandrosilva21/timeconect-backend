@@ -26,42 +26,15 @@ class FolhaPagamentoController extends Controller
         return null;
     }
 
-    /** Sócios: linhas FIXAS, manuais e totalmente editáveis (destacadas), independentes de cadastro. */
-    private const SOCIOS = [
-        ['key' => 'ricardo_silva',      'nome' => 'RICARDO DE OLIVEIRA SILVA',           'cpf' => '313.017.868-61', 'matricula' => '46761', 'status' => 'Contratado', 'hm' => 'Mensalista'],
-        ['key' => 'caio_maior',         'nome' => 'CAIO MAIOR GARCIA',                   'cpf' => '370.373.308-09', 'matricula' => '16383', 'status' => 'Contratado', 'hm' => 'Horista'],
-        ['key' => 'ricardo_badawi',     'nome' => 'RICARDO BADAWI SANTOS',               'cpf' => '358.075.828-45', 'matricula' => '29653', 'status' => 'Contratado', 'hm' => 'Horista'],
-        ['key' => 'leandro_silva',      'nome' => 'LEANDRO SANTOS E SILVA',              'cpf' => '328.265.748-09', 'matricula' => '1968',  'status' => 'Contratado', 'hm' => 'Horista'],
-        ['key' => 'guilherme_junior',   'nome' => 'GUILHERME MATIAS DE OLIVEIRA JUNIOR', 'cpf' => '422.075.628-08', 'matricula' => '38046', 'status' => 'Contratado', 'hm' => 'Horista'],
-        ['key' => 'daniel_albuquerque', 'nome' => 'DANIEL OLIVEIRA DE ALBUQUERQUE',      'cpf' => '003.701.572-90', 'matricula' => '16408', 'status' => 'Contratado', 'hm' => 'Horista'],
-    ];
+    private const RAHO_PARTNER_NAME = 'Raho';
 
-    private function normName(string $s): string
+    /**
+     * id do parceiro Raho — fechamento dele vai INDIVIDUALMENTE pra cooperativa.
+     * Hardcoded por nome (decisão de negócio: caso específico do Raho).
+     */
+    private static function rahoPartnerId(): ?int
     {
-        $s = preg_replace('/\s+/', ' ', mb_strtoupper(trim($s)));
-        return strtr($s, ['Á'=>'A','À'=>'A','Â'=>'A','Ã'=>'A','É'=>'E','Ê'=>'E','Í'=>'I','Ó'=>'O','Ô'=>'O','Õ'=>'O','Ú'=>'U','Ç'=>'C','Ü'=>'U']);
-    }
-
-    private function nameTokens(string $s): array
-    {
-        $stop = ['DE', 'DA', 'DO', 'DOS', 'DAS', 'E', 'DI'];
-        return array_values(array_filter(explode(' ', $this->normName($s)), fn ($t) => strlen($t) >= 2 && !in_array($t, $stop, true)));
-    }
-
-    /** Usuário "é sócio" se primeiro e último token do nome batem com algum sócio fixo. */
-    private function matchesSocio(string $userName): bool
-    {
-        $ut = $this->nameTokens($userName);
-        if (count($ut) < 2) {
-            return false;
-        }
-        foreach (self::SOCIOS as $s) {
-            $st = $this->nameTokens($s['nome']);
-            if (in_array($ut[0], $st, true) && in_array(end($ut), $st, true)) {
-                return true;
-            }
-        }
-        return false;
+        return \App\Models\Partner::where('name', self::RAHO_PARTNER_NAME)->value('id');
     }
 
     /** Linhas do grid: cooperados regulares + as linhas-sócio fixas (totalmente editáveis). */
@@ -75,6 +48,11 @@ class FolhaPagamentoController extends Controller
         $folhaByUser  = $all->whereNotNull('user_id')->keyBy('user_id');
         $folhaBySocio = $all->whereNotNull('socio_key')->keyBy('socio_key');
 
+        // Parceiro "Raho": fechamento vai INDIVIDUALMENTE pra cooperativa — cada usuário
+        // do Raho vira uma linha própria (azul, identificada, 100% editável), fora da
+        // lista normal de cooperados (sem duplicar). Hardcoded por nome.
+        $rahoId = self::rahoPartnerId();
+
         $rows = [];
 
         // ── Cooperados: TODO usuário (qualquer perfil exceto cliente) marcado cooperado.
@@ -83,8 +61,8 @@ class FolhaPagamentoController extends Controller
         $cooperados = User::where('contract_type', 'cooperado')->where('enabled', true)
             ->whereNotIn('type', ['cliente'])->orderBy('name')->get();
         foreach ($cooperados as $u) {
-            if ($this->matchesSocio($u->name)) {
-                continue; // sócio aparece como linha-sócio editável
+            if ($rahoId && (int) $u->partner_id === $rahoId) {
+                continue; // usuário do Raho entra na seção própria (azul), não como cooperado
             }
             $uid = $u->id;
             $c   = $byUser[$uid] ?? []; // dados do fechamento (se for consultor com apontamento)
@@ -136,54 +114,76 @@ class FolhaPagamentoController extends Controller
             ];
         }
 
-        // ── Linhas-sócio (fixas, totalmente editáveis, destacadas) ──
-        foreach (self::SOCIOS as $s) {
-            $f = $folhaBySocio[$s['key']] ?? null;
+        // ── Raho: cada usuário do parceiro vira linha própria (azul, identificada,
+        //    100% editável). Keyed por user_id; valores editáveis vêm da folha salva,
+        //    com defaults do cadastro/fechamento. Novo usuário do Raho → nova linha auto. ──
+        if ($rahoId) {
+            // Valores CALCULADOS do mês filtrado: vêm do fechamento do PARCEIRO (horas × taxa).
+            $rahoPartner = \App\Models\Partner::find($rahoId);
+            $rahoCalc = $rahoPartner
+                ? collect(app(FechamentoParceiroController::class)->consultoresData($rahoPartner, $yearMonth))->keyBy('user_id')
+                : collect();
+            // Inclui desativados também (aparecem em "afastamento", ocultação manual).
+            $rahoUsers = User::where('partner_id', $rahoId)->orderBy('name')->get();
+            foreach ($rahoUsers as $u) {
+                $uid  = $u->id;
+                $f    = $folhaByUser[$uid] ?? null;
+                $calc = $rahoCalc[$uid] ?? [];
 
-            $horas        = ($f && $f->horas_trabalhadas !== null) ? (float) $f->horas_trabalhadas : 180.0;
-            $valorHora    = ($f && $f->valor_hora !== null) ? (float) $f->valor_hora : 0.0;
-            $producao     = ($f && $f->producao !== null) ? (float) $f->producao : 0.0;
-            $variavel     = $f ? (float) $f->variavel : 0.0;
-            $reemb        = $f ? (float) $f->reemb : 0.0;
-            $descontos    = $f ? (float) $f->descontos_diversos : 0.0;
-            $adiantamento = $f ? (float) $f->adiantamento : 0.0;
+                // Original (calculado do mês): horas/taxa/produção do fechamento do parceiro.
+                $horasCalc     = round((float) ($calc['horas'] ?? 0), 2);
+                $valorHoraCalc = round((float) ($calc['valor_hora'] ?? 0), 2);
+                $producaoCalc  = round((float) ($calc['total'] ?? 0), 2);
 
-            $totalRend    = round($producao + $variavel + $reemb, 2);
-            $totalDebitos = round($descontos + $adiantamento, 2);
+                // Atual = salvo (editado) quando houver; senão o calculado (prefill).
+                $horas        = ($f && $f->horas_trabalhadas !== null) ? (float) $f->horas_trabalhadas : $horasCalc;
+                $valorHora    = ($f && $f->valor_hora !== null) ? (float) $f->valor_hora : $valorHoraCalc;
+                $producao     = ($f && $f->producao !== null) ? (float) $f->producao : $producaoCalc;
+                $variavel     = $f ? (float) $f->variavel : 0.0;
+                $reemb        = $f ? (float) $f->reemb : 0.0;
+                $descontos    = $f ? (float) $f->descontos_diversos : 0.0;
+                $adiantamento = $f ? (float) $f->adiantamento : 0.0;
 
-            $rows[] = [
-                'row_key'            => 's:' . $s['key'],
-                'is_socio'           => true,
-                'inativo'            => false,
-                'cancelado'          => $f ? (bool) $f->cancelado : false,
-                'user_id'            => null,
-                'socio_key'          => $s['key'],
-                'cpf'                => $f?->cpf ?? $s['cpf'],
-                'matricula'          => $f?->matricula ?? $s['matricula'],
-                'status'             => $f?->status ?? $s['status'],
-                'nome'               => $f?->nome ?? $s['nome'],
-                'dias'               => $f ? (float) $f->dias_trabalhados : 0.0,
-                'horas'              => $horas,
-                'horas_apontamentos' => 0.0,
-                'valor_hora'         => $valorHora,
-                'producao'           => $producao,
-                'variavel'           => $variavel,
-                'reemb'              => $reemb,
-                'descontos'          => $descontos,
-                'adiantamento'       => $adiantamento,
-                'horista_mensalista' => $f && $f->horista_mensalista ? $f->horista_mensalista : $s['hm'],
-                'total_rend'         => $totalRend,
-                'total_debitos'      => $totalDebitos,
-                'liquido'            => round($totalRend - $totalDebitos, 2),
-            ];
+                $totalRend    = round($producao + $variavel + $reemb, 2);
+                $totalDebitos = round($descontos + $adiantamento, 2);
+
+                $rows[] = [
+                    'row_key'            => 'u:' . $uid,
+                    'is_socio'           => false, // identidade (cpf/nome/status) vem do usuário (read-only); VALORES editáveis via is_raho
+                    'is_raho'            => true,
+                    'partner_label'      => 'Raho',
+                    'inativo'            => !$u->enabled, // desativado => "em afastamento"
+                    'cancelado'          => $f ? (bool) $f->cancelado : false,
+                    'user_id'            => $uid,
+                    'socio_key'          => null,
+                    'cpf'                => $u->cpf ?? '',
+                    'matricula'          => $u->matricula ?? '',
+                    'status'             => $u->payroll_status ?? '',
+                    'nome'               => $u->full_name ?: $u->name,
+                    'dias'               => $f ? (float) $f->dias_trabalhados : 0.0,
+                    'horas'              => $horas,
+                    'horas_apontamentos' => $horasCalc,
+                    'valor_hora'         => $valorHora,
+                    'producao'           => $producao,
+                    // Valores ORIGINAIS calculados (p/ legenda "original" quando alterado).
+                    'horas_calc'         => $horasCalc,
+                    'valor_hora_calc'    => $valorHoraCalc,
+                    'producao_calc'      => $producaoCalc,
+                    'variavel'           => $variavel,
+                    'reemb'              => $reemb,
+                    'descontos'          => $descontos,
+                    'adiantamento'       => $adiantamento,
+                    'horista_mensalista' => $f && $f->horista_mensalista ? $f->horista_mensalista
+                                          : ($u->consultant_type === 'horista' ? 'Horista' : 'Mensalista'),
+                    'total_rend'         => $totalRend,
+                    'total_debitos'      => $totalDebitos,
+                    'liquido'            => round($totalRend - $totalDebitos, 2),
+                ];
+            }
         }
 
-        // ── Linhas manuais CUSTOM ("Nova linha editável"): socio_key fora da lista fixa ──
-        $socioKeys = array_column(self::SOCIOS, 'key');
+        // ── Linhas manuais ("Nova linha editável") — inclui os sócios (migrados p/ manual). ──
         foreach ($folhaBySocio as $key => $f) {
-            if (in_array($key, $socioKeys, true)) {
-                continue; // sócios fixos já tratados acima
-            }
             $variavel     = (float) $f->variavel;
             $reemb        = (float) $f->reemb;
             $descontos    = (float) $f->descontos_diversos;
@@ -219,13 +219,12 @@ class FolhaPagamentoController extends Controller
             ];
         }
 
-        // ── Cooperados DESATIVADOS com registro na folha do mês (linha inativa) ──
-        // (Usuário ativo já entrou acima via buildConsultoresData; aqui pegamos os que
-        // foram desativados mas têm linha salva no mês — para sinalizar e permitir cancelar.)
+        // ── Cooperados DESATIVADOS (linha "em afastamento") ──
+        // Usuário desativado continua aparecendo (afastamento, borda vermelha) até que
+        // a ocultação seja feita manualmente (cancelar) quando não tiver participação.
         $jaIncluidos = collect($rows)->whereNotNull('user_id')->pluck('user_id')->all();
         $inativos = User::where('contract_type', 'cooperado')
             ->where('enabled', false)
-            ->whereIn('id', $folhaByUser->keys()->all())
             ->whereNotIn('id', $jaIncluidos)
             ->get();
         foreach ($inativos as $u) {
@@ -304,6 +303,10 @@ class FolhaPagamentoController extends Controller
 
         $saved = 0;
 
+        // Usuários do Raho = linhas 100% editáveis (salvam cpf/nome/status/valor_hora/produção também).
+        $rahoId      = self::rahoPartnerId();
+        $rahoUserIds = $rahoId ? User::where('partner_id', $rahoId)->pluck('id')->map(fn ($i) => (int) $i)->all() : [];
+
         foreach ($request->input('entries') as $e) {
             $comum = [
                 'dias_trabalhados'   => $e['dias_trabalhados'] ?? 0,
@@ -330,9 +333,14 @@ class FolhaPagamentoController extends Controller
                 );
                 $saved++;
             } elseif (!empty($e['user_id'])) {
+                // Raho: VALORES editáveis (valor_hora/produção) salvos; cpf/nome/status seguem do cadastro do usuário.
+                $extra = in_array((int) $e['user_id'], $rahoUserIds, true) ? [
+                    'valor_hora' => $e['valor_hora'] ?? null,
+                    'producao'   => $e['producao'] ?? null,
+                ] : [];
                 FechamentoFolha::updateOrCreate(
                     ['user_id' => $e['user_id'], 'year_month' => $yearMonth],
-                    $comum
+                    array_merge($comum, $extra)
                 );
                 $saved++;
             }

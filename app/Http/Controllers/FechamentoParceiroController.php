@@ -220,7 +220,7 @@ class FechamentoParceiroController extends Controller
 
     // ─── Helpers privados ────────────────────────────────────────────────────
 
-    private function consultoresData(Partner $partner, string $yearMonth): array
+    public function consultoresData(Partner $partner, string $yearMonth): array
     {
         [$from, $to] = $this->period($yearMonth);
 

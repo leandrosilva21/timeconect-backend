@@ -1169,9 +1169,10 @@ class FechamentoClienteController extends Controller
         $html = str_ireplace('</head>', $override . '</head>', $html);
 
         return response()->json([
-            'html'             => $html,
-            'mensagem_padrao'  => $mensagemPadrao,
-            'fechamento_email' => $customer->fechamento_email,
+            'html'                   => $html,
+            'mensagem_padrao'        => $mensagemPadrao,
+            'fechamento_email'       => $customer->fechamento_email,
+            'emails_administrativos' => $customer->adminEmails(),
         ]);
     }
 
@@ -1338,14 +1339,24 @@ class FechamentoClienteController extends Controller
         }
 
         $request->validate([
-            'fechamento_email' => 'nullable|string',
+            'fechamento_email'         => 'nullable|string',
+            'emails_administrativos'   => 'nullable|array',
+            'emails_administrativos.*' => 'email',
         ]);
 
-        $customer->update(['fechamento_email' => $request->input('fechamento_email')]);
+        // Lista única (mesma usada no comunicado de reajuste). Aceita array OU a string
+        // legada (separada por , ; ou espaço). setAdminEmails sincroniza fechamento_email.
+        $emails = $request->input('emails_administrativos');
+        if ($emails === null && $request->filled('fechamento_email')) {
+            $emails = preg_split('/[,;\s]+/', (string) $request->input('fechamento_email'));
+        }
+        $customer->setAdminEmails($emails ?? []);
+        $customer->save();
 
         return response()->json([
-            'success'          => true,
-            'fechamento_email' => $customer->fechamento_email,
+            'success'                => true,
+            'fechamento_email'       => $customer->fechamento_email,
+            'emails_administrativos' => $customer->adminEmails(),
         ]);
     }
 }

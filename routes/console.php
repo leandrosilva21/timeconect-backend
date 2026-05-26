@@ -118,3 +118,11 @@ Schedule::job(new CleanupContractEventsJob)
   ->name('cleanup-contract-events')
   ->description('Remove eventos de contrato com mais de 180 dias')
   ->withoutOverlapping();
+
+// Alerta de reajustes vencidos ao Financeiro — roda todo dia às 08:00, mas o comando
+// só envia de fato no 1º DIA ÚTIL do mês (pula fim de semana). Não aplica reajuste.
+Schedule::command('reajustes:alerta-vencidos')
+  ->dailyAt('08:00')
+  ->name('alerta-reajustes-vencidos')
+  ->description('Avisa o Financeiro sobre contratos com reajuste vencido (1º dia útil do mês)')
+  ->withoutOverlapping();

@@ -200,11 +200,15 @@ class CustomerController extends Controller
             'active' => 'nullable|boolean',
             'executive_id' => 'nullable|exists:users,id',
             'code_prefix' => 'nullable|string|size:3|alpha|unique:customers,code_prefix',
+            'emails_administrativos' => 'nullable|array',
+            'emails_administrativos.*' => 'email',
         ], [
             'code_prefix.size' => 'O prefixo de código deve ter exatamente 3 letras',
             'code_prefix.alpha' => 'O prefixo de código deve conter apenas letras',
             'code_prefix.unique' => 'Este prefixo já está sendo usado por outro cliente',
         ]);
+        // emails_administrativos é gravado via setAdminEmails (sincroniza fechamento_email).
+        unset($validated['emails_administrativos']);
 
         // Remove caracteres especiais do CGC
         $validated['cgc'] = preg_replace('/[^0-9]/', '', $validated['cgc']);
@@ -239,6 +243,11 @@ class CustomerController extends Controller
 
         // Só agora cria no banco, pois sabemos que é válido
         $customer = Customer::create($validated);
+
+        if ($request->has('emails_administrativos')) {
+            $customer->setAdminEmails($request->input('emails_administrativos', []));
+            $customer->save();
+        }
 
         $this->createInvestimentoProjects($customer);
 
@@ -320,6 +329,8 @@ class CustomerController extends Controller
             'active' => 'nullable|boolean',
             'executive_id' => 'nullable|exists:users,id',
             'code_prefix' => 'nullable|string|size:3|alpha|unique:customers,code_prefix,' . $customer->id,
+            'emails_administrativos' => 'nullable|array',
+            'emails_administrativos.*' => 'email',
         ], [
             'code_prefix.size' => 'O prefixo de código deve ter exatamente 3 letras',
             'code_prefix.alpha' => 'O prefixo de código deve conter apenas letras',
@@ -359,7 +370,13 @@ class CustomerController extends Controller
             $validated['code_prefix'] = strtoupper($validated['code_prefix']);
         }
 
+        unset($validated['emails_administrativos']); // gravado via setAdminEmails (sincroniza fechamento_email)
         $customer->update($validated);
+
+        if ($request->has('emails_administrativos')) {
+            $customer->setAdminEmails($request->input('emails_administrativos', []));
+            $customer->save();
+        }
 
         // Resposta PO-UI
         return response()->json($customer->load('executive'));

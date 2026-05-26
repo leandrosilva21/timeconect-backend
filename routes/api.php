@@ -839,6 +839,18 @@ Route::prefix('v1')->group(function () {
         Route::get('/contracts/{contract}/snapshot',                  [ContractController::class, 'snapshot'])->name('contracts.snapshot');
         Route::post('/contracts/{contract}/snapshot/replay',          [ContractController::class, 'replay'])->name('contracts.snapshot.replay');
         Route::get('/contracts/consistency-report',                   [ContractController::class, 'consistencyReport'])->name('contracts.consistency-report');
+        Route::get('/contracts/recorrentes',                          [ContractController::class, 'recorrentes'])->name('contracts.recorrentes');
+        Route::post('/contracts/recorrentes/import',                  [ContractController::class, 'importAniversario'])->name('contracts.recorrentes-import');
+        Route::patch('/contracts/{contract}/recorrente',              [ContractController::class, 'updateRecorrente'])->name('contracts.recorrente-update');
+        // Reajuste sob demanda (índice IPCA/IGP-M via BCB → prévia → aplicação manual + histórico)
+        Route::get('/economic-index',                                 [\App\Http\Controllers\EconomicIndexController::class, 'show'])->name('economic-index.show');
+        Route::get('/contracts/{contract}/adjustment-preview',        [ContractController::class, 'adjustmentPreview'])->name('contracts.adjustment-preview');
+        Route::post('/contracts/{contract}/apply-adjustment',         [ContractController::class, 'applyAdjustment'])->name('contracts.apply-adjustment');
+        Route::post('/contracts/{contract}/notify-client-adjustment', [ContractController::class, 'notifyClientAdjustment'])->name('contracts.notify-client-adjustment');
+        // Dashboard de reajustes (resumo/KPIs + lista priorizada + histórico)
+        Route::get('/contracts/reajustes/summary',                    [ContractController::class, 'reajustesSummary'])->name('contracts.reajustes-summary');
+        Route::get('/contracts/reajustes',                            [ContractController::class, 'reajustesList'])->name('contracts.reajustes-list');
+        Route::get('/contracts/{contract}/value-changes',             [ContractController::class, 'valueChanges'])->name('contracts.value-changes');
         Route::get('/projects/{project}/kanban-logs',                [\App\Http\Controllers\KanbanLogController::class, 'projectLogs'])->name('projects.kanban-logs');
         Route::get('/contract-requests/{contractRequest}/kanban-logs', [\App\Http\Controllers\KanbanLogController::class, 'requestLogs'])->name('contract-requests.kanban-logs');
 

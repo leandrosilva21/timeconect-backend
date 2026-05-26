@@ -16,6 +16,10 @@ class FechamentoFolha extends Model
         'user_id',
         'socio_key',
         'year_month',
+        'empresa',
+        // Bizify (lançamentos manuais)
+        'aj_custo',
+        'adto',
         // overrides de linha-sócio (manual)
         'cpf',
         'matricula',
@@ -44,6 +48,8 @@ class FechamentoFolha extends Model
         'reemb'              => 'decimal:2',
         'descontos_diversos' => 'decimal:2',
         'adiantamento'       => 'decimal:2',
+        'aj_custo'           => 'decimal:2',
+        'adto'               => 'decimal:2',
     ];
 
     public function user(): BelongsTo

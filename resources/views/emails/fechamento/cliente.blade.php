@@ -83,7 +83,7 @@
           {{-- ── KICKER + TÍTULO ── --}}
           <tr>
             <td class="pd-main" align="left" bgcolor="#FFFFFF" style="padding:36px 40px 0;background-color:#FFFFFF;">
-              <div style="font-size:11px;letter-spacing:.18em;color:#0E7490;font-weight:700;text-transform:uppercase;">Fechamento de Clientes</div>
+              <div style="font-size:11px;letter-spacing:.18em;color:#0E7490;font-weight:700;text-transform:uppercase;">{{ ($mode ?? 'servicos') === 'despesa' ? 'Apuração das Despesas' : 'Fechamento de Clientes' }}</div>
               <h1 class="h1" style="margin:10px 0 4px;font-size:24px;font-weight:700;color:#111827;line-height:1.3;">
                 Olá, {{ $clienteName }}.
               </h1>
@@ -123,7 +123,7 @@
                 <tr>
                   <td style="padding:18px 22px;">
                     <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#5EEAD4;">
-                      Valor a pagar
+                      {{ ($mode ?? 'servicos') === 'despesa' ? 'Total das despesas a cobrar' : 'Valor a pagar' }}
                     </div>
                     <div style="margin-top:6px;font-size:28px;font-weight:800;color:#FFFFFF;letter-spacing:-0.01em;">
                       {{ $valorTotal }}
@@ -148,7 +148,7 @@
                         <td style="vertical-align:middle;">
                           <div style="font-size:13px;color:#CBD5E1;line-height:1.5;">
                             Os arquivos anexos (<strong style="color:#FFFFFF;">PDF</strong> e <strong style="color:#FFFFFF;">Excel</strong>)
-                            contêm o detalhamento completo dos apontamentos considerados no período.
+                            contêm o detalhamento completo {{ ($mode ?? 'servicos') === 'despesa' ? 'das despesas a cobrar no período.' : 'dos apontamentos considerados no período.' }}
                           </div>
                         </td>
                       </tr>

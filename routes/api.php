@@ -742,6 +742,8 @@ Route::prefix('v1')->group(function () {
         // 🧾 FECHAMENTO CLIENTE
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/fechamento-cliente',                                                      [\App\Http\Controllers\FechamentoClienteController::class, 'index']);
+            Route::get('/fechamento-cliente/despesas-resumo',                                       [\App\Http\Controllers\FechamentoClienteController::class, 'despesasResumo']);
+            Route::get('/fechamento-cliente/apontamentos-geral',                                    [\App\Http\Controllers\FechamentoClienteController::class, 'apontamentosGeral']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/contratos',                   [\App\Http\Controllers\FechamentoClienteController::class, 'contratos']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/por-tipo',                    [\App\Http\Controllers\FechamentoClienteController::class, 'porTipo']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/apontamentos',               [\App\Http\Controllers\FechamentoClienteController::class, 'apontamentos']);

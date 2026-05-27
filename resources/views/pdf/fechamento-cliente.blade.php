@@ -6,6 +6,9 @@
   <style>
     * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { font-family: 'DejaVu Sans', Arial, sans-serif; color: #1f2937; font-size: 11px; margin: 0; padding: 0; }
+    /* Margem do documento: por página no PDF (@page) e como padding no preview em tela. */
+    @page { margin: 1.3cm 1.5cm; }
+    @media screen { body { padding: 1.3cm 1.5cm; } }
 
     /* Cabeçalho — logo à esquerda + identificação à direita, régua roxa embaixo. */
     table.header { width: 100%; border-collapse: collapse; border-bottom: 2px solid #5b21b6; margin-bottom: 18px; }

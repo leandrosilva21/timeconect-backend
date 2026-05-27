@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Exports\FechamentoClienteExport;
+use App\Exports\FechamentoConsultorDespesaExport;
 use App\Mail\FechamentoClienteMail;
 use App\Models\Customer;
 use App\Models\Expense;
@@ -92,6 +93,52 @@ class FechamentoClienteController extends Controller
         return response()->json(['data' => $data]);
     }
 
+    /**
+     * GET /fechamento-cliente/despesas-resumo?year_month=AAAA-MM
+     * Todos os clientes com despesa A COBRAR no mês (charge_client=true, não pagas),
+     * agregadas por cliente — para a aba de envio de despesas.
+     */
+    public function despesasResumo(Request $request): JsonResponse
+    {
+        $yearMonth = $request->query('year_month');
+        if (!$yearMonth) {
+            return response()->json(['data' => []]);
+        }
+
+        $from = "{$yearMonth}-01";
+        $to   = Carbon::parse("{$yearMonth}-01")->endOfMonth()->toDateString();
+
+        $byCustomer = Expense::query()
+            ->where('charge_client', true)
+            ->where('is_paid', false)
+            ->whereNotIn('status', [Expense::STATUS_REJECTED, Expense::STATUS_ADJUSTMENT_REQUESTED])
+            ->whereBetween('expense_date', [$from, $to])
+            ->whereHas('project', fn ($q) => $q->where('is_investimento_comercial', false)->whereNotNull('customer_id'))
+            ->with('project:id,customer_id')
+            ->get()
+            ->groupBy(fn ($e) => $e->project?->customer_id)
+            ->filter(fn ($g, $cid) => (bool) $cid);
+
+        $nomes = Customer::whereIn('id', $byCustomer->keys()->map(fn ($k) => (int) $k)->all())
+            ->pluck('name', 'id');
+
+        $data = $byCustomer
+            ->map(fn ($g, $cid) => [
+                'customer_id' => (int) $cid,
+                'nome'        => $nomes[(int) $cid] ?? '—',
+                'qtd'         => $g->count(),
+                'total'       => round($g->sum('amount'), 2),
+            ])
+            ->values()
+            ->sortByDesc('total')
+            ->values();
+
+        return response()->json([
+            'data'        => $data,
+            'total_geral' => round($data->sum('total'), 2),
+        ]);
+    }
+
     // ─── Contratos (endpoint legado — mantido para compatibilidade) ───────────
 
     public function contratos(string $customerId, string $yearMonth): JsonResponse
@@ -166,6 +213,68 @@ class FechamentoClienteController extends Controller
 
         $data = $this->apontamentosData((int) $customerId, $fromMonth, $toMonth, $contractCode);
         return response()->json(['data' => $data, 'from_snapshot' => false]);
+    }
+
+    /**
+     * GET /fechamento-cliente/apontamentos-geral?from=AAAA-MM&to=AAAA-MM
+     * Lista PLANA de todos os apontamentos On Demand do período (todos os clientes),
+     * para a aba Apontamentos. Os filtros de cliente/projeto são aplicados no front
+     * (o conjunto de um mês é pequeno; envia tudo e filtra/agrupa lá).
+     */
+    public function apontamentosGeral(Request $request): JsonResponse
+    {
+        $fromMonth = $request->query('from');
+        $toMonth   = $request->query('to', $fromMonth);
+        if (!$fromMonth) {
+            return response()->json(['data' => []]);
+        }
+
+        $from = "{$fromMonth}-01";
+        $to   = Carbon::parse("{$toMonth}-01")->endOfMonth()->toDateString();
+
+        $rows = Timesheet::query()
+            ->with([
+                'user:id,name',
+                'project:id,name,code,customer_id',
+                'project.customer:id,name',
+            ])
+            ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_titulo', 'movidesk_tickets.solicitante as ticket_solicitante')
+            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+            ->whereBetween('timesheets.date', [$from, $to])
+            ->whereNotIn('timesheets.status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
+            ->whereNull('timesheets.deleted_at')
+            ->whereHas('project', function ($q) {
+                $q->where('is_investimento_comercial', false)
+                  ->whereNotNull('customer_id')
+                  ->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand'));
+            })
+            ->orderBy('timesheets.date')
+            ->get();
+
+        $data = $rows->map(function ($t) {
+            $solicitanteRaw = $t->ticket_solicitante;
+            if (is_string($solicitanteRaw)) {
+                $solicitanteRaw = json_decode($solicitanteRaw, true);
+            }
+            $solicitante = is_array($solicitanteRaw) ? ($solicitanteRaw['name'] ?? null) : null;
+
+            return [
+                'id'             => $t->id,
+                'data'           => $t->date->format('Y-m-d'),
+                'customer_id'    => $t->project?->customer_id,
+                'cliente'        => $t->project?->customer?->name ?? '—',
+                'projeto_id'     => $t->project_id,
+                'projeto_codigo' => $t->project?->code ?? '—',
+                'projeto_nome'   => $t->project?->name ?? '—',
+                'colaborador'    => $t->user?->name ?? '—',
+                'solicitante'    => $solicitante,
+                'ticket'         => $t->ticket,
+                'titulo'         => $t->ticket_titulo,
+                'horas'          => round($t->effort_minutes / 60, 2),
+            ];
+        })->values();
+
+        return response()->json(['data' => $data]);
     }
 
     private function apontamentosData(int $customerId, string $fromMonth, string $toMonth, ?string $contractCode = null): array
@@ -746,8 +855,11 @@ class FechamentoClienteController extends Controller
     }
 
     /** Mensagem padrão (corpo) do e-mail de fechamento — editável na tela antes de enviar. */
-    private function defaultMensagem(string $periodo): string
+    private function defaultMensagem(string $periodo, string $mode = 'servicos'): string
     {
+        if ($mode === 'despesa') {
+            return "Segue em anexo a apuração das despesas a cobrar referente ao período de {$periodo}.\n\nEm caso de dúvidas ou divergências, por gentileza entrar em contato.";
+        }
         return "Segue em anexo o fechamento referente ao período de {$periodo}.\n\nEm caso de dúvidas ou divergências, por gentileza entrar em contato.";
     }
 
@@ -997,8 +1109,47 @@ class FechamentoClienteController extends Controller
      *   pdf_name:string, xlsx_name:string, total_value:float
      * }
      */
-    private function generateClienteFiles(Customer $customer, string $yearMonth): array
+    private function generateClienteFiles(Customer $customer, string $yearMonth, string $mode = 'servicos'): array
     {
+        $safeName = $this->sanitizeFilename($customer->name);
+        $dir      = 'fechamentos';
+        $dirFull  = storage_path("app/{$dir}");
+        if (!is_dir($dirFull)) {
+            mkdir($dirFull, 0775, true);
+        }
+
+        // ── Modo DESPESA — relatório de despesas a cobrar (PDF + XLSX próprios) ──
+        if ($mode === 'despesa') {
+            $pdfFileName  = "Despesas_{$yearMonth}_{$safeName}.pdf";
+            $xlsxFileName = "Despesas_{$yearMonth}_{$safeName}.xlsx";
+            $pdfRelPath   = "{$dir}/{$pdfFileName}";
+            $xlsxRelPath  = "{$dir}/{$xlsxFileName}";
+            $pdfFullPath  = storage_path("app/{$pdfRelPath}");
+            $xlsxFullPath = storage_path("app/{$xlsxRelPath}");
+
+            $pdf = Pdf::loadView('pdf.fechamento-cliente-despesa', $this->buildDespesaViewData($customer, $yearMonth))
+                ->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
+            file_put_contents($pdfFullPath, $pdf->output());
+
+            $despesas = array_map(
+                fn ($d) => $d + ['cliente' => $customer->name, 'is_paid' => false, 'paid_at' => null],
+                $this->despesasData((int) $customer->id, $yearMonth, $yearMonth),
+            );
+            $export = new FechamentoConsultorDespesaExport($despesas, $customer->name, $this->periodoExtenso($yearMonth));
+            file_put_contents($xlsxFullPath, Excel::raw($export, \Maatwebsite\Excel\Excel::XLSX));
+
+            return [
+                'pdf_rel'     => $pdfRelPath,
+                'xlsx_rel'    => $xlsxRelPath,
+                'pdf_full'    => $pdfFullPath,
+                'xlsx_full'   => $xlsxFullPath,
+                'pdf_name'    => $pdfFileName,
+                'xlsx_name'   => $xlsxFileName,
+                'total_value' => $this->despesaTotal((int) $customer->id, $yearMonth),
+                'projetos'    => [],
+            ];
+        }
+
         $periodo    = $this->periodoExtenso($yearMonth);
         $vedamotors = $this->isVedamotors($customer);
         $rows       = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $vedamotors);
@@ -1028,7 +1179,7 @@ class FechamentoClienteController extends Controller
 
         // ── PDF — MESMA view-data do preview da tela (fonte única = a Blade) ──
         $pdf = Pdf::loadView('pdf.fechamento-cliente', $this->buildReportViewData($customer, $yearMonth))
-            ->setPaper('a4', 'portrait');
+            ->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
         file_put_contents($pdfFullPath, $pdf->output());
 
         // ── XLSX ──
@@ -1117,6 +1268,49 @@ class FechamentoClienteController extends Controller
     }
 
     /**
+     * Dados da view do RELATÓRIO DE DESPESAS A COBRAR do cliente — fonte única do
+     * PDF e do preview (mesma Blade), espelhando o relatório de serviços.
+     *
+     * @return array<string, mixed>
+     */
+    private function buildDespesaViewData(Customer $customer, string $yearMonth): array
+    {
+        $periodo  = $this->periodoExtenso($yearMonth);
+        $despesas = $this->despesasData((int) $customer->id, $yearMonth, $yearMonth);
+        $total    = round(collect($despesas)->sum('valor'), 2);
+
+        $logoFile    = public_path('logo-erpserv.png');
+        $logoDataUri = is_file($logoFile)
+            ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($logoFile))
+            : null;
+
+        $linhas = array_map(fn ($d) => [
+            'data'        => Carbon::parse($d['data'])->format('d/m/Y'),
+            'descricao'   => $d['descricao'] ?: '—',
+            'categoria'   => $d['categoria'] ?? '—',
+            'colaborador' => $d['colaborador'] ?? '—',
+            'projeto'     => $d['projeto'] ?? '—',
+            'valor'       => $this->brl((float) $d['valor']),
+        ], $despesas);
+
+        return [
+            'clienteName' => $customer->name,
+            'periodo'     => $periodo,
+            'logoDataUri' => $logoDataUri,
+            'emitidoEm'   => now()->format('d/m/Y'),
+            'despesas'    => $linhas,
+            'qtd'         => count($linhas),
+            'totalFmt'    => $this->brl($total),
+        ];
+    }
+
+    /** Soma das despesas a cobrar do cliente no mês (não pagas). */
+    private function despesaTotal(int $customerId, string $yearMonth): float
+    {
+        return round(collect($this->despesasData($customerId, $yearMonth, $yearMonth))->sum('valor'), 2);
+    }
+
+    /**
      * HTML do relatório de apontamentos (a MESMA Blade do PDF enviado) — consumido
      * pelo preview da tela, garantindo paridade total com o documento anexado.
      */
@@ -1127,7 +1321,10 @@ class FechamentoClienteController extends Controller
             return response()->json(['success' => false, 'message' => 'Cliente não encontrado.'], 404);
         }
 
-        $html = view('pdf.fechamento-cliente', $this->buildReportViewData($customer, $yearMonth))->render();
+        $mode = $request->query('mode') === 'despesa' ? 'despesa' : 'servicos';
+        $html = $mode === 'despesa'
+            ? view('pdf.fechamento-cliente-despesa', $this->buildDespesaViewData($customer, $yearMonth))->render()
+            : view('pdf.fechamento-cliente', $this->buildReportViewData($customer, $yearMonth))->render();
 
         return response()->json(['html' => $html]);
     }
@@ -1146,22 +1343,29 @@ class FechamentoClienteController extends Controller
             return response()->json(['success' => false, 'message' => 'Cliente não encontrado.'], 404);
         }
 
+        $mode           = $request->input('mode') === 'despesa' ? 'despesa' : 'servicos';
         $periodo        = $this->periodoExtenso($yearMonth);
-        $mensagemPadrao = $this->defaultMensagem($periodo);
+        $mensagemPadrao = $this->defaultMensagem($periodo, $mode);
         $mensagem       = trim((string) $request->input('mensagem'));
         $mensagem       = $mensagem !== '' ? $mensagem : $mensagemPadrao;
 
-        $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand');
-        $projetosList = array_values(array_map(
-            fn ($p) => ['codigo' => $p['projeto_codigo'] ?? '—', 'nome' => $p['projeto_nome'] ?? '—'],
-            $apData['projetos'] ?? []
-        ));
+        $projetosList = [];
+        $valorTotal   = $this->brl($this->despesaTotal((int) $customer->id, $yearMonth));
+        if ($mode !== 'despesa') {
+            $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand');
+            $projetosList = array_values(array_map(
+                fn ($p) => ['codigo' => $p['projeto_codigo'] ?? '—', 'nome' => $p['projeto_nome'] ?? '—'],
+                $apData['projetos'] ?? []
+            ));
+            $valorTotal   = $this->brl($this->clienteTotal((int) $customer->id, $yearMonth));
+        }
 
         $html = view('emails.fechamento.cliente', [
             'clienteName'     => $customer->name,
             'senderName'      => $sender->name,
             'periodo'         => $periodo,
-            'valorTotal'      => $this->brl($this->clienteTotal((int) $customer->id, $yearMonth)),
+            'mode'            => $mode,
+            'valorTotal'      => $valorTotal,
             'withAttachments' => true,
             'mensagem'        => $mensagem,
             'projetos'        => $projetosList,
@@ -1195,9 +1399,12 @@ class FechamentoClienteController extends Controller
         }
 
         $request->validate([
-            'mensagem' => 'nullable|string', // corpo editável; vazio = mensagem padrão
-            'emails'   => 'required|array',
-            'emails.*' => 'email',
+            'mensagem'  => 'nullable|string', // corpo editável; vazio = mensagem padrão
+            'emails'    => 'required|array',
+            'emails.*'  => 'email',
+            'mode'      => 'nullable|in:servicos,despesa',
+            'anexos'    => 'nullable|array',
+            'anexos.*'  => 'file|max:10240', // até 10 MB cada (Graph soma anexos ~3 MB no total)
         ]);
 
         $customer = Customer::find($customerId);
@@ -1205,9 +1412,10 @@ class FechamentoClienteController extends Controller
             return response()->json(['success' => false, 'message' => 'Cliente não encontrado.'], 404);
         }
 
+        $mode         = $request->input('mode') === 'despesa' ? 'despesa' : 'servicos';
         $periodo      = $this->periodoExtenso($yearMonth);
         $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
-        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo);
+        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo, $mode);
 
         // Destinatários: SOMENTE os e-mails informados na tela (clientes não têm admin automático).
         $to = array_values(array_unique(array_filter($request->input('emails') ?: [])));
@@ -1222,10 +1430,47 @@ class FechamentoClienteController extends Controller
         // CC: só o financeiro (não-vazio), sem duplicar quem já está no To.
         $cc = array_values(array_diff(array_filter([$financeiroCc]), $to));
 
-        $subject = 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Apontamentos - ' . $customer->name;
+        $subject = $mode === 'despesa'
+            ? 'Despesas ' . $this->periodoMMAAAA($yearMonth) . ' | Reembolso - ' . $customer->name
+            : 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Apontamentos - ' . $customer->name;
 
-        $files      = $this->generateClienteFiles($customer, $yearMonth);
+        $files      = $this->generateClienteFiles($customer, $yearMonth, $mode);
         $totalValue = $files['total_value'];
+
+        // Anexos extras escolhidos pelo usuário — salvos em pasta única (preserva o
+        // nome original p/ exibição) e removidos ao final do envio.
+        $extraPaths = [];
+        foreach ((array) $request->file('anexos', []) as $file) {
+            if (!$file || !$file->isValid()) {
+                continue;
+            }
+            $dir  = storage_path('app/fechamentos/anexos/' . uniqid('a', true));
+            if (!is_dir($dir)) {
+                mkdir($dir, 0775, true);
+            }
+            $name = $file->getClientOriginalName() ?: ('anexo_' . uniqid() . '.' . ($file->getClientOriginalExtension() ?: 'bin'));
+            $file->move($dir, $name);
+            $extraPaths[] = $dir . '/' . $name;
+        }
+
+        // Limite de envio: via Graph os anexos (PDF + XLSX + extras) somam até ~3 MB.
+        // Bloqueia ANTES de enviar — não deixa passar do limite.
+        if (\App\Services\GraphMailer::enabled()) {
+            $totalBytes = (is_file($files['pdf_full'])  ? (int) filesize($files['pdf_full'])  : 0)
+                        + (is_file($files['xlsx_full']) ? (int) filesize($files['xlsx_full']) : 0);
+            foreach ($extraPaths as $p) {
+                $totalBytes += is_file($p) ? (int) filesize($p) : 0;
+            }
+            if ($totalBytes > \App\Services\GraphMailer::MAX_INLINE_ATTACHMENTS_BYTES) {
+                foreach ($extraPaths as $p) { @unlink($p); @rmdir(dirname($p)); }
+                $maxMb = number_format(\App\Services\GraphMailer::MAX_INLINE_ATTACHMENTS_BYTES / 1048576, 1, ',', '.');
+                $totMb = number_format($totalBytes / 1048576, 1, ',', '.');
+                return response()->json([
+                    'success' => false,
+                    'message' => "Anexos excedem o limite de envio: {$totMb} MB de {$maxMb} MB (inclui o relatório PDF e a planilha). Remova ou reduza os anexos extras.",
+                ], 422);
+            }
+        }
 
         // Envia COMO o remetente (App Password O365) quando configurado; senão, conta NF-e (fallback atual).
         $mc = \App\Services\SenderMailer::for(
@@ -1253,6 +1498,8 @@ class FechamentoClienteController extends Controller
                 withAttachments: true,
                 fromAddress:     $mc['from_address'],
                 fromName:        $mc['from_name'],
+                mode:            $mode,
+                extraAttachments: $extraPaths,
             );
 
             // Microsoft Graph (Send As do remetente) quando configurado; senão, SMTP/NF-e atual.
@@ -1263,7 +1510,7 @@ class FechamentoClienteController extends Controller
                     $cc,
                     $subject,
                     $mailable->render(),
-                    [$files['pdf_full'], $files['xlsx_full']],
+                    array_merge([$files['pdf_full'], $files['xlsx_full']], $extraPaths),
                 );
             } else {
                 Mail::mailer($mc['mailer'])->to($to)->cc($cc)->send($mailable);
@@ -1275,9 +1522,11 @@ class FechamentoClienteController extends Controller
 
             Log::info('Fechamento de cliente enviado por e-mail', [
                 'cliente' => $customer->id, 'remetente' => $sender->id,
-                'to' => $to, 'cc' => $cc, 'total' => $totalValue,
+                'to' => $to, 'cc' => $cc, 'total' => $totalValue, 'anexos_extras' => count($extraPaths),
             ]);
+            foreach ($extraPaths as $p) { @unlink($p); @rmdir(dirname($p)); }
         } catch (\Throwable $e) {
+            foreach ($extraPaths as $p) { @unlink($p); @rmdir(dirname($p)); }
             Log::error('Falha ao enviar fechamento de cliente por e-mail', [
                 'cliente' => $customer->id, 'remetente' => $sender->id, 'erro' => $e->getMessage(),
             ]);
@@ -1317,6 +1566,17 @@ class FechamentoClienteController extends Controller
         $customer = Customer::find($customerId);
         if (!$customer) {
             return response()->json(['success' => false, 'message' => 'Cliente não encontrado.'], 404);
+        }
+
+        $mode = $request->query('mode') === 'despesa' ? 'despesa' : 'servicos';
+        if ($mode === 'despesa') {
+            $despesas = array_map(
+                fn ($d) => $d + ['cliente' => $customer->name, 'is_paid' => false, 'paid_at' => null],
+                $this->despesasData((int) $customer->id, $yearMonth, $yearMonth),
+            );
+            $export   = new FechamentoConsultorDespesaExport($despesas, $customer->name, $this->periodoExtenso($yearMonth));
+            $fileName = "Despesas_{$yearMonth}_" . $this->sanitizeFilename($customer->name) . ".xlsx";
+            return Excel::download($export, $fileName);
         }
 
         $periodo    = $this->periodoExtenso($yearMonth);

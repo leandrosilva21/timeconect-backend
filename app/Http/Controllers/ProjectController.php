@@ -2361,35 +2361,15 @@ class ProjectController extends Controller
      */
     private function calculateAvailableHours(Project $parentProject, ?int $excludeProjectId = null): int
     {
-        // Obter o saldo geral do projeto pai (já inclui todos os filhos)
-        $balance = $parentProject->getGeneralHoursBalance();
-
-        // Se há um projeto filho para excluir, adicionar de volta o que foi subtraído dele
-        if ($excludeProjectId) {
-            $excludedProject = $parentProject->childProjects()->find($excludeProjectId);
-
-            if ($excludedProject) {
-                // Carregar contractType se necessário
-                $excludedProject->loadMissing('contractType');
-
-                // Verificar tipo do projeto excluído. Fechado E Banco de Horas Fixo
-                // comprometem sold_hours + aportes no pai, então o "reembolso" ao
-                // excluir é o mesmo total.
-                $excludedCode = (string) ($excludedProject->contractType->code ?? '');
-                $excludedName = $excludedProject->contractType ? strtolower(trim($excludedProject->contractType->name)) : '';
-                $isClosedContract = $excludedName === 'fechado';
-                $isBhFixo = $excludedCode === 'fixed_hours' || $excludedName === 'banco de horas fixo';
-
-                if ($isClosedContract || $isBhFixo) {
-                    $excludedTotalHours = $excludedProject->getTotalAvailableHours();
-                    $balance += $excludedTotalHours;
-                } else {
-                    // Demais tipos: foi subtraído pelas horas apontadas
-                    $excludedLoggedHours = $excludedProject->getTotalLoggedHours(false);
-                    $balance += $excludedLoggedHours;
-                }
-            }
-        }
+        // Disponível do pai p/ comprometer em subprojeto = saldo geral do pai
+        // calculado IGNORANDO por completo o filho em edição. Antes calculava o
+        // saldo cheio e tentava "somar de volta" só as horas APONTADAS do filho —
+        // mas getGeneralHoursBalance subtrai o filho por apontado + initial_consumed
+        // + coordenação, então o estorno divergia (não devolvia o initial_consumed) e
+        // o disponível vinha menor que o real (ex.: filho com consumo histórico
+        // travava a edição com "58h disponíveis"). Excluindo o filho na origem o
+        // cálculo não tem como divergir.
+        $balance = $parentProject->getGeneralHoursBalance(false, null, $excludeProjectId);
 
         // Retornar como int (arredondado) e garantir que não seja negativo
         return max(0, (int) round($balance));

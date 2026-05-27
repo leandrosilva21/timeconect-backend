@@ -1447,12 +1447,18 @@ class ContractController extends Controller
     public function updateRecorrente(Request $request, Contract $contract): JsonResponse
     {
         $validated = $request->validate([
-            'data_assinatura' => 'nullable|date',
-            'data_vencimento' => 'nullable|date',
-            'valor_inicial'   => 'nullable|numeric|min:0',
-            'taxa_reajuste'   => 'nullable|string|in:IPCA,IGP-M',
-            'pct_reajuste'    => 'nullable|numeric',
+            'data_assinatura'      => 'nullable|date',
+            'data_vencimento'      => 'nullable|date',
+            'data_ultimo_reajuste' => 'nullable|date',
+            'valor_inicial'        => 'nullable|numeric|min:0',
+            'taxa_reajuste'        => 'nullable|string|in:IPCA,IGPM,IGP-M',
+            'pct_reajuste'         => 'nullable|numeric',
         ]);
+
+        // Normaliza a taxa para o rótulo canônico (IPCA | IGPM) — o FE manda IGPM.
+        if (!empty($validated['taxa_reajuste'])) {
+            $validated['taxa_reajuste'] = EconomicIndexService::canonical($validated['taxa_reajuste']);
+        }
 
         $contract->update($validated);
 

@@ -2170,6 +2170,10 @@ class ProjectController extends Controller
             ], 500);
         }
 
+        // Invalida o cache da listagem — senão a lista (cachedList) continua mostrando
+        // o vínculo antigo e o FE oferece "Desvincular do pai" num projeto já solto (422).
+        $this->invalidateListCache('projects');
+
         return response()->json([
             'message' => 'Projeto desvinculado com sucesso',
             'parent' => [
@@ -2234,10 +2238,17 @@ class ProjectController extends Controller
         }
 
         try {
-            DB::transaction(function () use ($parent, $child) {
+            // Herda o código do pai (XXX000-YY-ZZ) — mesma regra do store ao criar subprojeto.
+            $codeData = (new \App\Services\ProjectCodeService())->generateChildCode($parent);
+            DB::transaction(function () use ($parent, $child, $codeData) {
                 // sold_hours do pai NÃO é alterado por vínculo — o consumo do filho
                 // passa a contar dinamicamente no consumed_hours do pai (ver index gestao).
                 $child->parent_project_id = $parent->id;
+                $child->code           = $codeData['code'];
+                $child->proj_sequence  = $codeData['proj_sequence'];
+                $child->proj_year      = $codeData['proj_year'];
+                $child->child_sequence = $codeData['child_sequence'];
+                $child->is_manual_code = $codeData['is_manual_code'];
                 $child->save();
             });
         } catch (\Throwable $e) {
@@ -2245,6 +2256,9 @@ class ProjectController extends Controller
                 'error' => 'Falha ao vincular projeto: ' . $e->getMessage(),
             ], 500);
         }
+
+        // Invalida o cache da listagem — senão a lista (cachedList) continua sem o vínculo novo.
+        $this->invalidateListCache('projects');
 
         return response()->json([
             'message' => 'Projeto vinculado com sucesso',
@@ -2256,6 +2270,7 @@ class ProjectController extends Controller
             'child' => [
                 'id'                => $child->id,
                 'name'              => $child->name,
+                'code'              => $child->code,
                 'parent_project_id' => $child->parent_project_id,
                 'sold_hours'        => (float) $child->sold_hours,
             ],

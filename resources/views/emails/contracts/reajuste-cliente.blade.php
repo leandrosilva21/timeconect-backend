@@ -24,7 +24,7 @@
         <!-- Corpo -->
         <tr>
           <td align="left" bgcolor="#FFFFFF" style="padding:30px 40px 8px;">
-            <p style="margin:0 0 14px;color:#0F172A;font-size:15px;line-height:1.6;">Prezado(a) <b>{{ $cliente }}</b>,</p>
+            <p style="margin:0 0 14px;color:#0F172A;font-size:15px;line-height:1.6;">Prezados(a) da <b>{{ $cliente }}</b>,</p>
             <p style="margin:0 0 14px;color:#334155;font-size:14px;line-height:1.65;">
               Em conformidade com o seu contrato{{ $contrato ? ' ('.$contrato.')' : '' }}, informamos o <b>reajuste do valor contratado</b>,
               calculado pela variação acumulada do índice <b>{{ $indiceLabel }}</b>@if($periodoFormatado) no período de <b>{{ $periodoFormatado }}</b>@endif,

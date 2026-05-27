@@ -85,7 +85,7 @@
             <td class="pd-main" align="left" bgcolor="#FFFFFF" style="padding:36px 40px 0;background-color:#FFFFFF;">
               <div style="font-size:11px;letter-spacing:.18em;color:#0E7490;font-weight:700;text-transform:uppercase;">{{ ($mode ?? 'servicos') === 'despesa' ? 'Apuração das Despesas' : 'Fechamento de Clientes' }}</div>
               <h1 class="h1" style="margin:10px 0 4px;font-size:24px;font-weight:700;color:#111827;line-height:1.3;">
-                Olá, {{ $clienteName }}.
+                Prezados(a) da {{ $clienteName }},
               </h1>
               {{-- Mensagem editável (texto livre); cai pra default no controller se vazia. --}}
               <div style="margin:8px 0 0;font-size:15px;color:#4B5563;line-height:1.65;white-space:pre-wrap;">{!! nl2br(e($mensagem ?? '')) !!}</div>

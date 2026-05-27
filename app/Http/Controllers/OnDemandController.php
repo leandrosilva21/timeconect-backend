@@ -415,6 +415,24 @@ class OnDemandController extends Controller
         // Arredondar para 2 casas decimais
         $monthConsumedHours = round($monthConsumedHours, 2);
 
+        // Split do consumo do mês por tipo de serviço (Sustentação vs Projeto) — card.
+        $sustIds = \App\Models\ServiceType::where('code', 'sustentacao')
+            ->orWhereRaw('LOWER(name) LIKE ?', ['%sustenta%'])->pluck('id')->all();
+        $monthProjectIds = collect();
+        foreach ($parentProjects as $pp) {
+            $monthProjectIds->push($pp->id);
+            if ($pp->hasChildProjects()) {
+                foreach ($pp->childProjects as $cp) { $monthProjectIds->push($cp->id); }
+            }
+        }
+        $sustProjectIds = \App\Models\Project::whereIn('id', $monthProjectIds->all())
+            ->whereIn('service_type_id', $sustIds)->pluck('id')->all();
+        $monthMaintenanceHours = round((float) \App\Models\Timesheet::whereIn('project_id', $sustProjectIds)
+            ->whereIn('status', ['approved', 'pending'])
+            ->whereBetween('date', [$monthStart, $monthEnd])
+            ->sum('effort_minutes') / 60, 2);
+        $monthProjectsHours = round(max(0, $monthConsumedHours - $monthMaintenanceHours), 2);
+
         // Se há filtro de período ativo, recalcular exceeded_hours e amount_to_pay
         // como horas excedentes APENAS do mês selecionado.
         //
@@ -513,6 +531,12 @@ class OnDemandController extends Controller
             $contributionHistory = array_slice($contributionHistory, 0, 50);
         }
 
+        // On Demand não tem horas contratadas/buffer — cobra TODO o consumo do
+        // período. Valor a pagar = consumo do mês × valor hora (ignora "excedente").
+        $amountToPay = ($monthConsumedHours > 0 && $rateForPayment !== null)
+            ? round($monthConsumedHours * $rateForPayment, 2)
+            : null;
+
         return response()->json([
             'success' => true,
             'message' => 'Dados do dashboard obtidos com sucesso',
@@ -521,6 +545,8 @@ class OnDemandController extends Controller
                 'contributed_hours' => $contributedHours,
                 'consumed_hours' => $consumedHours,
                 'month_consumed_hours' => $monthConsumedHours,
+                'month_maintenance_hours' => $monthMaintenanceHours,
+                'month_projects_hours' => $monthProjectsHours,
                 'hours_balance' => $hoursBalance,
                 'exceeded_hours' => $exceededHours,
                 'amount_to_pay' => $amountToPay,
@@ -677,6 +703,17 @@ class OnDemandController extends Controller
         }
 
         $projectsData = $projects->map(function($project) {
+            // On Demand não tem horas contratadas/saldo — o consumo do filho é a
+            // SOMA dos apontamentos (não rejeitados) do projeto e dos seus filhos.
+            $balance = round($project->getGeneralHoursBalance(), 2);
+            $projIds = \App\Models\Project::where(function ($q) use ($project) {
+                    $q->where('id', $project->id)->orWhere('parent_project_id', $project->id);
+                })->whereNull('deleted_at')->pluck('id');
+            $consumed = round((float) \App\Models\Timesheet::whereIn('project_id', $projIds)
+                ->where('status', '!=', 'rejected')
+                ->whereNull('deleted_at')
+                ->sum('effort_minutes') / 60, 2);
+
             return [
                 'id' => $project->id,
                 'name' => $project->name,
@@ -686,7 +723,8 @@ class OnDemandController extends Controller
                 'status_display' => $project->getStatusDisplayAttribute(),
                 'sold_hours' => $project->sold_hours,
                 'hour_contribution' => $project->hour_contribution,  // @deprecated - mantido para compatibilidade
-                'hours_balance' => round($project->getGeneralHoursBalance(), 2),
+                'consumed_hours' => $consumed,
+                'hours_balance' => $balance,
                 'start_date' => $project->start_date ? $project->start_date->format('Y-m-d') : null,
                 'parent_project_id' => $project->parent_project_id,
                 // ✨ Novos campos calculados usando hour_contributions table

@@ -11,6 +11,7 @@ use App\Models\ServiceType;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 /**
  * @OA\Tag(
@@ -4986,6 +4987,109 @@ class BankHoursFixedController extends Controller
         });
 
         return response()->json(['success' => true, 'data' => $data->values()]);
+    }
+
+    /**
+     * Exporta os apontamentos de um projeto (pai + filhos) em PDF.
+     * Reaproveita exatamente a mesma seleção de timesheets de projectTimesheetsModal
+     * (project_id + date_from/date_to + customer_id, exclui 'rejected') e renderiza
+     * a Blade pdf.project-timesheets, espelhando o estilo do fechamento-cliente.
+     */
+    public function projectTimesheetsPdf(Request $request)
+    {
+        $user       = $request->user();
+        $projectId  = $request->get('project_id');
+        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        $dateFrom   = $request->get('date_from');
+        $dateTo     = $request->get('date_to');
+
+        if (!$projectId) {
+            return response()->json(['success' => false, 'message' => 'project_id obrigatório'], 422);
+        }
+
+        $project = Project::with('customer')->whereNull('deleted_at')->find($projectId);
+        if (!$project) {
+            return response()->json(['success' => false, 'message' => 'Projeto não encontrado'], 404);
+        }
+
+        $projectIds = Project::where(function ($q) use ($projectId) {
+                $q->where('id', $projectId)->orWhere('parent_project_id', $projectId);
+            })
+            ->when($customerId, fn ($q) => $q->where('customer_id', $customerId))
+            ->whereNull('deleted_at')
+            ->pluck('id');
+
+        $ts = collect();
+        if ($projectIds->isNotEmpty()) {
+            $ts = Timesheet::with(['user', 'project'])
+                ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject')
+                ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+                ->whereIn('timesheets.project_id', $projectIds)
+                ->where('timesheets.status', '!=', 'rejected')
+                ->when($dateFrom, fn ($q) => $q->where('timesheets.date', '>=', $dateFrom))
+                ->when($dateTo,   fn ($q) => $q->where('timesheets.date', '<=', $dateTo))
+                ->orderByDesc('timesheets.date')->orderByDesc('timesheets.id')
+                ->limit(5000)
+                ->get();
+        }
+
+        $linhas = $ts->map(function ($t) {
+            $hours = ($t->effort_minutes ?? 0) / 60;
+            return [
+                'data'      => optional($t->date)->format('d/m/Y'),
+                'consultor' => $t->user ? $t->user->name : null,
+                'ticket'    => $t->ticket,
+                'titulo'    => $t->ticket_subject ?: $t->observation,
+                'horas'     => $hours,
+                'horas_fmt' => number_format($hours, 2, ',', '.'),
+            ];
+        })->values()->all();
+
+        $totalHoras = round(collect($linhas)->sum('horas'), 2);
+
+        // Período legível pro cabeçalho + nome do arquivo.
+        $fmtBr = fn ($d) => $d ? \Carbon\Carbon::parse($d)->format('d/m/Y') : null;
+        if ($dateFrom && $dateTo) {
+            $periodo = $fmtBr($dateFrom) . ' a ' . $fmtBr($dateTo);
+        } elseif ($dateFrom) {
+            $periodo = 'A partir de ' . $fmtBr($dateFrom);
+        } elseif ($dateTo) {
+            $periodo = 'Até ' . $fmtBr($dateTo);
+        } else {
+            $periodo = 'Todo o período';
+        }
+
+        $projetoCode  = $project->code ?? '';
+        $projetoLabel = trim(($project->code ? $project->code . ' — ' : '') . ($project->name ?? ''));
+        $clienteName  = $project->customer ? $project->customer->name : null;
+
+        // Logo ERPSERV embutido (base64) — mesmo padrão do fechamento-cliente.
+        $logoFile    = public_path('logo-erpserv.png');
+        $logoDataUri = is_file($logoFile)
+            ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($logoFile))
+            : null;
+
+        $data = [
+            'logoDataUri'  => $logoDataUri,
+            'clienteName'  => $clienteName,
+            'projetoCode'  => $projetoCode,
+            'projetoLabel' => $projetoLabel ?: '—',
+            'periodo'      => $periodo,
+            'emitidoEm'    => now()->format('d/m/Y H:i'),
+            'linhas'       => $linhas,
+            'totalHorasFmt'=> number_format($totalHoras, 2, ',', '.') . 'h',
+        ];
+
+        $periodSlug = $dateFrom && $dateTo
+            ? \Carbon\Carbon::parse($dateFrom)->format('Ymd') . '-' . \Carbon\Carbon::parse($dateTo)->format('Ymd')
+            : now()->format('Ymd');
+        $codeSlug   = preg_replace('/[^A-Za-z0-9_-]/', '_', $projetoCode ?: ('projeto_' . $projectId));
+        $fileName   = "Apontamentos_{$codeSlug}_{$periodSlug}.pdf";
+
+        return Pdf::loadView('pdf.project-timesheets', $data)
+            ->setPaper('a4', 'portrait')
+            ->setOption(['defaultMediaType' => 'print'])
+            ->download($fileName);
     }
 
     /**

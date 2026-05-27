@@ -241,6 +241,12 @@ class Expense extends Model
      */
     public function approve(User $approver, bool $chargeClient = false): bool
     {
+        // Ninguém aprova a própria despesa — nem administrador. Quem lançou
+        // (user_id) não pode ser o aprovador; qualquer outro admin/coordenador pode.
+        if ((int) $this->user_id === (int) $approver->id) {
+            return false;
+        }
+
         if (!$this->canBeApproved() || !$this->canBeApprovedBy($approver)) {
             return false;
         }

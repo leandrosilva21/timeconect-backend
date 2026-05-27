@@ -824,6 +824,14 @@ class ExpenseController extends Controller
             return $this->notFoundResponse('Despesa não encontrada');
         }
 
+        // Ninguém aprova a própria despesa que lançou — nem administrador.
+        if ((int) $expense->user_id === (int) $user->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Você não pode aprovar uma despesa que você mesmo lançou.'
+            ], 403);
+        }
+
         // Administradores podem aprovar qualquer despesa
         if (!$user->isAdmin() && !$expense->canBeApprovedBy($user)) {
             return response()->json([

@@ -783,7 +783,7 @@ class Project extends Model
      * @param int|null $excludeTimesheetId ID do timesheet a excluir do cálculo (útil na edição)
      * @return float Saldo geral em horas
      */
-    public function getGeneralHoursBalance(bool $includeChildProjects = false, ?int $excludeTimesheetId = null): float
+    public function getGeneralHoursBalance(bool $includeChildProjects = false, ?int $excludeTimesheetId = null, ?int $excludeChildProjectId = null): float
     {
         $this->loadMissing('contractType');
 
@@ -827,6 +827,11 @@ class Project extends Model
 
             foreach ($this->childProjects as $childProject) {
                 if ($childProject->isAusterFrozen()) continue;
+                // Excluir o filho em edição do cálculo (validação de horas do
+                // subprojeto): assim o disponível do pai não carrega o consumo desse
+                // filho — inclusive initial_hours_consumed, que o estorno antigo não
+                // devolvia e derrubava o disponível indevidamente.
+                if ($excludeChildProjectId !== null && (int) $childProject->id === $excludeChildProjectId) continue;
 
                 // Verificar se o projeto filho é do tipo "Fechado"
                 $isClosedContract = $childProject->contractType &&

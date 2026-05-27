@@ -6,6 +6,7 @@ use App\Exports\FechamentoConsultorExport;
 use App\Exports\FechamentoConsultorListExport;
 use App\Mail\FechamentoConsultorMail;
 use App\Models\FechamentoConsultorEmail;
+use App\Models\Expense;
 use App\Models\Timesheet;
 use App\Models\User;
 use App\Models\UserHourlyRateLog;
@@ -266,6 +267,62 @@ class FechamentoConsultorController extends Controller
         }
     }
 
+    /** Despesas do consultor encaminhadas ao fechamento (pagar_no_fechamento=true) no período. */
+    private function despesasConsultor(int $userId, string $yearMonth): array
+    {
+        [$from, $to] = $this->period($yearMonth);
+
+        // Encaminhadas ao fechamento (a pagar) OU já pagas (avulso) — paga aparece com a
+        // data do pagamento e NÃO entra no saldo; o saldo a pagar no fechamento = as não-pagas.
+        return Expense::with(['project:id,name,code,customer_id', 'project.customer:id,name', 'category:id,name', 'paidByUser:id,name'])
+            ->where('user_id', $userId)
+            ->where(fn ($q) => $q->where('pagar_no_fechamento', true)->orWhere('is_paid', true))
+            ->whereNotIn('status', [Expense::STATUS_ADJUSTMENT_REQUESTED, Expense::STATUS_REJECTED])
+            ->whereBetween('expense_date', [$from, $to])
+            ->orderBy('expense_date')
+            ->get()
+            ->map(fn ($e) => [
+                'id'           => $e->id,
+                'data'         => $e->expense_date->format('Y-m-d'),
+                'descricao'    => $e->description,
+                'categoria'    => $e->category->name ?? '—',
+                'cliente'      => $e->project?->customer?->name ?? '—',
+                'projeto'      => $e->project->name ?? '—',
+                'valor'        => (float) $e->amount,
+                'is_paid'      => (bool) $e->is_paid,            // true = paga avulso (fora do fechamento)
+                'paid_at'      => $e->paid_at?->toISOString(),
+                'paid_by_name' => $e->paidByUser->name ?? null,
+            ])
+            ->toArray();
+    }
+
+    /**
+     * Fechamento do consultor + despesas encaminhadas + total geral.
+     * total_servico = horas/serviço; total_despesas = despesas NÃO pagas avulso
+     * (paga avulso aparece no relatório mas não soma); total_geral = serviço + despesa.
+     */
+    private function closingComDespesas(User $user, string $yearMonth): array
+    {
+        $closing  = $this->computeConsultantClosing($user, $yearMonth);
+        $despesas = $this->despesasConsultor($user->id, $yearMonth);
+
+        $totalServico  = (float) ($closing['total'] ?? 0);
+        $totalDespesas = round(collect($despesas)->where('is_paid', false)->sum('valor'), 2);
+
+        $closing['total_servico']  = round($totalServico, 2);
+        $closing['despesas']       = $despesas;
+        $closing['total_despesas'] = $totalDespesas;
+        $closing['total_geral']    = round($totalServico + $totalDespesas, 2);
+
+        return $closing;
+    }
+
+    /** GET /fechamento-consultor/{id}/{ym}/despesas — lançamentos de despesa encaminhados ao fechamento. */
+    public function despesas(string $userId, string $yearMonth): JsonResponse
+    {
+        return response()->json(['data' => $this->despesasConsultor((int) $userId, $yearMonth)]);
+    }
+
     /** Agrupa as linhas por tipo de contrato → cliente, para o PDF. */
     private function buildPdfGroups(array $rows): array
     {
@@ -335,11 +392,14 @@ class FechamentoConsultorController extends Controller
      * continuações) referenciam via In-Reply-To/References para threadar no Outlook/Gmail.
      * Retorna null se ainda não houver nenhuma mensagem com message_id (thread inexistente).
      */
-    private function threadRoot(int|string $consultantId, string $yearMonth): ?FechamentoConsultorEmail
+    private function threadRoot(int|string $consultantId, string $yearMonth, string $mode = 'ambos'): ?FechamentoConsultorEmail
     {
         return FechamentoConsultorEmail::where('consultant_user_id', $consultantId)
             ->where('year_month', $yearMonth)
             ->whereNotNull('message_id')
+            // Despesa e serviço NÃO compartilham thread (assuntos distintos).
+            ->when($mode === 'despesa', fn ($q) => $q->where('subject', 'like', 'Despesas%'))
+            ->when($mode !== 'despesa', fn ($q) => $q->where('subject', 'not like', 'Despesas%'))
             ->orderBy('id')
             ->first();
     }
@@ -353,20 +413,26 @@ class FechamentoConsultorController extends Controller
      *   pdf_name:string, xlsx_name:string, total_value:float
      * }
      */
-    private function generateFechamentoFiles(User $consultant, string $yearMonth): array
+    private function generateFechamentoFiles(User $consultant, string $yearMonth, string $mode = 'ambos'): array
     {
         [$from, $to]   = $this->period($yearMonth);
         $periodo       = $this->periodoExtenso($yearMonth);
 
-        $closing       = $this->computeConsultantClosing($consultant, $yearMonth);
-        $totalValue    = (float) $closing['total'];
+        $closing       = $this->closingComDespesas($consultant, $yearMonth);
+        $totalServico  = (float) $closing['total_servico'];
+        $totalDespesas = (float) $closing['total_despesas'];
         $apont         = $this->buildApontamentosRows($consultant->id, $from, $to, $consultant);
         $rows          = $apont['rows'];
         $effectiveRate = (float) $apont['effective_rate'];
 
+        $soDespesa  = $mode === 'despesa';
+        $soServico  = $mode === 'servicos';
+        $totalValue = $soDespesa ? $totalDespesas : ($soServico ? $totalServico : (float) $closing['total_geral']);
+
+        $prefix       = $soDespesa ? 'Despesas' : 'Fechamento';
         $safeName     = $this->sanitizeFilename($consultant->name);
-        $pdfFileName  = "Fechamento_{$yearMonth}_{$safeName}.pdf";
-        $xlsxFileName = "Fechamento_{$yearMonth}_{$safeName}.xlsx";
+        $pdfFileName  = "{$prefix}_{$yearMonth}_{$safeName}.pdf";
+        $xlsxFileName = "{$prefix}_{$yearMonth}_{$safeName}.xlsx";
         $dir          = 'fechamentos';
         $pdfRelPath   = "{$dir}/{$pdfFileName}";
         $xlsxRelPath  = "{$dir}/{$xlsxFileName}";
@@ -382,18 +448,25 @@ class FechamentoConsultorController extends Controller
 
         // ── PDF ──
         $pdf = Pdf::loadView('pdf.fechamento-consultor', [
-            'consultantName' => $consultant->name,
-            'periodo'        => $periodo,
-            'totalHorasFmt'  => $this->fmtHoras((float) $closing['horas_a_pagar']),
-            'taxaLabel'      => $closing['taxa_label'],
-            'taxaFmt'        => $this->brl((float) $closing['taxa_value']),
-            'valorTotal'     => $this->brl($totalValue),
-            'grupos'         => $this->buildPdfGroups($rows),
-        ])->setPaper('a4', 'portrait');
+            'consultantName'   => $consultant->name,
+            'periodo'          => $periodo,
+            'mode'             => $mode,
+            'totalHorasFmt'    => $this->fmtHoras((float) $closing['horas_a_pagar']),
+            'taxaLabel'        => $closing['taxa_label'],
+            'taxaFmt'          => $this->brl((float) $closing['taxa_value']),
+            'valorServicoFmt'  => $this->brl($totalServico),
+            'despesas'         => $closing['despesas'],
+            'totalDespesasFmt' => $this->brl($totalDespesas),
+            'temDespesas'      => !empty($closing['despesas']) && !$soServico,
+            'valorTotal'       => $this->brl($totalValue),
+            'grupos'           => $soDespesa ? [] : $this->buildPdfGroups($rows),
+        ])->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
         file_put_contents($pdfFullPath, $pdf->output());
 
         // ── XLSX ──
-        $export = new FechamentoConsultorExport($rows, $effectiveRate, $consultant->name, $periodo, $totalValue);
+        $export = $soDespesa
+            ? new \App\Exports\FechamentoConsultorDespesaExport($closing['despesas'], $consultant->name, $periodo)
+            : new FechamentoConsultorExport($rows, $effectiveRate, $consultant->name, $periodo, $totalValue);
         file_put_contents($xlsxFullPath, Excel::raw($export, \Maatwebsite\Excel\Excel::XLSX));
 
         return [
@@ -409,9 +482,10 @@ class FechamentoConsultorController extends Controller
 
 
     /** Mensagem padrão (corpo) do e-mail de fechamento — editável na tela antes de enviar. */
-    private function defaultMensagem(string $periodo): string
+    private function defaultMensagem(string $periodo, string $mode = 'ambos'): string
     {
-        return "Segue em anexo o fechamento referente ao período de {$periodo}.\n\nEm caso de dúvidas ou divergências, por gentileza entrar em contato.";
+        $doc = $mode === 'despesa' ? 'a apuração das despesas' : 'o fechamento';
+        return "Segue em anexo {$doc} referente ao período de {$periodo}.\n\nEm caso de dúvidas ou divergências, por gentileza entrar em contato.";
     }
 
     // ─── Enviar fechamento por e-mail ───────────────────────────────────────────
@@ -433,7 +507,9 @@ class FechamentoConsultorController extends Controller
             'html'     => 'nullable|string',
             'subject'  => 'nullable|string',
             'mensagem' => 'nullable|string', // corpo editável; vazio = mensagem padrão
+            'mode'     => 'nullable|string|in:servicos,despesa,ambos',
         ]);
+        $mode = $request->input('mode', 'ambos');
 
         $consultant = User::find($userId);
         if (!$consultant) {
@@ -446,7 +522,7 @@ class FechamentoConsultorController extends Controller
         $periodo      = $this->periodoExtenso($yearMonth);
         $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
         // Corpo editável (texto livre); vazio = mensagem padrão.
-        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo);
+        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo, $mode);
 
         // Message-ID determinístico DESTA mensagem (sempre persistido) + chave da thread.
         $messageId    = $this->buildMessageId($consultant->id, $yearMonth);
@@ -455,7 +531,7 @@ class FechamentoConsultorController extends Controller
         // Uma única thread por (consultor, período). Se já existe uma raiz canônica,
         // este "envio" é na verdade um REENVIO: threada na raiz (mesmo assunto + In-Reply-To),
         // em vez de virar um e-mail novo. Sem raiz = primeiro envio (cria a thread).
-        $root         = $this->threadRoot($consultant->id, $yearMonth);
+        $root         = $this->threadRoot($consultant->id, $yearMonth, $mode);
         $isResend     = $root !== null;
 
         if ($isResend) {
@@ -465,12 +541,14 @@ class FechamentoConsultorController extends Controller
         } else {
             // Primeiro envio: assunto gerado, raiz da thread (sem pai).
             $subject  = $request->input('subject')
-                ?: 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Horas - ' . $consultant->name;
+                ?: ($mode === 'despesa'
+                    ? 'Despesas ' . $this->periodoMMAAAA($yearMonth) . ' | Reembolso - ' . $consultant->name
+                    : 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Horas - ' . $consultant->name);
             $inReplyTo = null;
         }
 
         // Gera anexos (PDF + XLSX) — reutilizável (mesma geração das continuações).
-        $files        = $this->generateFechamentoFiles($consultant, $yearMonth);
+        $files        = $this->generateFechamentoFiles($consultant, $yearMonth, $mode);
         $totalValue   = $files['total_value'];
 
         $log = new FechamentoConsultorEmail([
@@ -516,6 +594,7 @@ class FechamentoConsultorController extends Controller
                 mensagem:       $mensagem,
                 fromAddress:    $mc['from_address'],
                 fromName:       $mc['from_name'],
+                mode:           $mode,
             );
 
             // Microsoft Graph (Send As do remetente) quando configurado; senão, SMTP atual.
@@ -601,10 +680,20 @@ class FechamentoConsultorController extends Controller
 
         [$from, $to] = $this->period($yearMonth);
         $periodo  = $this->periodoExtenso($yearMonth);
-        $closing  = $this->computeConsultantClosing($consultant, $yearMonth);
+        $mode     = $request->query('mode', 'ambos');
+        $closing  = $this->closingComDespesas($consultant, $yearMonth);
+
+        // Relatório SÓ de despesas → planilha de despesas.
+        if ($mode === 'despesa') {
+            $export   = new \App\Exports\FechamentoConsultorDespesaExport($closing['despesas'], $consultant->name, $periodo);
+            $fileName = "Despesas_{$yearMonth}_" . $this->sanitizeFilename($consultant->name) . ".xlsx";
+            return Excel::download($export, $fileName);
+        }
+
         $apont    = $this->buildApontamentosRows($consultant->id, $from, $to, $consultant);
+        $total    = $mode === 'servicos' ? (float) $closing['total_servico'] : (float) $closing['total_geral'];
         $export   = new FechamentoConsultorExport(
-            $apont['rows'], (float) $apont['effective_rate'], $consultant->name, $periodo, (float) $closing['total']
+            $apont['rows'], (float) $apont['effective_rate'], $consultant->name, $periodo, $total
         );
         $fileName = "Fechamento_{$yearMonth}_" . $this->sanitizeFilename($consultant->name) . ".xlsx";
 
@@ -626,8 +715,12 @@ class FechamentoConsultorController extends Controller
         }
 
         $periodo        = $this->periodoExtenso($yearMonth);
-        $closing        = $this->computeConsultantClosing($consultant, $yearMonth);
-        $mensagemPadrao = $this->defaultMensagem($periodo);
+        $mode           = $request->input('mode', 'ambos');
+        $closing        = $this->closingComDespesas($consultant, $yearMonth);
+        $valorPreview   = $mode === 'despesa'
+            ? (float) $closing['total_despesas']
+            : ($mode === 'servicos' ? (float) $closing['total_servico'] : (float) $closing['total_geral']);
+        $mensagemPadrao = $this->defaultMensagem($periodo, $mode);
         $mensagem       = trim((string) $request->input('mensagem'));
         $mensagem       = $mensagem !== '' ? $mensagem : $mensagemPadrao;
 
@@ -635,7 +728,8 @@ class FechamentoConsultorController extends Controller
             'consultantName'  => $consultant->name,
             'senderName'      => $sender->name,
             'periodo'         => $periodo,
-            'valorTotal'      => $this->brl((float) $closing['total']),
+            'mode'            => $mode,
+            'valorTotal'      => $this->brl($valorPreview),
             'financeiroCc'    => (string) (config('mail.financeiro_cc') ?? ''),
             'bodyText'        => null,
             'isContinuation'  => false,
@@ -931,6 +1025,16 @@ class FechamentoConsultorController extends Controller
             ->get()
             ->groupBy('user_id');
 
+        // Despesas encaminhadas ao fechamento (pagar_no_fechamento), não pagas avulso — somadas por consultor.
+        $despesasByUser = Expense::whereIn('user_id', $users->pluck('id'))
+            ->where('pagar_no_fechamento', true)
+            ->where('is_paid', false)
+            ->whereNotIn('status', [Expense::STATUS_ADJUSTMENT_REQUESTED, Expense::STATUS_REJECTED])
+            ->whereBetween('expense_date', [$from, $to])
+            ->selectRaw('user_id, SUM(amount) as total')
+            ->groupBy('user_id')
+            ->pluck('total', 'user_id');
+
         $hourBankService = app(HourBankService::class);
 
         // Dias úteis do mês cheio — calculado uma vez, compartilhado por todos
@@ -970,6 +1074,7 @@ class FechamentoConsultorController extends Controller
                 'valor_hora'        => $hourlyRate,
                 'rate_type'         => $rateType,
                 'effective_rate'    => $effectiveRate,
+                'total_despesas'    => round((float) ($despesasByUser[$user->id] ?? 0), 2),
                 'envio_em'          => $envioMap[$user->id]['envio_em'] ?? null,
                 'envio_por'         => $envioMap[$user->id]['envio_por'] ?? null,
             ];
@@ -1086,6 +1191,12 @@ class FechamentoConsultorController extends Controller
                 'total_horistas'    => round(collect($horistas)->sum('total'), 2),
                 'total_banco_horas' => round(collect($bancoHoras)->sum('total'), 2),
                 'total_fixos'       => round(collect($fixos)->sum('total'), 2),
+                'total_despesas'    => round(
+                    collect($horistas)->sum('total_despesas') +
+                    collect($bancoHoras)->sum('total_despesas') +
+                    collect($fixos)->sum('total_despesas'),
+                    2
+                ),
                 'total_geral'       => round(
                     collect($horistas)->sum('total') +
                     collect($bancoHoras)->sum('total') +

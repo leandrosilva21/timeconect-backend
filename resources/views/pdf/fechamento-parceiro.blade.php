@@ -6,6 +6,9 @@
   <style>
     * { box-sizing: border-box; }
     body { font-family: 'DejaVu Sans', Arial, sans-serif; color: #1f2937; font-size: 11px; margin: 0; padding: 0; }
+    /* Margem do documento: por página no PDF (@page) e como padding no preview em tela. */
+    @page { margin: 1.3cm 1.5cm; }
+    @media screen { body { padding: 1.3cm 1.5cm; } }
     .header { border-bottom: 2px solid #7c3aed; padding-bottom: 12px; margin-bottom: 16px; }
     .brand { font-size: 20px; font-weight: bold; color: #111827; }
     .brand-sub { font-size: 10px; color: #6b7280; margin-top: 2px; }
@@ -55,6 +58,7 @@
     </tr>
   </table>
 
+  @if(($mode ?? 'ambos') !== 'despesa')
   @if(empty($grupos))
     <div class="empty">Nenhum apontamento considerado no período.</div>
   @else
@@ -83,19 +87,22 @@
       <div class="section-total">Subtotal {{ $grupo['consultor'] }}: {{ $grupo['horas_fmt'] }}</div>
     @endforeach
   @endif
+  @endif
 
   {{-- ── Despesas (pagas junto no fechamento) ── --}}
   @if(!empty($despesas) || !empty($despesasAntecip))
-    <div class="group-title" style="margin-top:18px;">Despesas</div>
+    <div class="group-title" style="margin-top:18px;background:#cffafe;color:#0e7490;">Despesas</div>
     @if(!empty($despesas))
       <table class="rows">
         <thead>
           <tr>
-            <th class="nowrap" style="width:62px;">Data</th>
+            <th class="nowrap" style="width:56px;">Data</th>
             <th>Descrição</th>
-            <th style="width:110px;">Categoria</th>
+            <th style="width:78px;">Categoria</th>
             <th>Colaborador</th>
-            <th class="right nowrap" style="width:90px;">Valor</th>
+            <th>Cliente</th>
+            <th>Projeto</th>
+            <th class="right nowrap" style="width:78px;">Valor</th>
           </tr>
         </thead>
         <tbody>
@@ -105,12 +112,14 @@
               <td>{{ $d['descricao'] }}</td>
               <td>{{ $d['categoria'] }}</td>
               <td>{{ $d['colaborador'] }}</td>
+              <td>{{ $d['cliente'] ?? '—' }}</td>
+              <td>{{ $d['projeto'] ?? '—' }}</td>
               <td class="right nowrap">{{ $brl($d['valor']) }}</td>
             </tr>
           @endforeach
         </tbody>
       </table>
-      <div class="section-total">Subtotal Despesas: {{ $totalDespesasFmt }}</div>
+      <div class="section-total" style="color:#0e7490;">Saldo a pagar no fechamento: {{ $totalDespesasFmt }}</div>
     @endif
 
     @if(!empty($despesasAntecip))
@@ -118,11 +127,13 @@
       <table class="rows">
         <thead>
           <tr>
-            <th class="nowrap" style="width:62px;">Data</th>
+            <th class="nowrap" style="width:56px;">Data</th>
             <th>Descrição</th>
             <th>Colaborador</th>
-            <th class="nowrap" style="width:130px;">Paga em</th>
-            <th class="right nowrap" style="width:90px;">Valor</th>
+            <th>Cliente</th>
+            <th>Projeto</th>
+            <th class="nowrap" style="width:118px;">Paga em</th>
+            <th class="right nowrap" style="width:78px;">Valor</th>
           </tr>
         </thead>
         <tbody>
@@ -131,6 +142,8 @@
               <td class="nowrap">{{ \Carbon\Carbon::parse($d['data'])->format('d/m/Y') }}</td>
               <td>{{ $d['descricao'] }}</td>
               <td>{{ $d['colaborador'] }}</td>
+              <td>{{ $d['cliente'] ?? '—' }}</td>
+              <td>{{ $d['projeto'] ?? '—' }}</td>
               <td class="nowrap">{{ $d['paid_at'] ? \Carbon\Carbon::parse($d['paid_at'])->format('d/m/Y') : '—' }}{{ $d['paid_by_name'] ? ' · '.$d['paid_by_name'] : '' }}</td>
               <td class="right nowrap" style="text-decoration:line-through;">{{ $brl($d['valor']) }}</td>
             </tr>
@@ -141,12 +154,12 @@
   @endif
 
   <table width="100%" style="margin-top:18px; font-size:11px;">
-    <tr><td style="color:#555; padding:2px 6px;">Serviços</td><td class="right" style="padding:2px 6px;">{{ $totalServicosFmt }}</td></tr>
-    <tr><td style="color:#555; padding:2px 6px;">Despesas (no fechamento)</td><td class="right" style="padding:2px 6px;">{{ $totalDespesasFmt }}</td></tr>
+    @if(($mode ?? 'ambos') !== 'despesa')<tr><td style="color:#555; padding:2px 6px;">Serviços</td><td class="right" style="padding:2px 6px;">{{ $totalServicosFmt }}</td></tr>@endif
+    @if(($mode ?? 'ambos') !== 'servicos')<tr><td style="color:#555; padding:2px 6px;">Despesas (no fechamento)</td><td class="right" style="padding:2px 6px;">{{ $totalDespesasFmt }}</td></tr>@endif
   </table>
   <table class="total-box" width="100%">
     <tr>
-      <td class="total-label">TOTAL A PAGAR — {{ strtoupper($parceiroName) }}</td>
+      <td class="total-label">{{ ($mode ?? 'ambos') === 'despesa' ? 'TOTAL — DESPESAS' : (($mode ?? 'ambos') === 'servicos' ? 'TOTAL A PAGAR — SERVIÇOS' : 'TOTAL A PAGAR') }} — {{ strtoupper($parceiroName) }}</td>
       <td class="total-value">{{ $valorTotal }}</td>
     </tr>
   </table>

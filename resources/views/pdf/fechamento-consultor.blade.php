@@ -6,6 +6,9 @@
   <style>
     * { box-sizing: border-box; }
     body { font-family: 'DejaVu Sans', Arial, sans-serif; color: #1f2937; font-size: 11px; margin: 0; padding: 0; }
+    /* Margem do documento: por página no PDF (@page) e como padding no preview em tela. */
+    @page { margin: 1.3cm 1.5cm; }
+    @media screen { body { padding: 1.3cm 1.5cm; } }
     .header { border-bottom: 2px solid #7c3aed; padding-bottom: 12px; margin-bottom: 16px; }
     .brand { font-size: 20px; font-weight: bold; color: #111827; }
     .brand-sub { font-size: 10px; color: #6b7280; margin-top: 2px; }
@@ -41,11 +44,17 @@
     <div class="brand">ERPSERV Consultoria</div>
     <div class="brand-sub">Minutor — Controle de horas e contratos</div>
     <div class="doc-title">Fechamento de Consultor</div>
-    <div class="doc-meta">{{ $consultantName }} &nbsp;·&nbsp; Período: {{ $periodo }}</div>
+    <div class="doc-meta">{{ $consultantName }} &nbsp;·&nbsp; Período: {{ $periodo }}@if(($mode ?? 'ambos') !== 'ambos') &nbsp;·&nbsp; {{ ($mode ?? '') === 'despesa' ? 'Despesas' : 'Serviços' }}@endif</div>
   </div>
 
   <table class="summary">
     <tr>
+      @if(($mode ?? 'ambos') === 'despesa')
+      <td>
+        <div class="summary-label">Despesas (fechamento)</div>
+        <div class="summary-value" style="color:#7c3aed;">{{ $totalDespesasFmt }}</div>
+      </td>
+      @else
       <td>
         <div class="summary-label">Total de Horas</div>
         <div class="summary-value">{{ $totalHorasFmt }}</div>
@@ -55,12 +64,14 @@
         <div class="summary-value">{{ $taxaFmt }}</div>
       </td>
       <td>
-        <div class="summary-label">Total a Pagar</div>
-        <div class="summary-value" style="color:#7c3aed;">{{ $valorTotal }}</div>
+        <div class="summary-label">Total Serviços</div>
+        <div class="summary-value" style="color:#7c3aed;">{{ $valorServicoFmt }}</div>
       </td>
+      @endif
     </tr>
   </table>
 
+  @if(($mode ?? 'ambos') !== 'despesa')
   @if(empty($grupos))
     <div class="empty">Nenhum apontamento considerado no período.</div>
   @else
@@ -97,10 +108,52 @@
       <div class="section-total">Subtotal {{ $grupo['tipo'] }}: {{ $grupo['horas_fmt'] }}</div>
     @endforeach
   @endif
+  @endif
+
+  @if(!empty($temDespesas))
+    <div class="group-title" style="background:#cffafe;color:#0e7490;">Despesas reembolsadas no fechamento</div>
+    <table class="rows">
+      <thead>
+        <tr>
+          <th class="nowrap" style="width:54px;">Data</th>
+          <th>Descrição</th>
+          <th style="width:78px;">Categoria</th>
+          <th>Cliente</th>
+          <th>Projeto</th>
+          <th class="nowrap" style="width:78px;">Pagamento</th>
+          <th class="right nowrap" style="width:70px;">Valor</th>
+        </tr>
+      </thead>
+      <tbody>
+        @foreach($despesas as $d)
+          <tr>
+            <td class="nowrap">{{ \Carbon\Carbon::parse($d['data'])->format('d/m/Y') }}</td>
+            <td>{{ $d['descricao'] ?: '—' }}</td>
+            <td>{{ $d['categoria'] }}</td>
+            <td>{{ $d['cliente'] ?? '—' }}</td>
+            <td>{{ $d['projeto'] }}</td>
+            <td class="nowrap">{{ $d['is_paid'] ? ($d['paid_at'] ? 'Pago '.\Carbon\Carbon::parse($d['paid_at'])->format('d/m/Y') : 'Pago') : 'No fechamento' }}</td>
+            <td class="right nowrap">R$ {{ number_format($d['valor'], 2, ',', '.') }}</td>
+          </tr>
+        @endforeach
+      </tbody>
+    </table>
+    <div class="section-total" style="color:#0e7490;">Saldo a pagar no fechamento: {{ $totalDespesasFmt }}</div>
+  @endif
 
   <table class="total-box" width="100%">
     <tr>
-      <td class="total-label">TOTAL A PAGAR — {{ strtoupper($consultantName) }}</td>
+      <td class="total-label">
+        @if(($mode ?? 'ambos') === 'despesa')
+          TOTAL — DESPESAS (FECHAMENTO)
+        @elseif(($mode ?? 'ambos') === 'servicos')
+          TOTAL A PAGAR — SERVIÇOS
+        @elseif(!empty($temDespesas))
+          TOTAL A PAGAR <br><span style="font-size:9px; font-weight:normal;">Serviços {{ $valorServicoFmt }} &nbsp;+&nbsp; Despesas {{ $totalDespesasFmt }}</span>
+        @else
+          TOTAL A PAGAR
+        @endif
+      </td>
       <td class="total-value">{{ $valorTotal }}</td>
     </tr>
   </table>

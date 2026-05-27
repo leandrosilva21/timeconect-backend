@@ -501,6 +501,7 @@ Route::prefix('v1')->group(function () {
 
         Route::put('/expenses/{expense}', [ExpenseController::class, 'update'])->name('expenses.update');
         Route::patch('/expenses/{expense}', [ExpenseController::class, 'update'])->name('expenses.patch');
+        Route::post('/expenses/{expense}/set-fechamento', [ExpenseController::class, 'setFechamento'])->name('expenses.set-fechamento');
         Route::delete('/expenses/{expense}', [ExpenseController::class, 'destroy'])->name('expenses.destroy');
 
         Route::middleware('permission.or.admin:expenses.approve')->group(function () {
@@ -785,6 +786,7 @@ Route::prefix('v1')->group(function () {
             Route::post('/fechamento-folha/{yearMonth}/import-bizify', [\App\Http\Controllers\FolhaPagamentoController::class, 'importBizify']);
 
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/apontamentos',        [\App\Http\Controllers\FechamentoConsultorController::class, 'apontamentos']);
+            Route::get('/fechamento-consultor/{userId}/{yearMonth}/despesas',            [\App\Http\Controllers\FechamentoConsultorController::class, 'despesas']);
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/banco-horas',         [\App\Http\Controllers\FechamentoConsultorController::class, 'bancoHoras']);
             Route::post('/fechamento-consultor/{userId}/{yearMonth}/enviar-email',       [\App\Http\Controllers\FechamentoConsultorController::class, 'enviarEmail']);
             Route::post('/fechamento-consultor/{userId}/{yearMonth}/limpar-envio',       [\App\Http\Controllers\FechamentoConsultorController::class, 'limparEnvio']);

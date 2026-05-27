@@ -1303,6 +1303,43 @@ class ExpenseController extends Controller
         ]);
     }
 
+    // ─── Pagar no fechamento ───────────────────────────────────────────────────
+
+    /** Marca/desmarca a despesa para ser quitada no fechamento do consultor (qualquer tipo). */
+    public function setFechamento(Request $request, int $id): JsonResponse
+    {
+        $user = Auth::user();
+
+        if (!$user->isAdmin() && !$user->isAdministrativo() && !$user->hasAccess('expenses.pay')) {
+            return $this->accessDeniedResponse('Sem permissão para encaminhar despesas ao fechamento.');
+        }
+
+        $expense = Expense::find($id);
+        if (!$expense) {
+            return $this->notFoundResponse('Despesa não encontrada');
+        }
+
+        $flag = $request->boolean('pagar_no_fechamento', true);
+
+        if ($flag && $expense->status !== Expense::STATUS_APPROVED) {
+            return response()->json(['message' => 'Apenas despesas aprovadas podem ir para o fechamento.'], 422);
+        }
+
+        // Ir para o fechamento e estar paga avulso são mutuamente exclusivos.
+        $expense->update([
+            'pagar_no_fechamento' => $flag,
+            'is_paid'             => $flag ? false : $expense->is_paid,
+            'paid_by'             => $flag ? null : $expense->paid_by,
+            'paid_at'             => $flag ? null : $expense->paid_at,
+        ]);
+
+        return response()->json([
+            'success'             => true,
+            'message'             => $flag ? 'Despesa encaminhada ao fechamento do consultor.' : 'Despesa removida do fechamento.',
+            'pagar_no_fechamento' => $expense->pagar_no_fechamento,
+        ]);
+    }
+
     /**
      * @OA\Get(
      *     path="/api/v1/expenses/export",

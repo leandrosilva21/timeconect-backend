@@ -59,6 +59,7 @@ class FechamentoConsultorMail extends Mailable
         // Null em ambos = mantém o From padrão (config-based) — comportamento atual.
         public ?string $fromAddress = null,
         public ?string $fromName = null,
+        public string $mode = 'ambos',
     ) {
     }
 
@@ -132,6 +133,7 @@ class FechamentoConsultorMail extends Mailable
                 'isContinuation' => $this->isContinuation,
                 'withAttachments' => $this->withAttachments,
                 'mensagem'       => $this->mensagem ?? '',
+                'mode'           => $this->mode,
             ],
         );
     }

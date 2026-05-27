@@ -78,9 +78,10 @@ class FechamentoParceiroController extends Controller
     }
 
     /** Mensagem padrão (corpo) do e-mail de fechamento — editável na tela antes de enviar. */
-    private function defaultMensagem(string $periodo): string
+    private function defaultMensagem(string $periodo, string $mode = 'ambos'): string
     {
-        return "Segue em anexo o fechamento referente ao período de {$periodo}.\n\nEm caso de dúvidas ou divergências, por gentileza entrar em contato.";
+        $doc = $mode === 'despesa' ? 'a apuração das despesas' : 'o fechamento';
+        return "Segue em anexo {$doc} referente ao período de {$periodo}.\n\nEm caso de dúvidas ou divergências, por gentileza entrar em contato.";
     }
 
     // ─── Index ────────────────────────────────────────────────────────────────
@@ -251,6 +252,10 @@ class FechamentoParceiroController extends Controller
                 );
             }
 
+            // Parceiro ADM (is_executive) é administrativo: NÃO recebe valor de serviço
+            // (mas as despesas dele continuam entrando no fechamento via despesasData).
+            $isParceiroAdm = (bool) $user->is_executive;
+
             $rows[] = [
                 'user_id'              => $user->id,
                 'nome'                 => $user->name,
@@ -258,7 +263,8 @@ class FechamentoParceiroController extends Controller
                 'rate_type'            => $user->rate_type ?? 'hourly',
                 'valor_hora'           => $valorHora,
                 'pricing_type_parceiro'=> $partner->pricing_type,
-                'total'                => round($horas * $valorHora, 2),
+                'is_parceiro_adm'      => $isParceiroAdm,
+                'total'                => $isParceiroAdm ? 0.0 : round($horas * $valorHora, 2),
             ];
         }
 
@@ -282,7 +288,8 @@ class FechamentoParceiroController extends Controller
         // no relatório com indicador, mas NÃO entra no total a pagar do fechamento.
         return Expense::with([
             'user:id,name',
-            'project:id,name,code',
+            'project:id,name,code,customer_id',
+            'project.customer:id,name',
             'category:id,name',
             'paidByUser:id,name',
         ])
@@ -296,6 +303,7 @@ class FechamentoParceiroController extends Controller
                 'descricao'    => $e->description,
                 'categoria'    => $e->category->name ?? '—',
                 'colaborador'  => $e->user->name ?? '—',
+                'cliente'      => $e->project?->customer?->name ?? '—',
                 'projeto'      => $e->project->name ?? '—',
                 'valor'        => (float) $e->amount,
                 'status'       => $e->status,
@@ -452,16 +460,19 @@ class FechamentoParceiroController extends Controller
      *   pdf_name:string, xlsx_name:string, total_value:float
      * }
      */
-    private function generateParceiroFiles(Partner $partner, string $yearMonth): array
+    private function generateParceiroFiles(Partner $partner, string $yearMonth, string $mode = 'ambos'): array
     {
         $periodo    = $this->periodoExtenso($yearMonth);
         $rows       = $this->parceiroApontamentosRows((string) $partner->id, $yearMonth);
-        $totalValue = $this->parceiroTotals($partner, $yearMonth);
+        $totalAll   = $this->parceiroTotals($partner, $yearMonth); // serviços + despesas
         $totalHoras = round(collect($rows)->sum('horas'), 2);
 
+        $soDespesa = $mode === 'despesa';
+        $soServico = $mode === 'servicos';
+        $prefix    = $soDespesa ? 'Despesas' : 'Fechamento';
         $safeName     = $this->sanitizeFilename($partner->name);
-        $pdfFileName  = "Fechamento_{$yearMonth}_{$safeName}.pdf";
-        $xlsxFileName = "Fechamento_{$yearMonth}_{$safeName}.xlsx";
+        $pdfFileName  = "{$prefix}_{$yearMonth}_{$safeName}.pdf";
+        $xlsxFileName = "{$prefix}_{$yearMonth}_{$safeName}.xlsx";
         $dir          = 'fechamentos';
         $pdfRelPath   = "{$dir}/{$pdfFileName}";
         $xlsxRelPath  = "{$dir}/{$xlsxFileName}";
@@ -479,26 +490,30 @@ class FechamentoParceiroController extends Controller
         $despesasAll       = $this->despesasData((int) $partner->id, $yearMonth);
         $despesas          = array_values(array_filter($despesasAll, fn ($d) => !$d['is_paid']));
         $despesasAntecip   = array_values(array_filter($despesasAll, fn ($d) => $d['is_paid']));
-        $totalServicos     = round($totalValue - round(collect($despesas)->sum('valor'), 2), 2);
         $totalDespesas     = round(collect($despesas)->sum('valor'), 2);
+        $totalServicos     = round($totalAll - $totalDespesas, 2);
+        $totalValue        = $soDespesa ? $totalDespesas : ($soServico ? $totalServicos : $totalAll);
 
         // ── PDF ──
         $pdf = Pdf::loadView('pdf.fechamento-parceiro', [
             'parceiroName'     => $partner->name,
             'periodo'          => $periodo,
+            'mode'             => $mode,
             'totalHorasFmt'    => $this->fmtHoras($totalHoras),
             'valorTotal'       => $this->brl($totalValue),
-            'grupos'           => $this->buildPdfGroups($rows),
-            'despesas'         => $despesas,
-            'despesasAntecip'  => $despesasAntecip,
+            'grupos'           => $soDespesa ? [] : $this->buildPdfGroups($rows),
+            'despesas'         => $soServico ? [] : $despesas,
+            'despesasAntecip'  => $soServico ? [] : $despesasAntecip,
             'totalServicosFmt' => $this->brl($totalServicos),
             'totalDespesasFmt' => $this->brl($totalDespesas),
             'brl'              => fn ($v) => $this->brl((float) $v),
-        ])->setPaper('a4', 'portrait');
+        ])->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
         file_put_contents($pdfFullPath, $pdf->output());
 
         // ── XLSX ──
-        $export = new FechamentoParceiroExport($rows, $partner->name, $periodo, $totalValue);
+        $export = $soDespesa
+            ? new \App\Exports\FechamentoConsultorDespesaExport($despesasAll, $partner->name, $periodo)
+            : new FechamentoParceiroExport($rows, $partner->name, $periodo, $totalValue);
         file_put_contents($xlsxFullPath, Excel::raw($export, \Maatwebsite\Excel\Excel::XLSX));
 
         return [
@@ -527,7 +542,11 @@ class FechamentoParceiroController extends Controller
         }
 
         $periodo        = $this->periodoExtenso($yearMonth);
-        $mensagemPadrao = $this->defaultMensagem($periodo);
+        $mode           = $request->input('mode', 'ambos');
+        $totalAll       = $this->parceiroTotals($partner, $yearMonth); // serviços + despesas
+        $totalDesp      = round(collect($this->despesasData((int) $partner->id, $yearMonth))->where('is_paid', false)->sum('valor'), 2);
+        $valorPreview   = $mode === 'despesa' ? $totalDesp : ($mode === 'servicos' ? $totalAll - $totalDesp : $totalAll);
+        $mensagemPadrao = $this->defaultMensagem($periodo, $mode);
         $mensagem       = trim((string) $request->input('mensagem'));
         $mensagem       = $mensagem !== '' ? $mensagem : $mensagemPadrao;
 
@@ -535,7 +554,8 @@ class FechamentoParceiroController extends Controller
             'parceiroName'    => $partner->name,
             'senderName'      => $sender->name,
             'periodo'         => $periodo,
-            'valorTotal'      => $this->brl($this->parceiroTotals($partner, $yearMonth)),
+            'mode'            => $mode,
+            'valorTotal'      => $this->brl($valorPreview),
             'withAttachments' => true,
             'mensagem'        => $mensagem,
         ])->render();
@@ -571,7 +591,9 @@ class FechamentoParceiroController extends Controller
             'mensagem' => 'nullable|string', // corpo editável; vazio = mensagem padrão
             'emails'   => 'nullable|array',
             'emails.*' => 'email',
+            'mode'     => 'nullable|string|in:servicos,despesa,ambos',
         ]);
+        $mode = $request->input('mode', 'ambos');
 
         $partner = Partner::find($partnerId);
         if (!$partner) {
@@ -580,7 +602,7 @@ class FechamentoParceiroController extends Controller
 
         $periodo      = $this->periodoExtenso($yearMonth);
         $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
-        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo);
+        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo, $mode);
 
         // Destinatários: e-mails informados na tela (To) ou, se vazios, os parceiro_admin.
         $customEmails = $request->input('emails') ?: [];
@@ -602,9 +624,11 @@ class FechamentoParceiroController extends Controller
             ], 422);
         }
 
-        $subject = 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Horas - ' . $partner->name;
+        $subject = $mode === 'despesa'
+            ? 'Despesas ' . $this->periodoMMAAAA($yearMonth) . ' | Reembolso - ' . $partner->name
+            : 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Horas - ' . $partner->name;
 
-        $files      = $this->generateParceiroFiles($partner, $yearMonth);
+        $files      = $this->generateParceiroFiles($partner, $yearMonth, $mode);
         $totalValue = $files['total_value'];
 
         // Envia COMO o remetente (App Password O365) quando configurado; senão, remetente padrão.
@@ -632,6 +656,7 @@ class FechamentoParceiroController extends Controller
                 withAttachments: true,
                 fromAddress:     $mc['from_address'],
                 fromName:        $mc['from_name'],
+                mode:            $mode,
             );
 
             // Microsoft Graph (Send As do remetente) quando configurado; senão, SMTP atual.
@@ -699,6 +724,15 @@ class FechamentoParceiroController extends Controller
         }
 
         $periodo    = $this->periodoExtenso($yearMonth);
+        $mode       = $request->query('mode', 'ambos');
+
+        // Relatório SÓ de despesas → planilha de despesas.
+        if ($mode === 'despesa') {
+            $export   = new \App\Exports\FechamentoConsultorDespesaExport($this->despesasData((int) $partner->id, $yearMonth), $partner->name, $periodo);
+            $fileName = "Despesas_{$yearMonth}_" . $this->sanitizeFilename($partner->name) . ".xlsx";
+            return Excel::download($export, $fileName);
+        }
+
         $rows       = $this->parceiroApontamentosRows((string) $partner->id, $yearMonth);
         $totalValue = $this->parceiroTotals($partner, $yearMonth);
         $export     = new FechamentoParceiroExport($rows, $partner->name, $periodo, $totalValue);

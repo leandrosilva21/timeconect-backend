@@ -1038,6 +1038,16 @@ class Project extends Model
         $endDate   = $referenceDate ?? \Carbon\Carbon::now();
         $startDate = \Carbon\Carbon::parse($this->start_date);
 
+        // Data de encerramento do BH limita a incrementação mensal:
+        // se preenchida, o accumulated para no mês do encerramento_date (não
+        // soma horas depois disso). Sem encerramento_date → incrementa indefinido.
+        if ($this->encerramento_date) {
+            $encerramento = \Carbon\Carbon::parse($this->encerramento_date);
+            if ($endDate->greaterThan($encerramento)) {
+                $endDate = $encerramento->copy();
+            }
+        }
+
         if ($startDate->startOfMonth()->greaterThan($endDate->copy()->startOfMonth())) {
             return 0;
         }

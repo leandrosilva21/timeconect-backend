@@ -403,6 +403,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
             Route::get('/projects/{project}/change-history', [ProjectController::class, 'changeHistory'])->name('projects.change-history');
             Route::get('/projects/{project}/contract-request', [ProjectController::class, 'contractRequest'])->name('projects.contract-request');
+            Route::get('/projects/{project}/monthly-statement', [ProjectController::class, 'monthlyStatement'])->name('projects.monthly-statement');
         });
 
         Route::middleware('permission.or.admin:projects.view_costs')->group(function () {
@@ -424,6 +425,7 @@ Route::prefix('v1')->group(function () {
             Route::patch('/projects/{project}', [ProjectController::class, 'update'])->name('projects.patch');
             Route::put('/projects/{project}/sold-hours-history/{history}', [ProjectController::class, 'updateSoldHoursHistory'])->name('projects.sold-hours-history.update');
             Route::delete('/projects/{project}/sold-hours-history/{history}', [ProjectController::class, 'destroySoldHoursHistory'])->name('projects.sold-hours-history.destroy');
+            Route::put('/projects/{project}/monthly-consumption', [ProjectController::class, 'updateMonthlyConsumption'])->name('projects.monthly-consumption');
             Route::put('/projects/{project}/change-history/{log}', [ProjectController::class, 'updateChangeHistory'])->name('projects.change-history.update');
             Route::delete('/projects/{project}/change-history/{log}', [ProjectController::class, 'destroyChangeHistory'])->name('projects.change-history.destroy');
             Route::post('/projects/{project}/detach-from-parent', [ProjectController::class, 'detachFromParent'])->name('projects.detach-from-parent');

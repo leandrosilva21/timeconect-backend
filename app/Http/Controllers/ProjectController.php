@@ -9,6 +9,7 @@ use App\Models\ContractType;
 use App\Models\User;
 use App\Models\ProjectChangeLog;
 use App\Models\ProjectAttachment;
+use App\Models\ProjectMonthlyConsumption;
 use App\Services\ProjectCodeService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
@@ -29,6 +30,13 @@ use Illuminate\Validation\Rule;
 class ProjectController extends Controller
 {
     use \App\Http\Traits\ListCacheable;
+
+    /**
+     * Mês de corte do extrato mensal de banco de horas (formato YYYY-MM).
+     * Meses < corte: consumo manual/editável (persistido em project_monthly_consumptions).
+     * Meses >= corte: consumo vem dos apontamentos (timesheets).
+     */
+    const MONTHLY_CONSUMPTION_CUTOFF = '2026-05';
     /**
      * @OA\Get(
      *     path="/api/v1/projects",
@@ -3197,5 +3205,154 @@ class ProjectController extends Controller
                 'coordinator_id' => null,
             ]);
         }
+    }
+
+    /**
+     * Extrato mensal do banco de horas de um projeto Banco de Horas Mensal:
+     * incremento, acumulado, consumo (mensal) e saldo.
+     *
+     * Consumo de meses anteriores ao corte (self::MONTHLY_CONSUMPTION_CUTOFF) é
+     * manual/editável e persistido em project_monthly_consumptions; de 2026-05
+     * em diante vem dos apontamentos (timesheets approved/pending).
+     */
+    public function monthlyStatement(Project $project): JsonResponse
+    {
+        $cutoff = self::MONTHLY_CONSUMPTION_CUTOFF;
+        $hoursPerMonth = (int) $project->sold_hours;
+
+        $empty = [
+            'rows' => [],
+            'total_hours' => 0,
+            'total_consumption_hours' => 0,
+            'balance_hours' => 0,
+            'cutoff' => $cutoff,
+        ];
+
+        if (!$project->start_date || $hoursPerMonth <= 0) {
+            return response()->json($empty);
+        }
+
+        $startDate = Carbon::parse($project->start_date)->startOfMonth();
+
+        // Determinar a quantidade de meses do extrato.
+        $accumulatedSold = (int) ($project->accumulated_sold_hours ?? 0);
+        if ($accumulatedSold > 0 && $hoursPerMonth > 0) {
+            $months = (int) round($accumulatedSold / $hoursPerMonth);
+        } else {
+            $endDate = $project->encerramento_date
+                ? Carbon::parse($project->encerramento_date)->startOfMonth()
+                : Carbon::now()->startOfMonth();
+            if ($endDate->lt($startDate)) {
+                $endDate = $startDate->copy();
+            }
+            $months = $startDate->diffInMonths($endDate) + 1;
+        }
+
+        if ($months < 1) {
+            return response()->json($empty);
+        }
+
+        // IDs do banco de horas = projeto + filhos.
+        $bankIds = Project::where('parent_project_id', $project->id)->pluck('id')->all();
+        $bankIds[] = $project->id;
+
+        // Consumo real (apontamentos) por mês, status approved/pending.
+        $realMap = \App\Models\Timesheet::query()
+            ->whereIn('project_id', $bankIds)
+            ->whereIn('status', ['approved', 'pending'])
+            ->select(
+                DB::raw("to_char(date, 'YYYY-MM') as ym"),
+                DB::raw('SUM(effort_minutes) as mins')
+            )
+            ->groupBy('ym')
+            ->pluck('mins', 'ym')
+            ->map(fn ($v) => (int) $v)
+            ->all();
+
+        // Consumo manual persistido (apenas do projeto pai).
+        $manualMap = ProjectMonthlyConsumption::where('project_id', $project->id)
+            ->pluck('consumed_minutes', 'year_month')
+            ->map(fn ($v) => (int) $v)
+            ->all();
+
+        $rows = [];
+        $accumulatedHours = 0.0;
+        $accumulatedConsumptionHours = 0.0;
+        $balanceHours = 0.0;
+
+        $cursor = $startDate->copy();
+        for ($i = 0; $i < $months; $i++) {
+            $ym = $cursor->format('Y-m');
+
+            $incrementHours = $hoursPerMonth;
+            $accumulatedHours += $incrementHours;
+
+            $editable = $ym < $cutoff;
+            $consumptionMinutes = $editable
+                ? ($manualMap[$ym] ?? 0)
+                : ($realMap[$ym] ?? 0);
+            $consumptionHours = round($consumptionMinutes / 60, 2);
+            $accumulatedConsumptionHours += $consumptionHours;
+
+            $balanceHours = round($accumulatedHours - $accumulatedConsumptionHours, 2);
+
+            $rows[] = [
+                'year_month' => $ym,
+                'increment_hours' => $incrementHours,
+                'accumulated_hours' => $accumulatedHours,
+                'consumption_hours' => $consumptionHours,
+                'accumulated_consumption_hours' => round($accumulatedConsumptionHours, 2),
+                'balance_hours' => $balanceHours,
+                'editable' => $editable,
+            ];
+
+            $cursor->addMonth();
+        }
+
+        return response()->json([
+            'rows' => $rows,
+            'total_hours' => $accumulatedHours,
+            'total_consumption_hours' => round($accumulatedConsumptionHours, 2),
+            'balance_hours' => $balanceHours,
+            'cutoff' => $cutoff,
+        ]);
+    }
+
+    /**
+     * Atualiza (upsert) o consumo manual de um mês anterior ao corte.
+     * Apenas admin/coordenador. Meses >= corte não são editáveis (vêm do sistema).
+     */
+    public function updateMonthlyConsumption(Request $request, Project $project): JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Não autorizado'], 403);
+        }
+
+        $validated = $request->validate([
+            'year_month' => ['required', 'regex:/^\d{4}-\d{2}$/'],
+            'hours' => ['required', 'numeric', 'min:0', 'max:999999'],
+        ]);
+
+        $ym = $validated['year_month'];
+
+        if ($ym >= self::MONTHLY_CONSUMPTION_CUTOFF) {
+            return response()->json([
+                'message' => 'Consumo de 05/2026 em diante vem do sistema e não é editável.',
+            ], 422);
+        }
+
+        $minutes = (int) round($validated['hours'] * 60);
+
+        ProjectMonthlyConsumption::updateOrCreate(
+            ['project_id' => $project->id, 'year_month' => $ym],
+            ['consumed_minutes' => $minutes]
+        );
+
+        return response()->json([
+            'success' => true,
+            'year_month' => $ym,
+            'consumption_hours' => round($minutes / 60, 2),
+        ]);
     }
 }

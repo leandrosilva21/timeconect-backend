@@ -3240,8 +3240,8 @@ class ProjectController extends Controller
             'cutoff' => $cutoff,
         ];
 
-        // Sem início não há extrato. Mensalidade (Cloud/SaaS) não tem extrato de horas.
-        if (!$project->start_date || $statementType === 'none') {
+        // Mensalidade (Cloud/SaaS) não tem extrato de horas.
+        if ($statementType === 'none') {
             return response()->json($empty);
         }
         // Banco Mensal e Fixo/Fechado precisam de horas vendidas > 0; On Demand não.
@@ -3249,7 +3249,16 @@ class ProjectController extends Controller
             return response()->json($empty);
         }
 
-        $startDate = Carbon::parse($project->start_date)->startOfMonth();
+        // Mês inicial: start_date; se vazio, cai pro 1º apontamento; senão created_at.
+        $startStr = $project->start_date
+            ? Carbon::parse($project->start_date)->format('Y-m-d')
+            : (\App\Models\Timesheet::where('project_id', $project->id)
+                    ->whereIn('status', ['approved', 'pending'])->min('date')
+                ?? optional($project->created_at)->format('Y-m-d'));
+        if (!$startStr) {
+            return response()->json($empty);
+        }
+        $startDate = Carbon::parse($startStr)->startOfMonth();
 
         // Nº de meses. BH Mensal: acumulado/horas-mês (congela no encerramento);
         // demais tipos: do início até hoje (ou encerramento).

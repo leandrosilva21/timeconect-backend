@@ -444,6 +444,12 @@ Route::prefix('v1')->group(function () {
             Route::post('/projects/{project}/hour-contributions', [HourContributionController::class, 'store'])->name('hour-contributions.store');
             Route::put('/projects/{project}/hour-contributions/{contribution}', [HourContributionController::class, 'update'])->name('hour-contributions.update');
             Route::delete('/projects/{project}/hour-contributions/{contribution}', [HourContributionController::class, 'destroy'])->name('hour-contributions.destroy');
+        });
+
+        // Mover aporte no Kanban (transição comercial novo_contrato ↔ aporte) — admin,
+        // coordenador (auto-pass do middleware) e administrativo (via contracts.manage).
+        // Separado do grupo acima pra não permitir editar/deletar aporte ao administrativo.
+        Route::middleware('permission.or.admin:projects.update,contracts.manage')->group(function () {
             Route::patch('/projects/{project}/hour-contributions/{contribution}/move', [HourContributionController::class, 'moveKanban'])->name('hour-contributions.move');
         });
 

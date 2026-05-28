@@ -159,10 +159,13 @@ class FechadoController extends Controller
             ->with('hourContributions')
             ->get();
 
-        // Filtro por start_date no período (Mês/Ano ou Período).
+        // Filtro por start_date no período. Aplicado APENAS quando o request passou
+        // explicitamente (date_from + date_to OU month + year). Fechado é atemporal
+        // — sem esses params, retorna todos os projetos do cliente (o FE não envia
+        // data pra essa rotina).
         $dateFrom = $request->get('date_from');
         $dateTo   = $request->get('date_to');
-        if (!$dateFrom || !$dateTo) {
+        if ((!$dateFrom || !$dateTo) && $request->has('month') && $request->has('year')) {
             if ($month >= 1 && $month <= 12 && $year >= 1970) {
                 $dateFrom = sprintf('%04d-%02d-01', $year, $month);
                 $dateTo   = date('Y-m-t', strtotime($dateFrom));

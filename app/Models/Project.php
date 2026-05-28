@@ -64,6 +64,7 @@ class Project extends Model
         'consultant_hours',
         'coordinator_hours',
         'coordinator_percentage',
+        'coordination_hours',
         'additional_hourly_rate',
         'start_date',
         'expected_end_date',
@@ -112,6 +113,7 @@ class Project extends Model
         'consultant_hours' => 'integer',
         'coordinator_hours' => 'integer',
         'coordinator_percentage' => 'decimal:2',
+        'coordination_hours' => 'decimal:2',
         'timesheet_retroactive_limit_days' => 'integer',
         'allow_manual_timesheets' => 'boolean',
         'allow_negative_balance' => 'boolean',
@@ -592,6 +594,17 @@ class Project extends Model
     {
         $totalMinutes = $this->getCoordinatorLoggedMinutes($includeChildProjects, $excludeTimesheetId);
         return round($totalMinutes / 60, 2);
+    }
+
+    // ─── Banco de horas de coordenação (coordination_hours) ───────────────────
+    // Lente do coordenador, INDEPENDENTE do saldo operacional/% (coordinator_hours):
+    // o coordenador consome um "banco" próprio. Em branco → o front usa as horas
+    // vendidas operacionais como fallback. NÃO toca getGeneralHoursBalance.
+
+    /** Consumo de coordenação = horas apontadas pelos coordenadores do projeto. */
+    public function getCoordinationConsumedHours(bool $includeChildProjects = false): float
+    {
+        return $this->getCoordinatorLoggedHours($includeChildProjects);
     }
 
     /**

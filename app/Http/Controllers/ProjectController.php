@@ -481,6 +481,25 @@ class ProjectController extends Controller
             $timesheetsMap = $rows->toArray();
         }
 
+        // Consumo de COORDENAÇÃO por projeto — só apontamentos cujo autor é coordenador
+        // do projeto (join project_coordinators). Uma query só (sem N+1). Mesmo whitelist
+        // de consumo (approved/pending) usado acima.
+        $coordinationMap = [];
+        if ($gestaoMode && !empty($allIdsToSum)) {
+            $coordRows = DB::table('timesheets as t')
+                ->join('project_coordinators as pc', function ($j) {
+                    $j->on('pc.project_id', '=', 't.project_id')
+                      ->on('pc.user_id', '=', 't.user_id');
+                })
+                ->selectRaw('t.project_id, COALESCE(SUM(t.effort_minutes), 0) as coord_minutes')
+                ->whereIn('t.project_id', $allIdsToSum)
+                ->whereNull('t.deleted_at')
+                ->whereIn('t.status', ['approved', 'pending'])
+                ->groupBy('t.project_id')
+                ->pluck('coord_minutes', 't.project_id');
+            $coordinationMap = $coordRows->toArray();
+        }
+
         // Atribuir total_logged_minutes aos projetos principais
         $projects->getCollection()->each(function ($project) use ($timesheetsMap) {
             $project->total_logged_minutes = $timesheetsMap[$project->id] ?? 0;
@@ -520,7 +539,7 @@ class ProjectController extends Controller
             ->flip()
             ->toArray();
 
-        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $openPeriodIds) {
+        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $openPeriodIds, $coordinationMap) {
             $project->has_open_period = isset($openPeriodIds[$project->id]);
             $project->status_display = $project->status_display;
             $project->contract_type_display = $project->contract_type_display;
@@ -579,6 +598,9 @@ class ProjectController extends Controller
                 $project->total_contributions_hours = $project->hourContributions->sum('contributed_hours');
                 $project->total_project_value = null;
                 $project->weighted_hourly_rate = null;
+                // Banco de coordenação (lente do coordenador). Saldo/%/risco com fallback
+                // pro vendido operacional são calculados no front (alinhado à "Vendidas" exibida).
+                $project->coordination_consumed_hours = round((float) ($coordinationMap[$project->id] ?? 0) / 60, 2);
             } else {
                 // Calcular saldo de horas de forma otimizada (sem queries adicionais)
                 $project->general_hours_balance = $this->calculateGeneralHoursBalance($project);
@@ -711,6 +733,7 @@ class ProjectController extends Controller
             'initial_cost' => 'nullable|numeric|min:0|max:999999999.99',
             'consultant_hours' => 'nullable|integer|min:0|max:999999',
             'coordinator_hours' => 'nullable|integer|min:0|max:999999',
+            'coordination_hours' => 'nullable|numeric|min:0|max:999999',
             'additional_hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'start_date' => 'nullable|date',
             'expected_end_date' => 'nullable|date',
@@ -754,6 +777,18 @@ class ProjectController extends Controller
             'timesheet_retroactive_limit_days.max' => 'O prazo não pode ser maior que 365 dias',
             'status.in' => 'Status inválido',
         ]);
+
+        // Horas de coordenação não podem exceder as horas vendidas (contratadas).
+        if (isset($validated['coordination_hours'], $validated['sold_hours'])
+            && $validated['coordination_hours'] !== null && $validated['sold_hours'] !== null
+            && (float) $validated['coordination_hours'] > (float) $validated['sold_hours']) {
+            return response()->json([
+                'code' => 'INVALID_COORDINATION_HOURS',
+                'type' => 'error',
+                'message' => 'Horas inválidas',
+                'detailMessage' => "As horas de coordenação não podem ser maiores que as horas vendidas ({$validated['sold_hours']}h).",
+            ], 422);
+        }
 
         // Validar que o projeto pai não é um subprojeto (evitar múltiplos níveis)
         if (isset($validated['parent_project_id'])) {
@@ -922,6 +957,9 @@ class ProjectController extends Controller
         $project->total_project_value = $project->calculateTotalProjectValue();
         $project->weighted_hourly_rate = $project->getWeightedAverageHourlyRate();
         $project->total_contributions_hours = $project->hourContributions()->sum('contributed_hours') ?? 0;
+        // Banco de coordenação (coordination_hours já vem como coluna). Consumo = horas
+        // apontadas pelos coordenadores; saldo/%/risco c/ fallback são calculados no front.
+        $project->coordination_consumed_hours = $project->getCoordinationConsumedHours();
 
         // Adicionar total de minutos apontados (excluindo rejeitados)
         $project->total_logged_minutes = DB::table('timesheets')
@@ -1005,6 +1043,7 @@ class ProjectController extends Controller
             'initial_cost' => 'nullable|numeric|min:0|max:999999999.99',
             'consultant_hours' => 'nullable|integer|min:0|max:999999',
             'coordinator_hours' => 'nullable|integer|min:0|max:999999',
+            'coordination_hours' => 'nullable|numeric|min:0|max:999999',
             'additional_hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'start_date' => 'nullable|date',
             'expected_end_date' => 'nullable|date',
@@ -1043,6 +1082,18 @@ class ProjectController extends Controller
             'timesheet_retroactive_limit_days.min' => 'O prazo não pode ser negativo',
             'timesheet_retroactive_limit_days.max' => 'O prazo não pode ser maior que 365 dias',
         ]);
+
+        // Horas de coordenação não podem exceder as horas vendidas (contratadas).
+        $coordH = array_key_exists('coordination_hours', $validated) ? $validated['coordination_hours'] : null;
+        $soldHForCoord = array_key_exists('sold_hours', $validated) ? $validated['sold_hours'] : $project->sold_hours;
+        if ($coordH !== null && $soldHForCoord !== null && (float) $coordH > (float) $soldHForCoord) {
+            return response()->json([
+                'code' => 'INVALID_COORDINATION_HOURS',
+                'type' => 'error',
+                'message' => 'Horas inválidas',
+                'detailMessage' => "As horas de coordenação não podem ser maiores que as horas vendidas ({$soldHForCoord}h).",
+            ], 422);
+        }
 
         // Tratar atualização de código manual
         if (isset($validated['code']) && $validated['code'] !== $project->code) {

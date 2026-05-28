@@ -144,10 +144,12 @@ class HourContributionController extends Controller
         // se o request mandou para um filho (regra UX: filho não tem anexo).
         $propostaPath = null;
         $propostaOriginal = null;
+        $propostaMime = null;
         if ($request->hasFile('proposta') && $project->parent_project_id === null) {
             $file = $request->file('proposta');
             $propostaPath = $file->store("hour_contributions/{$project->id}/proposta");
             $propostaOriginal = $file->getClientOriginalName();
+            $propostaMime = $file->getMimeType();
         }
 
         $contribution = $project->hourContributions()->create([
@@ -166,6 +168,13 @@ class HourContributionController extends Controller
 
         // Aporte muda as horas disponíveis do projeto (e o consumo do pai, se for subprojeto) — refaz o cache da lista.
         $this->invalidateListCache('projects');
+
+        // FASE 11 — Dual-write da proposta (não-fatal).
+        if ($propostaPath !== null) {
+            $this->dualWriteHourContributionProposta($contribution, [
+                'path' => $propostaPath, 'original' => $propostaOriginal, 'mime' => $propostaMime,
+            ]);
+        }
 
         return response()->json($contribution, 201);
     }
@@ -314,11 +323,57 @@ class HourContributionController extends Controller
                 'detailMessage' => 'Este aporte não pertence ao projeto especificado'
             ], 404);
         }
-        
+
+        // FASE 11 — soft-delete attachment paralelo (preserva documento).
+        if ($contribution->proposta_path) {
+            $this->dualSoftDeleteHourContributionPropostas($contribution);
+        }
+
         $contribution->delete();
 
         $this->invalidateListCache('projects');
 
         return response()->json(null, 204);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // FASE 11 — Helpers de dual-write da proposta do aporte
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private function dualWriteHourContributionProposta(HourContribution $contribution, array $info): void
+    {
+        try {
+            $actor = \Illuminate\Support\Facades\Auth::user()
+                ?? \App\Models\User::find($contribution->contributed_by);
+            if (!$actor) return;
+            app(\App\Attachments\AttachmentService::class)->registerExisting($actor, [
+                'entity_type'   => 'HOUR_CONTRIBUTION',
+                'entity_id'     => $contribution->id,
+                'category'      => 'proposal',
+                'storage_path'  => $info['path'],
+                'original_name' => $info['original'] ?? basename($info['path']),
+                'mime_type'     => $info['mime'] ?? 'application/octet-stream',
+            ]);
+        } catch (\Throwable $e) {
+            \Log::warning('FASE11 dual-write HOUR_CONTRIBUTION.proposta falhou (não-fatal)', [
+                'contribution_id' => $contribution->id, 'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function dualSoftDeleteHourContributionPropostas(HourContribution $contribution): void
+    {
+        try {
+            \App\Models\Attachment::query()
+                ->forEntity('HOUR_CONTRIBUTION', $contribution->id)
+                ->ofCategory('proposal')
+                ->whereNull('deleted_at')
+                ->get()
+                ->each(fn ($att) => $att->delete());
+        } catch (\Throwable $e) {
+            \Log::warning('FASE11 dual-delete HOUR_CONTRIBUTION.proposta falhou (não-fatal)', [
+                'contribution_id' => $contribution->id, 'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

@@ -108,9 +108,10 @@ class FechamentoClienteController extends Controller
         $from = "{$yearMonth}-01";
         $to   = Carbon::parse("{$yearMonth}-01")->endOfMonth()->toDateString();
 
+        // is_paid (consultor reembolsado) é independente de cobrar o cliente — filtrar por
+        // ele aqui escondia despesas legítimas do fechamento. Mantém só status válidos.
         $byCustomer = Expense::query()
             ->where('charge_client', true)
-            ->where('is_paid', false)
             ->whereNotIn('status', [Expense::STATUS_REJECTED, Expense::STATUS_ADJUSTMENT_REQUESTED])
             ->whereBetween('expense_date', [$from, $to])
             ->whereHas('project', fn ($q) => $q->where('is_investimento_comercial', false)->whereNotNull('customer_id'))
@@ -712,6 +713,9 @@ class FechamentoClienteController extends Controller
         $from = "{$fromMonth}-01";
         $to   = Carbon::parse("{$toMonth}-01")->endOfMonth()->toDateString();
 
+        // Fechamento do cliente lista todas as despesas a cobrar (charge_client) cujo status
+        // é diferente de rejected/adjustment_requested. is_paid (reembolso ao consultor) é
+        // controle interno e não deve filtrar o que o cliente vê.
         return Expense::with([
             'user:id,name',
             'project:id,name,code',
@@ -719,7 +723,6 @@ class FechamentoClienteController extends Controller
         ])
             ->where('charge_client', true)
             ->whereNotIn('status', [Expense::STATUS_REJECTED, Expense::STATUS_ADJUSTMENT_REQUESTED])
-            ->where('is_paid', false)
             ->whereBetween('expense_date', [$from, $to])
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)->where('is_investimento_comercial', false))
             ->get()

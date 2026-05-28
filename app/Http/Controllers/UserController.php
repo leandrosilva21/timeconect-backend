@@ -1502,7 +1502,26 @@ class UserController extends Controller
 
 
             // Atualizar usuário com o caminho da foto
-            $user->update(['profile_photo' => 'profile_photos/' . $fileName]);
+            $storagePath = 'profile_photos/' . $fileName;
+            $user->update(['profile_photo' => $storagePath]);
+
+            // FASE 11 — Dual-write: registra o MESMO arquivo em `attachments`
+            // (sem duplicar em disco). Falha aqui NÃO quebra o upload legado.
+            try {
+                app(\App\Attachments\AttachmentService::class)->registerExisting($user, [
+                    'entity_type'   => 'USER',
+                    'entity_id'     => $user->id,
+                    'category'      => 'avatar',
+                    'storage_path'  => $storagePath,
+                    'original_name' => $file->getClientOriginalName(),
+                    'mime_type'     => $file->getMimeType() ?: 'image/jpeg',
+                ]);
+            } catch (\Throwable $dualWriteError) {
+                \Log::warning('FASE11 dual-write USER.avatar falhou (não-fatal)', [
+                    'user_id' => $user->id,
+                    'error'   => $dualWriteError->getMessage(),
+                ]);
+            }
 
             return response()->json([
                 'message' => 'Foto de perfil atualizada com sucesso',

@@ -992,15 +992,22 @@ class TimesheetController extends Controller
                     ? (float) $request->input('consultant_extra_pct') : null;
             }
 
+            $newAttachmentInfo = null;
             if ($request->hasFile('attachment')) {
                 $file = $request->file('attachment');
                 $filename = time() . '_' . $file->getClientOriginalName();
                 $path = $file->storeAs('timesheets/' . date('Y/m'), $filename, 'public');
                 $timesheet->attachment_path = $path;
                 $timesheet->attachment_original_name = $file->getClientOriginalName();
+                $newAttachmentInfo = ['path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType()];
             }
 
             $timesheet->save();
+
+            // FASE 11 — Dual-write do attachment (não-fatal).
+            if ($newAttachmentInfo !== null) {
+                $this->dualWriteTimesheetAttachment($timesheet, $newAttachmentInfo);
+            }
 
             // Auto-transição: se o projeto está "Aguardando início", marcar como "Iniciado"
             if ($project->status === Project::STATUS_AWAITING_START) {
@@ -1588,15 +1595,19 @@ class TimesheetController extends Controller
                 }
             }
 
+            $newAttachmentInfoUpd = null;
             if ($request->hasFile('attachment')) {
                 if ($timesheet->attachment_path) {
                     \Storage::disk('public')->delete($timesheet->attachment_path);
+                    // FASE 11 — soft-delete attachment paralelo do anterior.
+                    $this->dualSoftDeleteTimesheetAttachments($timesheet);
                 }
                 $file = $request->file('attachment');
                 $filename = time() . '_' . $file->getClientOriginalName();
                 $path = $file->storeAs('timesheets/' . date('Y/m'), $filename, 'public');
                 $timesheet->attachment_path = $path;
                 $timesheet->attachment_original_name = $file->getClientOriginalName();
+                $newAttachmentInfoUpd = ['path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType()];
             }
 
             // Bloquear edição que criaria sobreposição de horários (mesmo cliente)
@@ -1639,6 +1650,11 @@ class TimesheetController extends Controller
             }
 
             $timesheet->save();
+
+            // FASE 11 — Dual-write do novo attachment (após save).
+            if (isset($newAttachmentInfoUpd) && $newAttachmentInfoUpd !== null) {
+                $this->dualWriteTimesheetAttachment($timesheet->fresh(), $newAttachmentInfoUpd);
+            }
 
             // Re-detectar conflitos após a edição (mesmo cliente, com horários definidos)
             if ($timesheet->start_time && $timesheet->end_time) {
@@ -1769,12 +1785,15 @@ class TimesheetController extends Controller
         }
 
         // Captura user_id/date ANTES do delete pra resolver conflitos órfãos depois.
-        // Se o apontamento deletado estava em conflito com outro(s), o(s) outro(s)
-        // devem voltar a 'pending' agora que o conflito sumiu.
         $tsUserId = $timesheet->user_id;
         $tsDate   = $timesheet->date instanceof \Carbon\Carbon
             ? $timesheet->date->format('Y-m-d')
             : (string) $timesheet->date;
+
+        // FASE 11 — soft-delete attachment paralelo ANTES do timesheet sumir.
+        if ($timesheet->attachment_path) {
+            $this->dualSoftDeleteTimesheetAttachments($timesheet);
+        }
 
         $timesheet->delete();
         $this->resolveStaleConflicts($tsUserId, $tsDate);
@@ -2909,5 +2928,45 @@ class TimesheetController extends Controller
             'errors'  => $errors,
             'details' => $details,
         ]);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // FASE 11 — Helpers de dual-write do attachment do timesheet
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private function dualWriteTimesheetAttachment(Timesheet $timesheet, array $info): void
+    {
+        try {
+            $actor = Auth::user() ?? \App\Models\User::find($timesheet->user_id);
+            if (!$actor) return;
+            app(\App\Attachments\AttachmentService::class)->registerExisting($actor, [
+                'entity_type'   => 'TIMESHEET',
+                'entity_id'     => $timesheet->id,
+                'category'      => 'attachment',
+                'storage_path'  => $info['path'],
+                'original_name' => $info['original'] ?? basename($info['path']),
+                'mime_type'     => $info['mime'] ?? 'application/octet-stream',
+            ]);
+        } catch (\Throwable $e) {
+            \Log::warning('FASE11 dual-write TIMESHEET.attachment falhou (não-fatal)', [
+                'timesheet_id' => $timesheet->id, 'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function dualSoftDeleteTimesheetAttachments(Timesheet $timesheet): void
+    {
+        try {
+            \App\Models\Attachment::query()
+                ->forEntity('TIMESHEET', $timesheet->id)
+                ->ofCategory('attachment')
+                ->whereNull('deleted_at')
+                ->get()
+                ->each(fn ($att) => $att->delete());
+        } catch (\Throwable $e) {
+            \Log::warning('FASE11 dual-delete TIMESHEET.attachment falhou (não-fatal)', [
+                'timesheet_id' => $timesheet->id, 'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

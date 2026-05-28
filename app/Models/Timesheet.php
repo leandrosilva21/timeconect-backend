@@ -18,6 +18,10 @@ use Carbon\Carbon;
 class Timesheet extends Model
 {
     use HasFactory, SoftDeletes;
+    use \App\Attachments\Concerns\HasGlobalAttachments;
+
+    // FASE 11 — chave do registry global de anexos.
+    public static function attachmentEntityType(): string { return 'TIMESHEET'; }
 
     /**
      * Source explícito pra o TimesheetObserver registrar no log de auditoria.
@@ -182,10 +186,18 @@ class Timesheet extends Model
     }
 
     /**
-     * Accessor para URL do anexo
+     * Accessor para URL do anexo.
+     *
+     * FASE 11 reader-shim: prefere attachment da nova camada quando existe;
+     * fallback pra coluna legada attachment_path.
      */
     public function getAttachmentUrlAttribute(): ?string
     {
+        $newUrl = $this->attachmentUrl('attachment');
+        if ($newUrl !== null) {
+            $backendUrl = rtrim(config('app.url'), '/');
+            return $backendUrl . $newUrl;
+        }
         if (!$this->attachment_path) {
             return null;
         }

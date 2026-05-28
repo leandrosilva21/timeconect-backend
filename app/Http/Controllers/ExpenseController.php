@@ -515,6 +515,7 @@ class ExpenseController extends Controller
         $expenseData['payment_method'] = $expenseData['payment_method'] ?? 'pix';
 
         // Upload do comprovante se fornecido
+        $newReceiptInfo = null;
         if ($request->hasFile('receipt')) {
             $file = $request->file('receipt');
             $filename = time() . '_' . $file->getClientOriginalName();
@@ -522,11 +523,17 @@ class ExpenseController extends Controller
 
             $expenseData['receipt_path'] = $path;
             $expenseData['receipt_original_name'] = $file->getClientOriginalName();
+            $newReceiptInfo = ['path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType()];
         }
 
         $expense = Expense::create($expenseData);
         $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
         $this->invalidateListCache('expenses');
+
+        // FASE 11 — Dual-write do receipt (não-fatal).
+        if ($newReceiptInfo !== null) {
+            $this->dualWriteReceiptAttachment($expense, $newReceiptInfo);
+        }
 
         return response()->json($expense, 201);
     }
@@ -696,10 +703,12 @@ class ExpenseController extends Controller
         }
 
         // Upload de novo comprovante se fornecido
+        $newReceiptInfo = null;
         if ($request->hasFile('receipt')) {
-            // Deletar arquivo anterior se existir
+            // Deletar arquivo anterior se existir + soft-delete attachment paralelo
             if ($expense->receipt_path) {
                 Storage::disk('public')->delete($expense->receipt_path);
+                $this->dualSoftDeleteReceiptAttachments($expense);
             }
 
             $file = $request->file('receipt');
@@ -708,6 +717,7 @@ class ExpenseController extends Controller
 
             $updateData['receipt_path'] = $path;
             $updateData['receipt_original_name'] = $file->getClientOriginalName();
+            $newReceiptInfo = ['path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType()];
         }
 
         // Resetar status para pendente se houve alterações após solicitação de ajuste ou rejeição
@@ -721,6 +731,11 @@ class ExpenseController extends Controller
         $expense->update($updateData);
         $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
         $this->invalidateListCache('expenses');
+
+        // FASE 11 — Dual-write do novo receipt (após save).
+        if ($newReceiptInfo !== null) {
+            $this->dualWriteReceiptAttachment($expense->fresh(), $newReceiptInfo);
+        }
 
         return response()->json($expense);
     }
@@ -769,9 +784,10 @@ class ExpenseController extends Controller
             );
         }
 
-        // Deletar arquivo de comprovante se existir
+        // Deletar arquivo de comprovante se existir + soft-delete attachment paralelo
         if ($expense->receipt_path) {
             Storage::disk('public')->delete($expense->receipt_path);
+            $this->dualSoftDeleteReceiptAttachments($expense);
         }
 
         $expense->delete();
@@ -1180,9 +1196,10 @@ class ExpenseController extends Controller
             'receipt' => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120',
         ]);
 
-        // Deletar arquivo anterior se existir
+        // Deletar arquivo anterior se existir + soft-delete attachment paralelo
         if ($expense->receipt_path) {
             \Storage::disk('public')->delete($expense->receipt_path);
+            $this->dualSoftDeleteReceiptAttachments($expense);
         }
 
         $file = $request->file('receipt');
@@ -1193,6 +1210,11 @@ class ExpenseController extends Controller
         $expense->receipt_original_name = $file->getClientOriginalName();
         $expense->save();
         $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
+
+        // FASE 11 — Dual-write do receipt.
+        $this->dualWriteReceiptAttachment($expense, [
+            'path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType(),
+        ]);
 
         return response()->json($expense);
     }
@@ -1442,5 +1464,50 @@ class ExpenseController extends Controller
         $filename = 'despesas_' . date('Y-m-d_H-i-s') . '.xlsx';
 
         return Excel::download(new ExpensesExport($request, $user), $filename);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // FASE 11 — Helpers de dual-write do receipt.
+    //
+    // Registra o MESMO arquivo legado em `attachments` (sem duplicar em disco)
+    // e soft-deleta paralelos quando o receipt legado é removido ou substituído.
+    // Falhas são NÃO-FATAIS: `receipt_path` continua sendo fonte de verdade até
+    // a FASE 11.4 deprecar o legado.
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private function dualWriteReceiptAttachment(Expense $expense, array $info): void
+    {
+        try {
+            $actor = Auth::user() ?? \App\Models\User::find($expense->user_id);
+            if (!$actor) return;
+            app(\App\Attachments\AttachmentService::class)->registerExisting($actor, [
+                'entity_type'   => 'EXPENSE',
+                'entity_id'     => $expense->id,
+                'category'      => 'receipt',
+                'storage_path'  => $info['path'],
+                'original_name' => $info['original'] ?? basename($info['path']),
+                'mime_type'     => $info['mime'] ?? 'application/octet-stream',
+            ]);
+        } catch (\Throwable $e) {
+            \Log::warning('FASE11 dual-write EXPENSE.receipt falhou (não-fatal)', [
+                'expense_id' => $expense->id, 'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function dualSoftDeleteReceiptAttachments(Expense $expense): void
+    {
+        try {
+            \App\Models\Attachment::query()
+                ->forEntity('EXPENSE', $expense->id)
+                ->ofCategory('receipt')
+                ->whereNull('deleted_at')
+                ->get()
+                ->each(fn ($att) => $att->delete());
+        } catch (\Throwable $e) {
+            \Log::warning('FASE11 dual-delete EXPENSE.receipt falhou (não-fatal)', [
+                'expense_id' => $expense->id, 'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

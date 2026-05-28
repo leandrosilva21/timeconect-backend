@@ -18,6 +18,10 @@ class User extends Authenticatable
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable, HasApiTokens;
+    use \App\Attachments\Concerns\HasGlobalAttachments;
+
+    // FASE 11 — chave do registry global de anexos.
+    public static function attachmentEntityType(): string { return 'USER'; }
 
     /**
      * Campos que controlam autorização e identidade — fora de $fillable para evitar
@@ -352,16 +356,20 @@ class User extends Authenticatable
     }
 
     /**
-     * Obtém a URL da foto de perfil
+     * Obtém a URL da foto de perfil.
+     *
+     * FASE 11 reader-shim: prefere attachment da nova camada quando existe;
+     * fallback pra coluna legada profile_photo. Quando 11.4 deprecar legado,
+     * basta remover o `?? asset(...)` final.
      */
     public function getProfilePhotoUrlAttribute(): ?string
     {
-        if (!$this->profile_photo) {
-            return null;
-        }
-
+        $newUrl = $this->attachmentUrl('avatar');
+        if ($newUrl !== null) return $newUrl;
+        if (!$this->profile_photo) return null;
         return asset('storage/' . $this->profile_photo);
     }
+
 
     /**
      * Remove a foto de perfil
@@ -377,6 +385,21 @@ class User extends Authenticatable
 
             // Remove a referência do banco
             $this->update(['profile_photo' => null]);
+
+            // FASE 11 — Dual-write: soft-delete dos attachment(s) correspondentes.
+            // Não-fatal: se falhar, o legado já foi removido com sucesso.
+            try {
+                \App\Models\Attachment::query()
+                    ->forEntity('USER', $this->id)
+                    ->ofCategory('avatar')
+                    ->whereNull('deleted_at')
+                    ->get()
+                    ->each(fn ($att) => $att->delete());
+            } catch (\Throwable $e) {
+                \Log::warning('FASE11 dual-delete USER.avatar falhou (não-fatal)', [
+                    'user_id' => $this->id, 'error' => $e->getMessage(),
+                ]);
+            }
         }
     }
 

@@ -1117,7 +1117,7 @@ class FechamentoClienteController extends Controller
      *   pdf_name:string, xlsx_name:string, total_value:float
      * }
      */
-    private function generateClienteFiles(Customer $customer, string $yearMonth, string $mode = 'servicos'): array
+    private function generateClienteFiles(Customer $customer, string $yearMonth, string $mode = 'servicos', ?int $projectId = null): array
     {
         $safeName = $this->sanitizeFilename($customer->name);
         $dir      = 'fechamentos';
@@ -1160,19 +1160,28 @@ class FechamentoClienteController extends Controller
 
         $periodo    = $this->periodoExtenso($yearMonth);
         $vedamotors = $this->isVedamotors($customer);
-        $rows       = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $vedamotors);
-        $totalValue = $this->clienteTotal((int) $customer->id, $yearMonth);
+        $rows       = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $vedamotors, $projectId);
+        // Total geral: cliente inteiro quando sem filtro; soma dos rows filtrados c/ projectId.
+        $totalValue = $projectId
+            ? round(collect($rows)->sum(fn ($r) => (float) $r['horas'] * (float) ($r['valor_hora'] ?? 0)), 2)
+            : $this->clienteTotal((int) $customer->id, $yearMonth);
 
         // Projeto(s) do fechamento (código + nome) — usado no retorno p/ o caller.
-        $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand');
+        $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand', $projectId);
         $projetosList = array_values(array_map(
             fn ($p) => ['codigo' => $p['projeto_codigo'] ?? '—', 'nome' => $p['projeto_nome'] ?? '—'],
             $apData['projetos'] ?? []
         ));
 
         $safeName     = $this->sanitizeFilename($customer->name);
-        $pdfFileName  = "Fechamento_{$yearMonth}_{$safeName}.pdf";
-        $xlsxFileName = "Fechamento_{$yearMonth}_{$safeName}.xlsx";
+        // Sufixo do projeto no filename quando filtrado, pra não sobrescrever os arquivos
+        // do fechamento completo (mesma pasta storage/app/fechamentos) — mantém ambos.
+        $projSuffix   = '';
+        if ($projectId && !empty($projetosList) && !empty($projetosList[0]['codigo']) && $projetosList[0]['codigo'] !== '—') {
+            $projSuffix = '_' . $this->sanitizeFilename($projetosList[0]['codigo']);
+        }
+        $pdfFileName  = "Fechamento_{$yearMonth}_{$safeName}{$projSuffix}.pdf";
+        $xlsxFileName = "Fechamento_{$yearMonth}_{$safeName}{$projSuffix}.xlsx";
         $dir          = 'fechamentos';
         $pdfRelPath   = "{$dir}/{$pdfFileName}";
         $xlsxRelPath  = "{$dir}/{$xlsxFileName}";
@@ -1186,7 +1195,7 @@ class FechamentoClienteController extends Controller
         }
 
         // ── PDF — MESMA view-data do preview da tela (fonte única = a Blade) ──
-        $pdf = Pdf::loadView('pdf.fechamento-cliente', $this->buildReportViewData($customer, $yearMonth))
+        $pdf = Pdf::loadView('pdf.fechamento-cliente', $this->buildReportViewData($customer, $yearMonth, $projectId))
             ->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
         file_put_contents($pdfFullPath, $pdf->output());
 
@@ -1357,6 +1366,11 @@ class FechamentoClienteController extends Controller
         }
 
         $mode           = $request->input('mode') === 'despesa' ? 'despesa' : 'servicos';
+        // project_id propagado no preview pra que o template do e-mail liste só o
+        // projeto filtrado (espelha o anexo PDF que o enviarEmail vai gerar).
+        $projectId      = $mode === 'servicos' && $request->filled('project_id')
+            ? (int) $request->input('project_id')
+            : null;
         $periodo        = $this->periodoExtenso($yearMonth);
         $mensagemPadrao = $this->defaultMensagem($periodo, $mode);
         $mensagem       = trim((string) $request->input('mensagem'));
@@ -1365,12 +1379,18 @@ class FechamentoClienteController extends Controller
         $projetosList = [];
         $valorTotal   = $this->brl($this->despesaTotal((int) $customer->id, $yearMonth));
         if ($mode !== 'despesa') {
-            $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand');
+            $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand', $projectId);
             $projetosList = array_values(array_map(
                 fn ($p) => ['codigo' => $p['projeto_codigo'] ?? '—', 'nome' => $p['projeto_nome'] ?? '—'],
                 $apData['projetos'] ?? []
             ));
-            $valorTotal   = $this->brl($this->clienteTotal((int) $customer->id, $yearMonth));
+            // Valor total: dos rows filtrados quando há projectId; cliente inteiro caso contrário.
+            if ($projectId) {
+                $rowsFiltered = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $this->isVedamotors($customer), $projectId);
+                $valorTotal   = $this->brl(round(collect($rowsFiltered)->sum(fn ($r) => (float) $r['horas'] * (float) ($r['valor_hora'] ?? 0)), 2));
+            } else {
+                $valorTotal   = $this->brl($this->clienteTotal((int) $customer->id, $yearMonth));
+            }
         }
 
         $html = view('emails.fechamento.cliente', [
@@ -1412,12 +1432,13 @@ class FechamentoClienteController extends Controller
         }
 
         $request->validate([
-            'mensagem'  => 'nullable|string', // corpo editável; vazio = mensagem padrão
-            'emails'    => 'required|array|min:1',
-            'emails.*'  => 'email',
-            'mode'      => 'nullable|in:servicos,despesa',
-            'anexos'    => 'nullable|array',
-            'anexos.*'  => 'file|max:10240', // até 10 MB cada (Graph soma anexos ~3 MB no total)
+            'mensagem'   => 'nullable|string', // corpo editável; vazio = mensagem padrão
+            'emails'     => 'required|array|min:1',
+            'emails.*'   => 'email',
+            'mode'       => 'nullable|in:servicos,despesa',
+            'project_id' => 'nullable|integer', // filtro de contrato (projeto pai)
+            'anexos'     => 'nullable|array',
+            'anexos.*'   => 'file|max:10240', // até 10 MB cada (Graph soma anexos ~3 MB no total)
         ], [
             'emails.required' => 'Informe ao menos um e-mail de destino antes de enviar.',
             'emails.array'    => 'Lista de e-mails inválida.',
@@ -1433,6 +1454,11 @@ class FechamentoClienteController extends Controller
         }
 
         $mode         = $request->input('mode') === 'despesa' ? 'despesa' : 'servicos';
+        // project_id só faz sentido no modo serviços (relatório por contrato); no modo
+        // despesa o relatório agrega despesas — ignora o filtro pra não esconder dados.
+        $projectId    = $mode === 'servicos' && $request->filled('project_id')
+            ? (int) $request->input('project_id')
+            : null;
         $periodo      = $this->periodoExtenso($yearMonth);
         $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
         $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo, $mode);
@@ -1454,7 +1480,7 @@ class FechamentoClienteController extends Controller
             ? 'Despesas ' . $this->periodoMMAAAA($yearMonth) . ' | Reembolso - ' . $customer->name
             : 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Apontamentos - ' . $customer->name;
 
-        $files      = $this->generateClienteFiles($customer, $yearMonth, $mode);
+        $files      = $this->generateClienteFiles($customer, $yearMonth, $mode, $projectId);
         $totalValue = $files['total_value'];
 
         // Anexos extras escolhidos pelo usuário — salvos em pasta única (preserva o
@@ -1589,6 +1615,11 @@ class FechamentoClienteController extends Controller
         }
 
         $mode = $request->query('mode') === 'despesa' ? 'despesa' : 'servicos';
+        // project_id (filtro de contrato) só faz sentido no modo serviços; ignora em despesa.
+        $projectId = $mode === 'servicos' && $request->query('project_id')
+            ? (int) $request->query('project_id')
+            : null;
+
         if ($mode === 'despesa') {
             $despesas = array_map(
                 fn ($d) => $d + ['cliente' => $customer->name, 'is_paid' => false, 'paid_at' => null],
@@ -1601,10 +1632,22 @@ class FechamentoClienteController extends Controller
 
         $periodo    = $this->periodoExtenso($yearMonth);
         $vedamotors = $this->isVedamotors($customer);
-        $rows       = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $vedamotors);
-        $totalValue = $this->clienteTotal((int) $customer->id, $yearMonth);
+        $rows       = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $vedamotors, $projectId);
+        $totalValue = $projectId
+            ? round(collect($rows)->sum(fn ($r) => (float) $r['horas'] * (float) ($r['valor_hora'] ?? 0)), 2)
+            : $this->clienteTotal((int) $customer->id, $yearMonth);
         $export     = new FechamentoClienteExport($rows, $customer->name, $periodo, $totalValue, $vedamotors);
-        $fileName   = "Fechamento_{$yearMonth}_" . $this->sanitizeFilename($customer->name) . ".xlsx";
+
+        // Sufixo com o código do projeto pra diferenciar do download do fechamento completo.
+        $projSuffix = '';
+        if ($projectId) {
+            $apData = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand', $projectId);
+            $first  = $apData['projetos'][0] ?? null;
+            if ($first && !empty($first['projeto_codigo']) && $first['projeto_codigo'] !== '—') {
+                $projSuffix = '_' . $this->sanitizeFilename($first['projeto_codigo']);
+            }
+        }
+        $fileName = "Fechamento_{$yearMonth}_" . $this->sanitizeFilename($customer->name) . "{$projSuffix}.xlsx";
 
         return Excel::download($export, $fileName);
     }

@@ -1400,11 +1400,18 @@ class FechamentoClienteController extends Controller
 
         $request->validate([
             'mensagem'  => 'nullable|string', // corpo editável; vazio = mensagem padrão
-            'emails'    => 'required|array',
+            'emails'    => 'required|array|min:1',
             'emails.*'  => 'email',
             'mode'      => 'nullable|in:servicos,despesa',
             'anexos'    => 'nullable|array',
             'anexos.*'  => 'file|max:10240', // até 10 MB cada (Graph soma anexos ~3 MB no total)
+        ], [
+            'emails.required' => 'Informe ao menos um e-mail de destino antes de enviar.',
+            'emails.array'    => 'Lista de e-mails inválida.',
+            'emails.min'      => 'Informe ao menos um e-mail de destino antes de enviar.',
+            'emails.*.email'  => 'Um dos e-mails informados é inválido.',
+            'anexos.*.file'   => 'Anexo inválido.',
+            'anexos.*.max'    => 'Cada anexo deve ter no máximo 10 MB.',
         ]);
 
         $customer = Customer::find($customerId);

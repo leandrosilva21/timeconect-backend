@@ -666,9 +666,18 @@ class ClientPortalController extends Controller
                 $balance = null;
             }
             $available = $sold > 0 ? $sold : null;
-            $consumed  = $available !== null && $balance !== null
-                ? max(0, $available - $balance)
-                : null;
+            // Consumed: pra BH (com sold>0) = sold - balance; pra On Demand (sold=0) soma timesheets.
+            if ($available !== null && $balance !== null) {
+                $consumed = max(0, $available - $balance);
+            } else {
+                // On Demand: soma effort_minutes dos timesheets approved+pending (regra
+                // [[reference_minutor_consumo_whitelist]] — não inclui adjustment/rejected).
+                $consumedMin = \App\Models\Timesheet::where('project_id', $p->id)
+                    ->whereNull('deleted_at')
+                    ->whereIn('status', ['approved', 'pending'])
+                    ->sum('effort_minutes');
+                $consumed = $consumedMin > 0 ? round((float) $consumedMin / 60, 2) : 0.0;
+            }
             $pct = ($available && $available > 0 && $consumed !== null)
                 ? round(($consumed / $available) * 100, 1)
                 : null;

@@ -1000,6 +1000,10 @@ Route::prefix('v1')->group(function () {
         // ────────────────────────────────────────────────────────────────────
         Route::get('/attachments',                   [\App\Http\Controllers\AttachmentController::class, 'index'])->name('attachments.index');
         Route::post('/attachments',                  [\App\Http\Controllers\AttachmentController::class, 'store'])->name('attachments.store');
+        // FASE 11.5 — Observability (admin-only, validado no controller).
+        Route::get('/attachments/stats',             [\App\Http\Controllers\AttachmentsAnalyticsController::class, 'stats'])->name('attachments.stats');
+        Route::get('/attachments/events',            [\App\Http\Controllers\AttachmentsAnalyticsController::class, 'events'])->name('attachments.events');
+        Route::get('/attachments/health',            [\App\Http\Controllers\AttachmentsAnalyticsController::class, 'health'])->name('attachments.health');
         Route::get('/attachments/{id}',              [\App\Http\Controllers\AttachmentController::class, 'show'])->name('attachments.show');
         Route::get('/attachments/{id}/download',     [\App\Http\Controllers\AttachmentController::class, 'download'])->name('attachments.download');
         Route::get('/attachments/{id}/url',          [\App\Http\Controllers\AttachmentController::class, 'signedUrl'])->name('attachments.signed-url');

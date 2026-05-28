@@ -40,6 +40,13 @@ return Application::configure(basePath: dirname(__DIR__))
             'permission.or.admin' => \App\Http\Middleware\CheckPermissionOrAdmin::class,
             'block.cliente'       => \App\Http\Middleware\BlockCliente::class,
         ]);
+
+        // Guest em rota /api não tem pra onde redirecionar: devolvendo null aqui, o
+        // middleware Authenticate NÃO avalia route('login') (inexistente nesta API),
+        // então a AuthenticationException chega limpa no handler e vira 401 JSON.
+        // Sem isso, o route('login') estourava RouteNotFoundException dentro do
+        // próprio middleware ("Route [login] not defined." → 500/422 em vez de 401).
+        $middleware->redirectGuestsTo(fn (\Illuminate\Http\Request $request) => $request->is('api/*') ? null : '/login');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {

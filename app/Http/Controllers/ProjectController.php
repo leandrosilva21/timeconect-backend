@@ -1068,6 +1068,25 @@ class ProjectController extends Controller
         $project->total_project_value = $project->calculateTotalProjectValue();
         $project->weighted_hourly_rate = $project->getWeightedAverageHourlyRate();
         $project->total_contributions_hours = $project->hourContributions()->sum('contributed_hours') ?? 0;
+
+        // Quebra das HS Vendidas (Projeto + Aporte) — espelha lógica do index()
+        // gestaoMode pra que a Visão Geral do projeto não dependa do cache da lista.
+        // Em BH Mensal usa accumulated_sold_hours já corrigido (cap pelo encerramento).
+        if ($project->isBankHoursMonthly()) {
+            $dbAccum = $project->getRawOriginal('accumulated_sold_hours') ?? $project->accumulated_sold_hours;
+            if ($dbAccum !== null && $dbAccum > 0) {
+                $accumulatedHours = (int) $dbAccum;
+            } else {
+                // Fallback: recalcula respeitando encerramento_date
+                $accumulatedHours = (int) ($project->calculateAccumulatedSoldHours() ?? ($project->sold_hours ?? 0));
+            }
+            $newContribs = (float) ($project->total_available_hours - ($project->sold_hours ?? 0));
+            $project->vendidas_projeto_hours = round($accumulatedHours, 2);
+            $project->vendidas_aporte_hours  = round($newContribs, 2);
+        } else {
+            $project->vendidas_projeto_hours = round((float) ($project->sold_hours ?? 0), 2);
+            $project->vendidas_aporte_hours  = round((float) ($project->total_available_hours - ($project->sold_hours ?? 0)), 2);
+        }
         // Banco de coordenação (coordination_hours já vem como coluna). Consumo = horas
         // apontadas pelos coordenadores; saldo/%/risco c/ fallback são calculados no front.
         $project->coordination_consumed_hours = $project->getCoordinationConsumedHours();

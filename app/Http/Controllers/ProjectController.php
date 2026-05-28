@@ -3220,23 +3220,41 @@ class ProjectController extends Controller
         $cutoff = self::MONTHLY_CONSUMPTION_CUTOFF;
         $hoursPerMonth = (int) $project->sold_hours;
 
+        // Tipo do extrato pelo tipo de contrato:
+        //  • monthly  (BH Mensal): vendidas acumulam mês a mês.
+        //  • fixed    (BH Fixo / Fechado): vendidas = total fixo constante.
+        //  • on_demand: sem vendidas/saldo — só consumo.
+        $project->loadMissing('contractType');
+        $ctName = strtolower((string) ($project->contractType->name ?? ''));
+        $isOnDemand = str_contains($ctName, 'on demand') || $project->tipo_faturamento === 'on_demand';
+        $isMonthly  = !$isOnDemand && str_contains($ctName, 'mensal');
+        $isFixed    = !$isOnDemand && !$isMonthly && (str_contains($ctName, 'fixo') || $ctName === 'fechado');
+        $statementType = $isOnDemand ? 'on_demand' : ($isMonthly ? 'monthly' : ($isFixed ? 'fixed' : 'none'));
+
         $empty = [
+            'statement_type' => $statementType,
             'rows' => [],
-            'total_hours' => 0,
+            'total_vendidas_hours' => null,
             'total_consumption_hours' => 0,
-            'balance_hours' => 0,
+            'balance_hours' => null,
             'cutoff' => $cutoff,
         ];
 
-        if (!$project->start_date || $hoursPerMonth <= 0) {
+        // Sem início não há extrato. Mensalidade (Cloud/SaaS) não tem extrato de horas.
+        if (!$project->start_date || $statementType === 'none') {
+            return response()->json($empty);
+        }
+        // Banco Mensal e Fixo/Fechado precisam de horas vendidas > 0; On Demand não.
+        if (($isMonthly || $isFixed) && $hoursPerMonth <= 0) {
             return response()->json($empty);
         }
 
         $startDate = Carbon::parse($project->start_date)->startOfMonth();
 
-        // Determinar a quantidade de meses do extrato.
+        // Nº de meses. BH Mensal: acumulado/horas-mês (congela no encerramento);
+        // demais tipos: do início até hoje (ou encerramento).
         $accumulatedSold = (int) ($project->accumulated_sold_hours ?? 0);
-        if ($accumulatedSold > 0 && $hoursPerMonth > 0) {
+        if ($isMonthly && $accumulatedSold > 0 && $hoursPerMonth > 0) {
             $months = (int) round($accumulatedSold / $hoursPerMonth);
         } else {
             $endDate = $project->encerramento_date
@@ -3284,8 +3302,16 @@ class ProjectController extends Controller
         for ($i = 0; $i < $months; $i++) {
             $ym = $cursor->format('Y-m');
 
-            $incrementHours = $hoursPerMonth;
-            $accumulatedHours += $incrementHours;
+            // Vendidas exibidas: Mensal acumula (incremento/mês); Fixo/Fechado é o
+            // total fixo constante; On Demand não tem vendidas.
+            if ($isMonthly) {
+                $accumulatedHours += $hoursPerMonth;
+                $vendidasHours = $accumulatedHours;
+            } elseif ($isFixed) {
+                $vendidasHours = (float) $hoursPerMonth;
+            } else {
+                $vendidasHours = null; // on_demand
+            }
 
             $editable = $ym < $cutoff;
             $consumptionMinutes = $editable
@@ -3294,12 +3320,13 @@ class ProjectController extends Controller
             $consumptionHours = round($consumptionMinutes / 60, 2);
             $accumulatedConsumptionHours += $consumptionHours;
 
-            $balanceHours = round($accumulatedHours - $accumulatedConsumptionHours, 2);
+            $balanceHours = $vendidasHours === null
+                ? null
+                : round($vendidasHours - $accumulatedConsumptionHours, 2);
 
             $rows[] = [
                 'year_month' => $ym,
-                'increment_hours' => $incrementHours,
-                'accumulated_hours' => $accumulatedHours,
+                'vendidas_hours' => $vendidasHours,
                 'consumption_hours' => $consumptionHours,
                 'accumulated_consumption_hours' => round($accumulatedConsumptionHours, 2),
                 'balance_hours' => $balanceHours,
@@ -3309,11 +3336,14 @@ class ProjectController extends Controller
             $cursor->addMonth();
         }
 
+        $totalVendidas = $isMonthly ? $accumulatedHours : ($isFixed ? (float) $hoursPerMonth : null);
+
         return response()->json([
+            'statement_type' => $statementType,
             'rows' => $rows,
-            'total_hours' => $accumulatedHours,
+            'total_vendidas_hours' => $totalVendidas,
             'total_consumption_hours' => round($accumulatedConsumptionHours, 2),
-            'balance_hours' => $balanceHours,
+            'balance_hours' => $isOnDemand ? null : $balanceHours,
             'cutoff' => $cutoff,
         ]);
     }

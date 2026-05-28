@@ -4,9 +4,12 @@ namespace App\Console\Commands;
 
 use App\Attachments\AttachmentService;
 use App\Attachments\Backfill\BackfillModule;
+use App\Attachments\Backfill\ContractAttachmentBackfill;
 use App\Attachments\Backfill\ContractMessageAttachmentBackfill;
 use App\Attachments\Backfill\ExpenseReceiptBackfill;
+use App\Attachments\Backfill\FechamentoNotaBackfill;
 use App\Attachments\Backfill\HourContributionPropostaBackfill;
+use App\Attachments\Backfill\ProjectAttachmentBackfill;
 use App\Attachments\Backfill\ProjectMessageAttachmentBackfill;
 use App\Attachments\Backfill\RequestMessageAttachmentBackfill;
 use App\Attachments\Backfill\TimesheetAttachmentBackfill;
@@ -61,9 +64,11 @@ class AttachmentsBackfill extends Command
         'projectmessage-attachment'   => ProjectMessageAttachmentBackfill::class,
         'contractmessage-attachment'  => ContractMessageAttachmentBackfill::class,
         'requestmessage-attachment'   => RequestMessageAttachmentBackfill::class,
+        'project-attachment'          => ProjectAttachmentBackfill::class,
+        'contract-attachment'         => ContractAttachmentBackfill::class,
+        'fechamento-nota'             => FechamentoNotaBackfill::class,
         // STAGE_ACTIVITY_EVENT pendente: 3 controllers de stage ainda não estão em prod
         // (feature cronograma em desenvolvimento). Adicionar quando chegarem.
-        // PROJECT/CONTRACT/FECHAMENTO_NOTA chegam em PR 4.
     ];
 
     public function handle(AttachmentService $service): int

@@ -35,6 +35,8 @@ use Illuminate\Support\Facades\Mail;
 
 class ContractController extends Controller
 {
+    use \App\Attachments\Concerns\DualWritesEntityAttachments;
+
     public function index(Request $request): JsonResponse
     {
         $query = Contract::with([
@@ -379,6 +381,9 @@ class ContractController extends Controller
             'uploaded_by_id' => auth()->id(),
         ]);
 
+        // FASE 11.2 — dual-write (não-fatal).
+        $this->dualWriteEntityAttachment('CONTRACT', $contract->id, $request->input('type'), $file, $path);
+
         return response()->json($attachment, 201);
     }
 
@@ -394,6 +399,10 @@ class ContractController extends Controller
     {
         abort_if($attachment->contract_id !== $contract->id, 404);
 
+        // FASE 11.2 — soft-delete attachment paralelo ANTES de apagar legado.
+        if ($attachment->path) {
+            $this->dualSoftDeleteEntityAttachmentByPath('CONTRACT', $contract->id, $attachment->path);
+        }
         Storage::delete($attachment->path);
         $attachment->delete();
 

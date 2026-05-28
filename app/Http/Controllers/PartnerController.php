@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Partner;
 use App\Models\PartnerHourlyRateLog;
+use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -57,9 +58,15 @@ class PartnerController extends Controller
             'active'       => 'boolean',
             'pricing_type' => 'required|in:fixed,variable',
             'hourly_rate'  => 'nullable|numeric|min:0|max:999999.99',
+            'contract_type' => 'nullable|in:cooperado,clt,pj',
         ]);
 
         $partner = Partner::create($data);
+
+        // Tipo de vínculo do parceiro é a fonte de verdade: propaga p/ todos os usuários dele.
+        if (array_key_exists('contract_type', $data)) {
+            User::where('partner_id', $partner->id)->update(['contract_type' => $partner->contract_type]);
+        }
 
         return response()->json($partner, 201);
     }
@@ -76,6 +83,7 @@ class PartnerController extends Controller
             'pricing_type' => 'sometimes|required|in:fixed,variable',
             'hourly_rate'  => 'nullable|numeric|min:0|max:999999.99',
             'hourly_rate_effective_from' => 'nullable|date',
+            'contract_type' => 'nullable|in:cooperado,clt,pj',
         ]);
 
         $effectiveFrom = $data['hourly_rate_effective_from'] ?? null;
@@ -83,6 +91,12 @@ class PartnerController extends Controller
 
         $oldRate = $partner->hourly_rate;
         $partner->update($data);
+
+        // Tipo de vínculo do parceiro é a fonte de verdade: propaga p/ todos os usuários dele
+        // (igual ao racional dos valores — o vínculo trava em todos os consultores do parceiro).
+        if (array_key_exists('contract_type', $data)) {
+            User::where('partner_id', $partner->id)->update(['contract_type' => $partner->contract_type]);
+        }
 
         // Registra a vigência do novo valor hora (a partir do mês escolhido). Legado intacto.
         if (array_key_exists('hourly_rate', $data) && (float) $partner->hourly_rate !== (float) $oldRate) {

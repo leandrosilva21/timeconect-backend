@@ -999,7 +999,7 @@ class FechamentoConsultorController extends Controller
             ->whereNotIn('type', ['parceiro_admin', 'cliente'])
             ->whereNotNull('consultant_type')
             ->orderBy('name')
-            ->get(['id', 'name', 'email', 'type', 'consultant_type', 'contract_type', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date', 'guaranteed_hours']);
+            ->get(['id', 'name', 'email', 'type', 'consultant_type', 'contract_type', 'partner_id', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date', 'guaranteed_hours']);
 
         $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
 
@@ -1050,6 +1050,13 @@ class FechamentoConsultorController extends Controller
             \App\Models\FechamentoSendStatus::TIPO_CONSULTOR, $yearMonth, $users->pluck('id')->all(),
         );
 
+        // Notas fiscais PJ (NFS-e + Nota de débito) por consultor no mês.
+        $notasMap = \App\Models\FechamentoNota::where('notable_type', \App\Models\User::class)
+            ->where('year_month', $yearMonth)
+            ->whereIn('notable_id', $users->pluck('id'))
+            ->get()
+            ->keyBy('notable_id');
+
         foreach ($users as $user) {
             $hist             = UserHourlyRateLog::effectiveValuesAt($user->id, $user, $from);
             $hourlyRate       = (float) ($hist['hourly_rate'] ?? 0);
@@ -1077,6 +1084,11 @@ class FechamentoConsultorController extends Controller
                 'total_despesas'    => round((float) ($despesasByUser[$user->id] ?? 0), 2),
                 'envio_em'          => $envioMap[$user->id]['envio_em'] ?? null,
                 'envio_por'         => $envioMap[$user->id]['envio_por'] ?? null,
+                // Notas fiscais só para PJ AVULSO (sem parceiro). Consultor de parceiro PJ
+                // não anexa individualmente — quem anexa é o parceiro (via o admin do parceiro).
+                'notas'             => ($user->contract_type === 'pj' && $user->partner_id === null)
+                    ? (optional($notasMap->get($user->id))->toRowPayload() ?? \App\Models\FechamentoNota::emptyRowPayload())
+                    : null,
             ];
 
             // Proporcionalidade: se data_inicio cai no mês atual

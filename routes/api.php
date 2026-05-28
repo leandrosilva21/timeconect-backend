@@ -779,6 +779,12 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-consultor/{yearMonth}',                              [\App\Http\Controllers\FechamentoConsultorController::class, 'index']);
             Route::get('/fechamento-consultor/{yearMonth}/export-excel',                 [\App\Http\Controllers\FechamentoConsultorController::class, 'exportExcel']);
 
+            // 📎 Notas fiscais PJ (NFS-e + Nota de débito) — consultor PJ avulso ou parceiro PJ.
+            Route::get('/fechamento/notas/{type}/{id}/{yearMonth}',                 [\App\Http\Controllers\FechamentoNotaController::class, 'show']);
+            Route::post('/fechamento/notas/{type}/{id}/{yearMonth}',                [\App\Http\Controllers\FechamentoNotaController::class, 'upload']);
+            Route::get('/fechamento/notas/{type}/{id}/{yearMonth}/{tipo}/download',  [\App\Http\Controllers\FechamentoNotaController::class, 'download']);
+            Route::post('/fechamento/notas/{type}/{id}/{yearMonth}/{tipo}/decisao',  [\App\Http\Controllers\FechamentoNotaController::class, 'decisao']);
+
             // Folha Cooperativa (planilha de importação)
             Route::get('/fechamento-folha/{yearMonth}',          [\App\Http\Controllers\FolhaPagamentoController::class, 'grid']);
             Route::post('/fechamento-folha/{yearMonth}',         [\App\Http\Controllers\FolhaPagamentoController::class, 'save']);

@@ -92,7 +92,7 @@ class FechamentoParceiroController extends Controller
 
         $partners = Partner::whereRaw('"active" = true')
             ->orderBy('name')
-            ->get(['id', 'name', 'pricing_type', 'hourly_rate']);
+            ->get(['id', 'name', 'pricing_type', 'hourly_rate', 'contract_type']);
 
         $fechamentos = $yearMonth
             ? FechamentoParceiro::where('year_month', $yearMonth)
@@ -105,11 +105,23 @@ class FechamentoParceiroController extends Controller
             \App\Models\FechamentoSendStatus::TIPO_PARCEIRO, $yearMonth, $partners->pluck('id')->all(),
         );
 
-        $data = $partners->map(function ($partner) use ($fechamentos, $envioMap) {
+        // Notas fiscais PJ (NFS-e + Nota de débito) por parceiro no mês.
+        $notasMap = $yearMonth
+            ? \App\Models\FechamentoNota::where('notable_type', Partner::class)
+                ->where('year_month', $yearMonth)
+                ->whereIn('notable_id', $partners->pluck('id'))
+                ->get()->keyBy('notable_id')
+            : collect();
+
+        $data = $partners->map(function ($partner) use ($fechamentos, $envioMap, $notasMap) {
             $f = $fechamentos->get($partner->id);
             return [
                 'partner_id'     => $partner->id,
                 'nome'           => $partner->name,
+                'contract_type'  => $partner->contract_type,
+                'notas'          => $partner->contract_type === 'pj'
+                    ? (optional($notasMap->get($partner->id))->toRowPayload() ?? \App\Models\FechamentoNota::emptyRowPayload())
+                    : null,
                 'pricing_type'   => $partner->pricing_type,
                 'hourly_rate'    => (float) ($partner->hourly_rate ?? 0),
                 'status'         => $f?->status ?? 'sem_registro',

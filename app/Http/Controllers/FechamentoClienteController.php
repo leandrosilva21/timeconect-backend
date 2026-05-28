@@ -278,19 +278,24 @@ class FechamentoClienteController extends Controller
         return response()->json(['data' => $data]);
     }
 
-    private function apontamentosData(int $customerId, string $fromMonth, string $toMonth, ?string $contractCode = null): array
+    private function apontamentosData(int $customerId, string $fromMonth, string $toMonth, ?string $contractCode = null, ?int $projectId = null): array
     {
         $from = "{$fromMonth}-01";
         $to   = Carbon::parse("{$toMonth}-01")->endOfMonth()->toDateString();
 
+        // $projectId filtra pelo projeto PAI (escolhido no dropdown "Contrato"); inclui
+        // os filhos via parent_project_id pra que o relatório/PDF respeite a seleção.
         $projectIds = Timesheet::whereBetween('date', [$from, $to])
             ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
             ->whereNull('deleted_at')
-            ->whereHas('project', function ($q) use ($customerId, $contractCode) {
+            ->whereHas('project', function ($q) use ($customerId, $contractCode, $projectId) {
                 $q->where('customer_id', $customerId)
                   ->where('is_investimento_comercial', false);
                 if ($contractCode) {
                     $q->whereHas('contractType', fn ($q2) => $q2->where('code', $contractCode));
+                }
+                if ($projectId) {
+                    $q->where(fn ($q2) => $q2->where('id', $projectId)->orWhere('parent_project_id', $projectId));
                 }
             })
             ->distinct()
@@ -914,9 +919,9 @@ class FechamentoClienteController extends Controller
      *
      * @return array<int,array<string,mixed>>
      */
-    private function clienteApontamentosFlat(int $customerId, string $yearMonth, bool $vedamotors): array
+    private function clienteApontamentosFlat(int $customerId, string $yearMonth, bool $vedamotors, ?int $projectId = null): array
     {
-        $data = $this->apontamentosData($customerId, $yearMonth, $yearMonth, 'on_demand');
+        $data = $this->apontamentosData($customerId, $yearMonth, $yearMonth, 'on_demand', $projectId);
 
         $rows = [];
         foreach (($data['projetos'] ?? []) as $proj) {
@@ -1208,15 +1213,19 @@ class FechamentoClienteController extends Controller
      *
      * @return array<string, mixed>
      */
-    private function buildReportViewData(Customer $customer, string $yearMonth): array
+    private function buildReportViewData(Customer $customer, string $yearMonth, ?int $projectId = null): array
     {
         $periodo    = $this->periodoExtenso($yearMonth);
         $vedamotors = $this->isVedamotors($customer);
-        $rows       = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $vedamotors);
-        $totalValue = $this->clienteTotal((int) $customer->id, $yearMonth);
+        $rows       = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $vedamotors, $projectId);
+        // Total geral do cliente NÃO usa $projectId (legado intacto) — só os rows do
+        // relatório filtram. Os totais por contrato/projeto exibidos vêm dos rows.
+        $totalValue = $projectId
+            ? round(collect($rows)->sum(fn ($r) => (float) $r['horas'] * (float) ($r['valor_hora'] ?? 0)), 2)
+            : $this->clienteTotal((int) $customer->id, $yearMonth);
         $totalHoras = round(collect($rows)->sum('horas'), 2);
 
-        $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand');
+        $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand', $projectId);
         $projetosList = array_values(array_map(
             fn ($p) => ['codigo' => $p['projeto_codigo'] ?? '—', 'nome' => $p['projeto_nome'] ?? '—'],
             $apData['projetos'] ?? []
@@ -1324,10 +1333,11 @@ class FechamentoClienteController extends Controller
             return response()->json(['success' => false, 'message' => 'Cliente não encontrado.'], 404);
         }
 
-        $mode = $request->query('mode') === 'despesa' ? 'despesa' : 'servicos';
+        $mode      = $request->query('mode') === 'despesa' ? 'despesa' : 'servicos';
+        $projectId = $request->query('project_id') ? (int) $request->query('project_id') : null;
         $html = $mode === 'despesa'
             ? view('pdf.fechamento-cliente-despesa', $this->buildDespesaViewData($customer, $yearMonth))->render()
-            : view('pdf.fechamento-cliente', $this->buildReportViewData($customer, $yearMonth))->render();
+            : view('pdf.fechamento-cliente', $this->buildReportViewData($customer, $yearMonth, $projectId))->render();
 
         return response()->json(['html' => $html]);
     }

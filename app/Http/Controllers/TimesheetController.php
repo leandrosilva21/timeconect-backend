@@ -193,12 +193,11 @@ class TimesheetController extends Controller
         } elseif (!$user->isAdmin() && !$user->hasAccess('hours.view_all')) {
             $query->forUser($user->id);
         } elseif ($user->isCoordenador()) {
-            $coordinatorProjectIds = $user->coordinatorProjects()->pluck('projects.id');
+            // Sustentação: apenas projetos do tipo sustentacao ou cloud (escopo do perfil).
+            // Projetos (default): vê TODOS os apontamentos — filtro client-side via
+            // chip "Meus projetos / Todos" no FE manda coordinator_id[]=user.id.
             if ($user->coordinator_type === 'sustentacao') {
-                // Sustentação: apenas projetos com tipo de serviço sustentacao ou cloud
                 $query->whereHas('project.serviceType', fn($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
-            } else {
-                $query->whereIn('timesheets.project_id', $coordinatorProjectIds);
             }
         }
 
@@ -2411,11 +2410,9 @@ class TimesheetController extends Controller
         } elseif (!$user->isAdmin() && !$user->hasAccess('hours.view_all')) {
             $base->forUser($user->id);
         } elseif ($user->isCoordenador()) {
-            $coordinatorProjectIds = $user->coordinatorProjects()->pluck('projects.id');
+            // Coord projetos: vê tudo. Sustentação: restrito ao escopo.
             if ($user->coordinator_type === 'sustentacao') {
                 $base->whereHas('project.serviceType', fn($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
-            } else {
-                $base->whereIn('timesheets.project_id', $coordinatorProjectIds);
             }
         }
 

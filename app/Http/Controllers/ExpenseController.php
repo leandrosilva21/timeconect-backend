@@ -259,12 +259,11 @@ class ExpenseController extends Controller
         } elseif (!$user->isAdmin() && !$user->hasAccess('expenses.view_all')) {
             $query->where('user_id', $user->id);
         } elseif ($user->isCoordenador()) {
-            $coordinatorProjectIds = $user->coordinatorProjects()->pluck('projects.id');
+            // Sustentação: apenas despesas de projetos sustentacao/cloud (escopo do perfil).
+            // Projetos (default): vê TODAS as despesas — filtro client-side via chip
+            // "Meus projetos / Todos" no FE manda coordinator_id[]=user.id.
             if ($user->coordinator_type === 'sustentacao') {
-                // Sustentação: apenas despesas de projetos com tipo sustentacao ou cloud
                 $query->whereHas('project.serviceType', fn($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
-            } else {
-                $query->whereIn('expenses.project_id', $coordinatorProjectIds);
             }
         }
 

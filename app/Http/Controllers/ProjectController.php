@@ -780,7 +780,7 @@ class ProjectController extends Controller
             'initial_cost' => 'nullable|numeric|min:0|max:999999999.99',
             'consultant_hours' => 'nullable|integer|min:0|max:999999',
             'coordinator_hours' => 'nullable|integer|min:0|max:999999',
-            'coordination_hours' => 'required|numeric|min:0|max:999999',
+            'coordination_hours' => 'nullable|numeric|min:0|max:999999',
             'additional_hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'start_date' => 'nullable|date',
             'expected_end_date' => 'nullable|date',
@@ -827,8 +827,19 @@ class ProjectController extends Controller
             'status.in' => 'Status inválido',
         ]);
 
+        // BH Mensal não tem horas de coordenação — força null e pula a validação/guard.
+        $ctForBhMensal = isset($validated['contract_type_id'])
+            ? ContractType::find($validated['contract_type_id'])
+            : null;
+        $isBhMensal = str_contains(strtolower((string) ($ctForBhMensal->name ?? '')), 'mensal');
+
+        if ($isBhMensal) {
+            $validated['coordination_hours'] = null;
+        }
+
         // Horas de coordenação não podem exceder as horas vendidas (contratadas).
-        if (isset($validated['coordination_hours'], $validated['sold_hours'])
+        if (!$isBhMensal
+            && isset($validated['coordination_hours'], $validated['sold_hours'])
             && $validated['coordination_hours'] !== null && $validated['sold_hours'] !== null
             && (float) $validated['coordination_hours'] > (float) $validated['sold_hours']) {
             return response()->json([
@@ -837,6 +848,11 @@ class ProjectController extends Controller
                 'message' => 'Horas inválidas',
                 'detailMessage' => "As horas de coordenação não podem ser maiores que as horas vendidas ({$validated['sold_hours']}h).",
             ], 422);
+        }
+
+        // Para tipos que NÃO são BH Mensal, horas de coordenação continuam obrigatórias.
+        if (!$isBhMensal && (!array_key_exists('coordination_hours', $validated) || $validated['coordination_hours'] === null)) {
+            return response()->json(['message' => 'Horas de Coordenação obrigatórias.'], 422);
         }
 
         // Validar que o projeto pai não é um subprojeto (evitar múltiplos níveis)
@@ -1177,7 +1193,7 @@ class ProjectController extends Controller
             'initial_cost' => 'nullable|numeric|min:0|max:999999999.99',
             'consultant_hours' => 'nullable|integer|min:0|max:999999',
             'coordinator_hours' => 'nullable|integer|min:0|max:999999',
-            'coordination_hours' => 'required|numeric|min:0|max:999999',
+            'coordination_hours' => 'nullable|numeric|min:0|max:999999',
             'additional_hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'start_date' => 'nullable|date',
             'expected_end_date' => 'nullable|date',
@@ -1222,10 +1238,21 @@ class ProjectController extends Controller
             'timesheet_retroactive_limit_days.max' => 'O prazo não pode ser maior que 365 dias',
         ]);
 
+        // BH Mensal não tem horas de coordenação — força null e pula a validação/guard.
+        // Detecta pelo tipo de contrato (novo, se enviado; senão o atual do projeto).
+        $ctForBhMensal = array_key_exists('contract_type_id', $validated)
+            ? ContractType::find($validated['contract_type_id'])
+            : (function () use ($project) { $project->loadMissing('contractType'); return $project->contractType; })();
+        $isBhMensal = str_contains(strtolower((string) ($ctForBhMensal->name ?? '')), 'mensal');
+
+        if ($isBhMensal) {
+            $validated['coordination_hours'] = null;
+        }
+
         // Horas de coordenação não podem exceder as horas vendidas (contratadas).
         $coordH = array_key_exists('coordination_hours', $validated) ? $validated['coordination_hours'] : null;
         $soldHForCoord = array_key_exists('sold_hours', $validated) ? $validated['sold_hours'] : $project->sold_hours;
-        if ($coordH !== null && $soldHForCoord !== null && (float) $coordH > (float) $soldHForCoord) {
+        if (!$isBhMensal && $coordH !== null && $soldHForCoord !== null && (float) $coordH > (float) $soldHForCoord) {
             return response()->json([
                 'code' => 'INVALID_COORDINATION_HOURS',
                 'type' => 'error',

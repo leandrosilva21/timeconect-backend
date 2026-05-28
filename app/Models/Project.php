@@ -77,6 +77,7 @@ class Project extends Model
         'condicao_pagamento',
         'observacoes_contrato',
         'cobra_despesa_cliente',
+        'limite_despesa',
         'permissoes_despesa',
         'executivo_conta_id',
         'vendedor_id',

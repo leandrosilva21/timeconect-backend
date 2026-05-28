@@ -92,6 +92,7 @@ class ContractController extends Controller
             'valor_hora'             => 'nullable|numeric|min:0',
             'hora_adicional'         => 'nullable|numeric|min:0',
             'pct_horas_coordenador'  => 'nullable|numeric|min:0|max:100',
+            'horas_coordenacao'      => 'nullable|numeric|min:0|max:999999',
             'horas_consultor'        => 'nullable|integer|min:0',
             'expectativa_inicio'     => 'nullable|date',
             'condicao_pagamento'     => 'nullable|string',
@@ -237,6 +238,7 @@ class ContractController extends Controller
             'valor_hora'             => 'nullable|numeric|min:0',
             'hora_adicional'         => 'nullable|numeric|min:0',
             'pct_horas_coordenador'  => 'nullable|numeric|min:0|max:100',
+            'horas_coordenacao'      => 'nullable|numeric|min:0|max:999999',
             'horas_consultor'        => 'nullable|integer|min:0',
             'expectativa_inicio'     => 'nullable|date',
             'condicao_pagamento'     => 'nullable|string',
@@ -347,6 +349,7 @@ class ContractController extends Controller
                 'hourly_rate'           => $contract->valor_hora,
                 'additional_hourly_rate' => $contract->hora_adicional,
                 'coordinator_hours'     => $contract->pct_horas_coordenador !== null ? (int) $contract->pct_horas_coordenador : null,
+                'coordination_hours'    => $contract->horas_coordenacao,
                 'consultant_hours'      => $contract->horas_consultor,
                 'start_date'            => $contract->expectativa_inicio,
                 'status'                => Project::STATUS_AWAITING_START,
@@ -356,6 +359,7 @@ class ContractController extends Controller
                 'condicao_pagamento'    => $contract->condicao_pagamento,
                 'observacoes_contrato'  => $contract->observacoes,
                 'cobra_despesa_cliente' => $contract->cobra_despesa_cliente,
+                'limite_despesa'        => $contract->limite_despesa,
                 'executivo_conta_id'    => $contract->executivo_conta_id,
                 'vendedor_id'           => $contract->vendedor_id,
             ]));
@@ -767,6 +771,51 @@ class ContractController extends Controller
             ]);
         }
 
+        // ── Coluna Aporte: lê hour_contributions e renderiza apenas as cujo destino
+        // é um projeto PAI (parent_project_id IS NULL). Aportes em filhos continuam
+        // existindo na tabela mas não viram card — consomem do saldo do pai como hoje.
+        // Cliente vê apenas os próprios; consultor não tem coluna de aporte (lista vazia).
+        $aporteCards = collect();
+        if (!$isConsultor) {
+            $aporteQuery = \App\Models\HourContribution::with([
+                    'project:id,code,name,customer_id,parent_project_id,status',
+                    'project.customer:id,name',
+                    'contributedBy:id,name',
+                ])
+                ->whereHas('project', fn($q) => $q->whereNull('parent_project_id'))
+                ->orderByDesc('contributed_at');
+
+            if ($isCliente && $user->customer_id) {
+                $aporteQuery->whereHas('project', fn($q) => $q->where('customer_id', $user->customer_id));
+            }
+
+            $aporteCards = $aporteQuery->get()->map(function ($a) {
+                $horas = (float) $a->contributed_hours;
+                $valor = (float) $a->hourly_rate;
+                return [
+                    'id'              => $a->id,
+                    'kind'            => 'aporte',
+                    'customer_id'     => $a->project?->customer_id,
+                    'customer_name'   => $a->project?->customer?->name,
+                    'project_id'      => $a->project_id,
+                    'project_code'    => $a->project?->code,
+                    'project_name'    => $a->project?->name,
+                    'project_status'  => $a->project?->status,
+                    'horas'           => $horas,
+                    'valor_hora'      => $valor,
+                    'total'           => round($horas * $valor, 2),
+                    'motivo'          => $a->motivo,
+                    'description'     => $a->description,
+                    'has_proposta'           => !empty($a->proposta_path),
+                    'proposta_original_name' => $a->proposta_original_name,
+                    'kanban_status'   => $a->kanban_status ?? 'aporte',
+                    'contributed_by'  => $a->contributedBy?->name,
+                    'contributed_at'  => $a->contributed_at?->toISOString(),
+                    'created_at'      => $a->created_at?->toISOString(),
+                ];
+            });
+        }
+
         return response()->json([
             'demand_cards'          => $demandCards,
             'transition_cards'      => $transitionCards,
@@ -774,6 +823,7 @@ class ContractController extends Controller
             'sustentacao_auto_cards'=> $sustentacaoAutoCards,
             'sustentacao_groups'    => $sustentacaoGroups,
             'request_cards'         => $requestCards,
+            'aporte_cards'          => $aporteCards,
             'coordinators'          => $coordinators,
             'user_role'             => $user?->type ?? 'admin',
             'contracts'             => $demandCards,
@@ -1241,6 +1291,7 @@ class ContractController extends Controller
                         'hourly_rate'            => $contract->valor_hora,
                         'additional_hourly_rate' => $contract->hora_adicional,
                         'coordinator_hours'      => $contract->pct_horas_coordenador !== null ? (int) $contract->pct_horas_coordenador : null,
+                        'coordination_hours'     => $contract->horas_coordenacao,
                         'consultant_hours'       => $contract->horas_consultor,
                         'start_date'             => $contract->expectativa_inicio,
                         'status'                 => \App\Models\Project::STATUS_AWAITING_START,
@@ -1251,6 +1302,7 @@ class ContractController extends Controller
                         'condicao_pagamento'     => $contract->condicao_pagamento,
                         'observacoes_contrato'   => $contract->observacoes,
                         'cobra_despesa_cliente'  => $contract->cobra_despesa_cliente,
+                        'limite_despesa'         => $contract->limite_despesa,
                         'executivo_conta_id'     => $contract->executivo_conta_id,
                         'vendedor_id'            => $contract->vendedor_id,
                     ]));
@@ -1511,6 +1563,7 @@ class ContractController extends Controller
             'hourly_rate'            => $contract->valor_hora,
             'additional_hourly_rate' => $contract->hora_adicional,
             'coordinator_hours'      => $contract->pct_horas_coordenador !== null ? (int) $contract->pct_horas_coordenador : null,
+            'coordination_hours'     => $contract->horas_coordenacao,
             'consultant_hours'       => $contract->horas_consultor,
             'start_date'             => $contract->expectativa_inicio,
             'status'                 => $initialStatus,
@@ -1520,6 +1573,7 @@ class ContractController extends Controller
             'condicao_pagamento'     => $contract->condicao_pagamento,
             'observacoes_contrato'   => $contract->observacoes,
             'cobra_despesa_cliente'  => $contract->cobra_despesa_cliente,
+            'limite_despesa'         => $contract->limite_despesa,
             'executivo_conta_id'     => $contract->executivo_conta_id,
             'vendedor_id'            => $contract->vendedor_id,
         ]));

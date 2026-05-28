@@ -43,7 +43,12 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {
-            if ($request->expectsJson() && !($e instanceof \Illuminate\Validation\ValidationException)) {
+            // `is('api/*')` força resposta JSON em qualquer rota de API mesmo sem
+            // header Accept: application/json — sem isso, request não-autenticada
+            // sem Accept caía no default do Laravel 11, que tenta redirecionar pra
+            // route('login') (inexistente numa API) e estourava 500
+            // "Route [login] not defined." em vez de um 401 limpo.
+            if (($request->expectsJson() || $request->is('api/*')) && !($e instanceof \Illuminate\Validation\ValidationException)) {
                 if ($e instanceof \Illuminate\Auth\AuthenticationException) {
                     return response()->json(['message' => 'Unauthenticated.'], 401);
                 }

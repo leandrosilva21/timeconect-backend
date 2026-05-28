@@ -15,7 +15,7 @@ class Contract extends Model
         'customer_id', 'project_name', 'status', 'categoria', 'service_type_id', 'contract_type_id',
         'tipo_faturamento', 'cobra_despesa_cliente', 'limite_despesa',
         'architect_id', 'tipo_alocacao', 'horas_contratadas',
-        'valor_projeto', 'valor_hora', 'hora_adicional', 'pct_horas_coordenador', 'horas_consultor',
+        'valor_projeto', 'valor_hora', 'hora_adicional', 'pct_horas_coordenador', 'horas_coordenacao', 'horas_consultor',
         'expectativa_inicio', 'condicao_pagamento',
         // Contratos recorrentes (gestão de aniversário / reajuste)
         'data_assinatura', 'data_vencimento', 'valor_inicial', 'taxa_reajuste', 'pct_reajuste', 'data_ultimo_reajuste',
@@ -41,6 +41,7 @@ class Contract extends Model
         'pct_reajuste'           => 'decimal:3',
         'hora_adicional'         => 'decimal:2',
         'pct_horas_coordenador'  => 'decimal:2',
+        'horas_coordenacao'      => 'decimal:2',
         'limite_despesa'         => 'decimal:2',
         'created_at'             => 'datetime',
         'updated_at'             => 'datetime',

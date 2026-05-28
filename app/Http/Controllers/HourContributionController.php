@@ -6,6 +6,8 @@ use App\Models\Project;
 use App\Models\HourContribution;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * @OA\Tag(
@@ -122,6 +124,9 @@ class HourContributionController extends Controller
             'description' => 'nullable|string|max:1000',
             'motivo' => 'nullable|in:aporte,excedentes,absorvidas',
             'contributed_at' => 'nullable|date',
+            // Anexo "Proposta / Aprovação" — só pode ser enviado em aporte de projeto
+            // PAI (cards do Kanban geram proposta comercial). Aporte em filho não usa.
+            'proposta' => 'nullable|file|mimes:pdf,doc,docx,xls,xlsx,ppt,pptx,jpg,jpeg,png,txt,csv,zip|max:20480',
         ], [
             'contributed_hours.required' => 'A quantidade de horas é obrigatória',
             'contributed_hours.min' => 'A quantidade de horas deve ser maior que zero',
@@ -131,22 +136,70 @@ class HourContributionController extends Controller
             'hourly_rate.max' => 'O valor da hora não pode exceder R$ 9.999,99',
             'description.max' => 'A descrição não pode ter mais de 1000 caracteres',
             'contributed_at.date' => 'Data do aporte inválida',
+            'proposta.mimes' => 'Anexo deve ser PDF, DOC, XLS, PPT, imagem, TXT, CSV ou ZIP',
+            'proposta.max' => 'Anexo não pode ter mais de 20 MB',
         ]);
-        
+
+        // Proposta só permitida em aporte de projeto PAI — ignora silenciosamente
+        // se o request mandou para um filho (regra UX: filho não tem anexo).
+        $propostaPath = null;
+        $propostaOriginal = null;
+        if ($request->hasFile('proposta') && $project->parent_project_id === null) {
+            $file = $request->file('proposta');
+            $propostaPath = $file->store("hour_contributions/{$project->id}/proposta");
+            $propostaOriginal = $file->getClientOriginalName();
+        }
+
         $contribution = $project->hourContributions()->create([
-            ...$validated,
-            'motivo' => $validated['motivo'] ?? 'aporte',
-            'contributed_by' => $request->user()->id,
-            'contributed_at' => $validated['contributed_at'] ?? now(),
+            'contributed_hours' => $validated['contributed_hours'],
+            'hourly_rate'       => $validated['hourly_rate'],
+            'description'       => $validated['description'] ?? null,
+            'motivo'            => $validated['motivo'] ?? 'aporte',
+            'proposta_path'           => $propostaPath,
+            'proposta_original_name'  => $propostaOriginal,
+            'contributed_by'    => $request->user()->id,
+            'contributed_at'    => $validated['contributed_at'] ?? now(),
         ]);
-        
+
         $contribution->load('contributedBy:id,name,email');
         $contribution->total_value = $contribution->getTotalValue();
-        
+
         // Aporte muda as horas disponíveis do projeto (e o consumo do pai, se for subprojeto) — refaz o cache da lista.
         $this->invalidateListCache('projects');
 
         return response()->json($contribution, 201);
+    }
+
+    /**
+     * Download da proposta/aprovação anexada ao aporte.
+     */
+    public function downloadProposta(Project $project, HourContribution $contribution): StreamedResponse|JsonResponse
+    {
+        if ($contribution->project_id !== $project->id) {
+            return response()->json(['message' => 'Aporte não encontrado'], 404);
+        }
+        if (!$contribution->proposta_path || !Storage::exists($contribution->proposta_path)) {
+            return response()->json(['message' => 'Proposta não encontrada'], 404);
+        }
+        return Storage::download($contribution->proposta_path, $contribution->proposta_original_name ?? 'proposta');
+    }
+
+    /**
+     * Move o aporte entre colunas do kanban (novo_contrato ↔ aporte).
+     * Cards de aporte nascem em 'novo_contrato' e o admin move pra 'aporte'
+     * depois da revisão comercial.
+     */
+    public function moveKanban(Request $request, Project $project, HourContribution $contribution): JsonResponse
+    {
+        if ($contribution->project_id !== $project->id) {
+            return response()->json(['message' => 'Aporte não encontrado'], 404);
+        }
+        $validated = $request->validate([
+            'kanban_status' => 'required|in:' . implode(',', HourContribution::KANBAN_STATUSES),
+        ]);
+        $contribution->kanban_status = $validated['kanban_status'];
+        $contribution->save();
+        return response()->json(['ok' => true, 'kanban_status' => $contribution->kanban_status]);
     }
     
     /**

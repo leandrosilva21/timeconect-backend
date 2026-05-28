@@ -22,6 +22,13 @@ class PermissionService
             default          => [],
         };
 
+        // Coordenador de Projetos: acesso ao Cadastro de Usuários restrito a
+        // RESETAR SENHA (precisa de view_all pra enxergar a lista e do
+        // reset_password pro endpoint). Demais ações ficam gateadas na tela /users.
+        if ($user->type === 'coordenador' && $user->coordinator_type === 'projetos') {
+            $base = array_merge($base, ['users.view_all', 'users.reset_password']);
+        }
+
         // Admin já tem tudo — extras são irrelevantes
         if (in_array('*', $base, true)) {
             return $base;

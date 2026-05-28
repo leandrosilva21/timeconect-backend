@@ -733,7 +733,7 @@ class ProjectController extends Controller
             'initial_cost' => 'nullable|numeric|min:0|max:999999999.99',
             'consultant_hours' => 'nullable|integer|min:0|max:999999',
             'coordinator_hours' => 'nullable|integer|min:0|max:999999',
-            'coordination_hours' => 'nullable|numeric|min:0|max:999999',
+            'coordination_hours' => 'required|numeric|min:0|max:999999',
             'additional_hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'start_date' => 'nullable|date',
             'expected_end_date' => 'nullable|date',
@@ -924,6 +924,14 @@ class ProjectController extends Controller
         // Carregar relacionamentos essenciais
         $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'coordinators', 'consultantGroups.consultants', 'parentProject', 'childProjects', 'hourContributions']);
 
+        // Detalhes do contrato (Vendedor, Arquiteto, Executivo de Conta) — usados
+        // pelo ProjectViewModal pra exibir os campos herdados na visão geral.
+        try {
+            $project->load(['architect:id,name', 'executivoConta:id,name', 'vendedor:id,name']);
+        } catch (\Throwable $e) {
+            // Se alguma relação ainda não existir, ignora silenciosamente.
+        }
+
         try {
             $project->load(['soldHoursHistory.changer']);
         } catch (\Throwable $e) {
@@ -1043,7 +1051,7 @@ class ProjectController extends Controller
             'initial_cost' => 'nullable|numeric|min:0|max:999999999.99',
             'consultant_hours' => 'nullable|integer|min:0|max:999999',
             'coordinator_hours' => 'nullable|integer|min:0|max:999999',
-            'coordination_hours' => 'nullable|numeric|min:0|max:999999',
+            'coordination_hours' => 'required|numeric|min:0|max:999999',
             'additional_hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'start_date' => 'nullable|date',
             'expected_end_date' => 'nullable|date',

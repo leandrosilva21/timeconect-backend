@@ -21,9 +21,22 @@ class HourContribution extends Model
         'contributed_hours',
         'hourly_rate',
         'description',
+        'motivo',
+        'proposta_path',
+        'proposta_original_name',
+        'kanban_status',
         'contributed_by',
         'contributed_at',
     ];
+
+    // Motivos do aporte: aporte | excedentes | absorvidas
+    public const MOTIVOS = ['aporte', 'excedentes', 'absorvidas'];
+
+    // Colunas do kanban onde o aporte pode estar.
+    // 'novo_contrato' = inicial (revisão); 'aporte' = final (coluna Aporte do kanban).
+    public const KANBAN_NOVO    = 'novo_contrato';
+    public const KANBAN_FINAL   = 'aporte';
+    public const KANBAN_STATUSES = [self::KANBAN_NOVO, self::KANBAN_FINAL];
     
     /**
      * The attributes that should be cast.

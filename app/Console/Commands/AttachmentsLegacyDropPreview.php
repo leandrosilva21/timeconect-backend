@@ -139,16 +139,23 @@ class AttachmentsLegacyDropPreview extends Command
      */
     private function probeTable(string $legacyAttachmentModel, string $entityIdCol, string $entityType): array
     {
-        $legacyTotal = $legacyAttachmentModel::query()->count();
+        // Só rows com path real interessam — rows fantasmas (path=null, sem arquivo)
+        // não têm o que migrar e seriam dropadas "vazias" no PR 7 sem perda.
+        $pathCol = $this->pathColumnFor($legacyAttachmentModel);
+        $legacyTotal = $legacyAttachmentModel::query()
+            ->whereNotNull($pathCol)
+            ->where($pathCol, '!=', '')
+            ->count();
         if ($legacyTotal === 0) {
             return ['legacy_total' => 0, 'ok' => 0, 'missing' => 0];
         }
 
         $ok = 0;
         $legacyAttachmentModel::query()
-            ->select('id', $entityIdCol, $this->pathColumnFor($legacyAttachmentModel))
-            ->chunkById(500, function ($chunk) use (&$ok, $entityType, $entityIdCol, $legacyAttachmentModel) {
-                $pathCol = $this->pathColumnFor($legacyAttachmentModel);
+            ->select('id', $entityIdCol, $pathCol)
+            ->whereNotNull($pathCol)
+            ->where($pathCol, '!=', '')
+            ->chunkById(500, function ($chunk) use (&$ok, $entityType, $entityIdCol, $pathCol) {
                 foreach ($chunk as $row) {
                     $exists = Attachment::query()
                         ->where('entity_type', $entityType)

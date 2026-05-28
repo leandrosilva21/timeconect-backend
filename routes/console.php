@@ -126,3 +126,13 @@ Schedule::command('reajustes:alerta-vencidos')
   ->name('alerta-reajustes-vencidos')
   ->description('Avisa o Financeiro sobre contratos com reajuste vencido (1º dia útil do mês)')
   ->withoutOverlapping();
+
+// FASE 11.1 — Integrity sweep diário dos anexos (verifica entidade-dona, arquivo
+// físico, checksum e provider). Default incremental (últimos 7 dias) pra não
+// pesar; varredura completa pode ser disparada manualmente com --all.
+Schedule::command('attachments:integrity-check')
+  ->dailyAt('03:00')
+  ->name('attachments-integrity-check')
+  ->description('FASE 11: verifica integridade dos anexos (entidade-dona, arquivo, checksum)')
+  ->withoutOverlapping()
+  ->runInBackground();

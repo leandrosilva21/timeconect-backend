@@ -11,7 +11,6 @@ use App\Models\FechamentoNota;
 use App\Models\HourContribution;
 use App\Models\ProjectAttachment;
 use App\Models\ProjectMessageAttachment;
-use App\Models\StageActivityEvent;
 use App\Models\Timesheet;
 use App\Models\User;
 use Illuminate\Console\Command;
@@ -49,7 +48,6 @@ class AttachmentsLegacyDropPreview extends Command
             'EXPENSE.receipt_path'                  => $this->probeColumn(Expense::class, 'receipt_path', 'EXPENSE', 'receipt'),
             'TIMESHEET.attachment_path'             => $this->probeColumn(Timesheet::class, 'attachment_path', 'TIMESHEET', 'attachment'),
             'HOUR_CONTRIBUTION.proposta_path'       => $this->probeColumn(HourContribution::class, 'proposta_path', 'HOUR_CONTRIBUTION', 'proposal'),
-            'STAGE_ACTIVITY_EVENT.attachment_path'  => $this->probeColumn(StageActivityEvent::class, 'attachment_path', 'STAGE_ACTIVITY_EVENT', 'attachment'),
             'project_attachments (tabela)'          => $this->probeTable(ProjectAttachment::class, 'project_id', 'PROJECT'),
             'contract_attachments (tabela)'         => $this->probeTable(ContractAttachment::class, 'contract_id', 'CONTRACT'),
             'project_message_attachments'           => $this->probeTable(ProjectMessageAttachment::class, 'message_id', 'PROJECT_MESSAGE'),
@@ -57,6 +55,17 @@ class AttachmentsLegacyDropPreview extends Command
             'contract_request_message_attachments'  => $this->probeTable(ContractRequestMessageAttachment::class, 'message_id', 'REQUEST_MESSAGE'),
             'FECHAMENTO_NOTA (nfse + nota_debito)'  => $this->probeFechamentoNotas(),
         ];
+
+        // STAGE_ACTIVITY_EVENT (cronograma) — feature ainda não em prod; só prober
+        // quando o model existir. Em dev/homolog vai aparecer normalmente.
+        if (class_exists(\App\Models\StageActivityEvent::class)) {
+            $results['STAGE_ACTIVITY_EVENT.attachment_path'] = $this->probeColumn(
+                \App\Models\StageActivityEvent::class,
+                'attachment_path',
+                'STAGE_ACTIVITY_EVENT',
+                'attachment'
+            );
+        }
 
         if ($this->option('json')) {
             $this->line(json_encode($results, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));

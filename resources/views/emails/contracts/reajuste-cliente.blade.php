@@ -4,6 +4,10 @@
 @php
     $brl = fn ($v) => 'R$ ' . number_format((float) $v, 2, ',', '.');
     $indiceLabel = $indice === 'IGPM' ? 'IGP-M' : $indice;
+    // Fonte de onde a taxa é buscada: Banco Central do Brasil (SGS).
+    $serieBcb = in_array(strtoupper((string) $indice), ['IGPM', 'IGP-M'], true) ? 189
+              : (strtoupper((string) $indice) === 'IPCA' ? 433 : null);
+    $fonteTaxa = 'Banco Central do Brasil — SGS' . ($serieBcb ? ' (série ' . $serieBcb . ')' : '');
 @endphp
 <body style="margin:0;padding:0;background-color:#F4F5F7;font-family:'Segoe UI',-apple-system,Helvetica,Arial,sans-serif;">
 <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="#F4F5F7">
@@ -53,6 +57,10 @@
                     <tr>
                       <td style="color:#64748B;font-size:13px;padding:4px 0;">Índice aplicado</td>
                       <td align="right" style="color:#0F172A;font-size:13px;font-weight:600;padding:4px 0;">{{ $indiceLabel }} ({{ number_format($percentual, 2, ',', '.') }}%)</td>
+                    </tr>
+                    <tr>
+                      <td style="color:#64748B;font-size:13px;padding:4px 0;">Fonte da taxa</td>
+                      <td align="right" style="color:#0F172A;font-size:13px;font-weight:600;padding:4px 0;">{{ $fonteTaxa }}</td>
                     </tr>
                     @if($periodoFormatado)
                     <tr>

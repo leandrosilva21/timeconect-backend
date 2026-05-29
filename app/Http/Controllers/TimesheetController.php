@@ -2530,6 +2530,37 @@ class TimesheetController extends Controller
             return null;
         }
 
+        // ── Bloqueio por HORAS APONTÁVEIS (coordination_hours) — só Fechado e BH Fixo ──
+        // O teto do bloqueio deixa de ser Horas Vendidas (sold_hours) e passa a ser
+        // "Horas Apontáveis" (coordination_hours). TUDO o mais fica idêntico: consumido
+        // (apontadas + saldo inicial), aportes, ajuste de filhos e allow_negative_balance —
+        // por isso reaproveitamos getGeneralHoursBalance e só trocamos a base sold→apontáveis.
+        // Não afeta interface nem nenhum outro cálculo. BH Mensal/demais seguem a regra atual.
+        $ctNameBlock = strtolower(trim((string) ($project->contractType->name ?? '')));
+        $ctCodeBlock = (string) ($project->contractType->code ?? '');
+        if ($ctNameBlock === 'fechado' || $ctCodeBlock === 'fixed_hours' || $ctNameBlock === 'banco de horas fixo') {
+            $generalBalance    = $project->getGeneralHoursBalance(false, $excludeTimesheetId);
+            $apontaveisBalance = $generalBalance - (float) ($project->sold_hours ?? 0) + (float) ($project->coordination_hours ?? 0);
+            if ($apontaveisBalance < $hoursToAdd && !$project->allow_negative_balance) {
+                Log::warning('Apontamento bloqueado — Horas Apontáveis insuficientes', [
+                    'project_id' => $project->id, 'user_id' => $userId,
+                    'horas_apontaveis' => $project->coordination_hours, 'sold_hours' => $project->sold_hours,
+                    'apontaveis_balance' => $apontaveisBalance, 'hours_to_add' => $hoursToAdd,
+                ]);
+                return response()->json([
+                    'code' => 'INSUFFICIENT_HOURS_BALANCE',
+                    'type' => 'error',
+                    'message' => 'Saldo de horas insuficiente',
+                    'details' => [
+                        'available_balance' => round($apontaveisBalance, 2),
+                        'requested_hours'   => $hoursToAdd,
+                        'balance_type'      => 'apontaveis',
+                    ],
+                ], 422);
+            }
+            return null;
+        }
+
         // Carregar relacionamentos necessários
         $project->load(['consultants', 'coordinators']);
 

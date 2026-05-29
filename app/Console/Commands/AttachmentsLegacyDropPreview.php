@@ -3,14 +3,9 @@
 namespace App\Console\Commands;
 
 use App\Models\Attachment;
-use App\Models\ContractAttachment;
-use App\Models\ContractMessageAttachment;
-use App\Models\ContractRequestMessageAttachment;
 use App\Models\Expense;
 use App\Models\FechamentoNota;
 use App\Models\HourContribution;
-use App\Models\ProjectAttachment;
-use App\Models\ProjectMessageAttachment;
 use App\Models\Timesheet;
 use App\Models\User;
 use Illuminate\Console\Command;
@@ -48,13 +43,22 @@ class AttachmentsLegacyDropPreview extends Command
             'EXPENSE.receipt_path'                  => $this->probeColumn(Expense::class, 'receipt_path', 'EXPENSE', 'receipt'),
             'TIMESHEET.attachment_path'             => $this->probeColumn(Timesheet::class, 'attachment_path', 'TIMESHEET', 'attachment'),
             'HOUR_CONTRIBUTION.proposta_path'       => $this->probeColumn(HourContribution::class, 'proposta_path', 'HOUR_CONTRIBUTION', 'proposal'),
-            'project_attachments (tabela)'          => $this->probeTable(ProjectAttachment::class, 'project_id', 'PROJECT'),
-            'contract_attachments (tabela)'         => $this->probeTable(ContractAttachment::class, 'contract_id', 'CONTRACT'),
-            'project_message_attachments'           => $this->probeTable(ProjectMessageAttachment::class, 'message_id', 'PROJECT_MESSAGE'),
-            'contract_message_attachments'          => $this->probeTable(ContractMessageAttachment::class, 'message_id', 'CONTRACT_MESSAGE'),
-            'contract_request_message_attachments'  => $this->probeTable(ContractRequestMessageAttachment::class, 'message_id', 'REQUEST_MESSAGE'),
             'FECHAMENTO_NOTA (nfse + nota_debito)'  => $this->probeFechamentoNotas(),
         ];
+
+        // FASE 11.7 (PR 7b) — 5 tabelas dedicadas dropadas; preview cobre só
+        // se ainda existir (dev/homolog antes da migration).
+        foreach ([
+            'project_attachments'                  => ['PROJECT',        'path'],
+            'contract_attachments'                 => ['CONTRACT',       'path'],
+            'project_message_attachments'          => ['PROJECT_MESSAGE','file_path'],
+            'contract_message_attachments'         => ['CONTRACT_MESSAGE','file_path'],
+            'contract_request_message_attachments' => ['REQUEST_MESSAGE','file_path'],
+        ] as $table => [$entityType, $pathCol]) {
+            if (\Schema::hasTable($table)) {
+                $results[$table] = $this->probeRawTable($table, $entityType, $pathCol);
+            }
+        }
 
         // STAGE_ACTIVITY_EVENT (cronograma) — feature ainda não em prod; só prober
         // quando o model existir. Em dev/homolog vai aparecer normalmente.
@@ -139,29 +143,34 @@ class AttachmentsLegacyDropPreview extends Command
     }
 
     /**
-     * Probe pra tabela dedicada (project_attachments, contract_attachments,
-     * *_message_attachments). Cada row legada deve ter um attachment com
-     * mesmo (entity_type, entity_id, storage_path).
+     * Probe pra tabela legada via DB::table — não depende dos models legacy
+     * (deletados no PR 7b) e funciona em dev/homolog antes da migration de drop.
+     *
+     * Cada row com path real deve ter um Attachment vivo com (entity_type,
+     * entity_id, storage_path) idênticos. entity_id_col difere por tabela:
+     * project_attachments/contract_attachments usam `<entity>_id`; message
+     * tables usam `message_id`.
      */
-    private function probeTable(string $legacyAttachmentModel, string $entityIdCol, string $entityType): array
+    private function probeRawTable(string $table, string $entityType, string $pathCol): array
     {
-        // Só rows com path real interessam — rows fantasmas (path=null, sem arquivo)
-        // não têm o que migrar e seriam dropadas "vazias" no PR 7 sem perda.
-        $pathCol = $this->pathColumnFor($legacyAttachmentModel);
-        $legacyTotal = $legacyAttachmentModel::query()
+        $entityIdCol = match ($table) {
+            'project_attachments'  => 'project_id',
+            'contract_attachments' => 'contract_id',
+            default                => 'message_id',
+        };
+
+        $base = \DB::table($table)
             ->whereNotNull($pathCol)
-            ->where($pathCol, '!=', '')
-            ->count();
+            ->where($pathCol, '!=', '');
+        $legacyTotal = (clone $base)->count();
         if ($legacyTotal === 0) {
             return ['legacy_total' => 0, 'ok' => 0, 'missing' => 0];
         }
 
         $ok = 0;
-        $legacyAttachmentModel::query()
-            ->select('id', $entityIdCol, $pathCol)
-            ->whereNotNull($pathCol)
-            ->where($pathCol, '!=', '')
-            ->chunkById(500, function ($chunk) use (&$ok, $entityType, $entityIdCol, $pathCol) {
+        $base->select('id', $entityIdCol, $pathCol)
+            ->orderBy('id')
+            ->chunk(500, function ($chunk) use (&$ok, $entityType, $entityIdCol, $pathCol) {
                 foreach ($chunk as $row) {
                     $exists = Attachment::query()
                         ->where('entity_type', $entityType)
@@ -218,17 +227,4 @@ class AttachmentsLegacyDropPreview extends Command
         ];
     }
 
-    /**
-     * Mapeia model legado → nome da coluna de path.
-     */
-    private function pathColumnFor(string $modelClass): string
-    {
-        return match ($modelClass) {
-            ProjectAttachment::class, ContractAttachment::class => 'path',
-            ProjectMessageAttachment::class,
-            ContractMessageAttachment::class,
-            ContractRequestMessageAttachment::class            => 'file_path',
-            default                                            => 'path',
-        };
-    }
 }

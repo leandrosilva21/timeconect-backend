@@ -2,9 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Attachment;
 use App\Models\Contract;
 use App\Models\ContractMessage;
-use App\Models\ContractMessageAttachment;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,7 +13,6 @@ use Illuminate\Support\Facades\Storage;
 
 class ContractMessageController extends Controller
 {
-    use \App\Attachments\Concerns\DualWritesMessageAttachments;
 
     public function index(Request $request, Contract $contract): JsonResponse
     {
@@ -61,18 +60,19 @@ class ContractMessageController extends Controller
             'visibility'  => $visibility,
         ]);
 
+        // FASE 11.7 (PR 7b) — Upload de anexos 100% via camada Attachment.
         if ($request->hasFile('files')) {
+            $service = app(\App\Attachments\AttachmentService::class);
             foreach ($request->file('files') as $file) {
                 $path = $file->store('contract-message-attachments', 'public');
-                ContractMessageAttachment::create([
-                    'message_id'    => $msg->id,
+                $service->registerExisting($user, [
+                    'entity_type'   => 'CONTRACT_MESSAGE',
+                    'entity_id'     => $msg->id,
+                    'category'      => 'attachment',
+                    'storage_path'  => $path,
                     'original_name' => $file->getClientOriginalName(),
-                    'file_path'     => $path,
-                    'file_size'     => $file->getSize(),
-                    'mime_type'     => $file->getMimeType(),
+                    'mime_type'     => $file->getMimeType() ?: 'application/octet-stream',
                 ]);
-                // FASE 11 — dual-write (não-fatal).
-                $this->dualWriteMessageAttachment('CONTRACT_MESSAGE', $msg->id, $file, $path);
             }
         }
 
@@ -81,7 +81,7 @@ class ContractMessageController extends Controller
         return response()->json($msg, 201);
     }
 
-    public function downloadAttachment(Request $request, ContractMessage $message, ContractMessageAttachment $attachment): mixed
+    public function downloadAttachment(Request $request, ContractMessage $message, Attachment $attachment): mixed
     {
         $user = $request->user();
 
@@ -93,7 +93,12 @@ class ContractMessageController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        return Storage::disk('public')->download($attachment->file_path, $attachment->original_name);
+        // FASE 11.7 (PR 7b) — valida vínculo polimórfico.
+        if ($attachment->entity_type !== 'CONTRACT_MESSAGE' || (int) $attachment->entity_id !== (int) $message->id) {
+            return response()->json(['message' => 'Anexo não encontrado'], 404);
+        }
+
+        return Storage::disk('public')->download($attachment->storage_path, $attachment->original_name);
     }
 
     public function mentionableUsers(Request $request, Contract $contract): JsonResponse

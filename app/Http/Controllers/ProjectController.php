@@ -8,7 +8,6 @@ use App\Models\ServiceType;
 use App\Models\ContractType;
 use App\Models\User;
 use App\Models\ProjectChangeLog;
-use App\Models\ProjectAttachment;
 use App\Models\ProjectMonthlyConsumption;
 use App\Services\ProjectCodeService;
 use Illuminate\Support\Facades\Auth;
@@ -30,7 +29,23 @@ use Illuminate\Validation\Rule;
 class ProjectController extends Controller
 {
     use \App\Http\Traits\ListCacheable;
-    use \App\Attachments\Concerns\DualWritesEntityAttachments;
+
+    /**
+     * FASE 11.7 (PR 7b) — Map type-legado-pt → category-en (canônico).
+     */
+    private static function mapAttachmentTypeToCategory(string $legacyType): string
+    {
+        return match (strtolower($legacyType)) {
+            'proposta'           => 'proposal',
+            'contrato'           => 'contract',
+            'logo'               => 'logo',
+            'aprovacao_cliente'  => 'client_approval',
+            'evidencia'          => 'evidence',
+            'imagem'             => 'image',
+            'outro'              => 'attachment',
+            default              => 'attachment',
+        };
+    }
 
     /**
      * Mês de corte do extrato mensal de banco de horas (formato YYYY-MM).
@@ -2997,18 +3012,37 @@ class ProjectController extends Controller
 
     public function listAttachments(Project $project): \Illuminate\Http\JsonResponse
     {
-        $attachments = $project->attachments()->with('contractAttachment')->get()->map(function ($a) {
-            return [
-                'id'            => $a->id,
-                'type'          => $a->type ?? $a->contractAttachment?->type,
-                'original_name' => $a->display_name,
-                'mime_type'     => $a->mime_type ?? $a->contractAttachment?->mime_type,
-                'size'          => $a->size ?? $a->contractAttachment?->size,
-                'source'        => $a->path ? 'project' : 'contract',
-                'created_at'    => $a->created_at,
-            ];
-        });
-        return response()->json($attachments);
+        // FASE 11.7 (PR 7b) — Junta anexos do PROJECT + anexos do CONTRACT
+        // vinculado (substitui a "shadow row" ProjectAttachment que apontava
+        // ContractAttachment.id). Source distingue origem.
+        $contractAtts = collect();
+        if ($project->contract_id) {
+            $contractAtts = \App\Models\Attachment::query()
+                ->forEntity('CONTRACT', $project->contract_id)
+                ->whereNull('deleted_at')
+                ->get();
+        }
+        $projectAtts = $project->attachments;
+
+        $merged = $projectAtts->map(fn ($a) => [
+            'id'            => $a->id,
+            'type'          => $a->type,
+            'original_name' => $a->original_name,
+            'mime_type'     => $a->mime_type,
+            'size'          => $a->size_bytes,
+            'source'        => 'project',
+            'created_at'    => $a->created_at,
+        ])->concat($contractAtts->map(fn ($a) => [
+            'id'            => $a->id,
+            'type'          => $a->type,
+            'original_name' => $a->original_name,
+            'mime_type'     => $a->mime_type,
+            'size'          => $a->size_bytes,
+            'source'        => 'contract',
+            'created_at'    => $a->created_at,
+        ]))->values();
+
+        return response()->json($merged);
     }
 
     public function uploadAttachment(Request $request, Project $project): \Illuminate\Http\JsonResponse
@@ -3021,39 +3055,40 @@ class ProjectController extends Controller
         $file = $request->file('file');
         $path = $file->store("projects/{$project->id}/attachments");
 
-        $attachment = ProjectAttachment::create([
-            'project_id'     => $project->id,
-            'uploaded_by_id' => auth()->id(),
-            'type'           => $request->input('type'),
-            'path'           => $path,
-            'original_name'  => $file->getClientOriginalName(),
-            'mime_type'      => $file->getMimeType(),
-            'size'           => $file->getSize(),
+        // FASE 11.7 (PR 7b) — persistência 100% na camada Attachment.
+        $attachment = app(\App\Attachments\AttachmentService::class)->registerExisting(auth()->user(), [
+            'entity_type'   => 'PROJECT',
+            'entity_id'     => $project->id,
+            'category'      => self::mapAttachmentTypeToCategory($request->input('type')),
+            'storage_path'  => $path,
+            'original_name' => $file->getClientOriginalName(),
+            'mime_type'     => $file->getMimeType() ?: 'application/octet-stream',
+            'metadata'      => ['legacy_type' => $request->input('type')],
         ]);
-
-        // FASE 11.2 — dual-write (não-fatal).
-        $this->dualWriteEntityAttachment('PROJECT', $project->id, $request->input('type'), $file, $path);
 
         return response()->json($attachment, 201);
     }
 
-    public function downloadAttachment(Project $project, ProjectAttachment $attachment): \Symfony\Component\HttpFoundation\StreamedResponse
+    public function downloadAttachment(Project $project, \App\Models\Attachment $attachment): \Symfony\Component\HttpFoundation\StreamedResponse
     {
-        abort_if($attachment->project_id !== $project->id, 404);
-        $path = $attachment->effective_path;
-        abort_unless($path && Storage::exists($path), 404, 'Arquivo não encontrado.');
-        return Storage::download($path, $attachment->display_name);
+        // FASE 11.7 (PR 7b) — aceita anexos PROJECT direto OU CONTRACT do contrato vinculado.
+        $isProjectOwn  = $attachment->entity_type === 'PROJECT'  && (int) $attachment->entity_id === (int) $project->id;
+        $isLinkedCont  = $attachment->entity_type === 'CONTRACT' && $project->contract_id !== null
+                         && (int) $attachment->entity_id === (int) $project->contract_id;
+        abort_unless($isProjectOwn || $isLinkedCont, 404);
+        abort_unless(Storage::exists($attachment->storage_path), 404, 'Arquivo não encontrado.');
+        return Storage::download($attachment->storage_path, $attachment->original_name);
     }
 
-    public function deleteAttachment(Project $project, ProjectAttachment $attachment): \Illuminate\Http\JsonResponse
+    public function deleteAttachment(Project $project, \App\Models\Attachment $attachment): \Illuminate\Http\JsonResponse
     {
-        abort_if($attachment->project_id !== $project->id, 404);
-        // FASE 11.2 — soft-delete attachment paralelo ANTES de apagar legado.
-        if ($attachment->path) {
-            $this->dualSoftDeleteEntityAttachmentByPath('PROJECT', $project->id, $attachment->path);
-            Storage::delete($attachment->path);
-        }
-        $attachment->delete();
+        // Só o próprio anexo do projeto pode ser dropado por aqui — anexo do
+        // contrato vinculado é gerenciado em /contracts/{id}/attachments.
+        abort_if(
+            $attachment->entity_type !== 'PROJECT' || (int) $attachment->entity_id !== (int) $project->id,
+            404
+        );
+        $attachment->delete(); // SoftDeletes
         return response()->json(null, 204);
     }
 

@@ -103,10 +103,19 @@ class Attachment extends Model
 
     /**
      * Visibilidade — pareado com permission_check do EntityRegistry pra autorização.
+     *
+     * Sem argumento: retorna só rows não-soft-deleted (filtro semântico de "vivo"
+     * usado pelos accessors de read). SoftDeletes já filtra deleted_at por default;
+     * deixar o scope chamável sem arg simplifica os callers (`->visible()->latest()`).
+     *
+     * Com argumento: filtra também por nível ('admin' | 'internal' | 'client').
      */
-    public function scopeVisible(Builder $query, string $visibility): Builder
+    public function scopeVisible(Builder $query, ?string $visibility = null): Builder
     {
-        return $query->where('visibility', $visibility);
+        if ($visibility !== null && $visibility !== '') {
+            $query->where('visibility', $visibility);
+        }
+        return $query;
     }
 
     // ── Helpers de exibição (puro display; lógica fica no service) ────────────
@@ -129,5 +138,61 @@ class Attachment extends Model
     public function isDeleted(): bool
     {
         return $this->deleted_at !== null;
+    }
+
+    // ── Compatibilidade FASE 11.7 (PR 7b) com payloads legados ────────────────
+    //
+    // Após o drop das 5 tabelas dedicadas, o FE de chat (ProjectMessages,
+    // ContractMessages, ContractRequestMessages) continua lendo `att.file_path`,
+    // `att.file_size`, `att.message_id`. Listagens de Project/Contract leem
+    // `att.path`, `att.size`, `att.type`. Os accessors abaixo mantêm os nomes
+    // legados publicáveis sem refator de FE (que vem em PR 8/futuro).
+
+    /** Alias legado: messages chats usam file_path. */
+    public function getFilePathAttribute(): ?string
+    {
+        return $this->storage_path;
+    }
+
+    /** Alias legado: messages chats usam file_size. */
+    public function getFileSizeAttribute(): ?int
+    {
+        return $this->size_bytes;
+    }
+
+    /** Alias legado: messages chats usam message_id (== entity_id pra entity_type=*_MESSAGE). */
+    public function getMessageIdAttribute(): int
+    {
+        return (int) $this->entity_id;
+    }
+
+    /** Alias legado: project_attachments/contract_attachments usam path. */
+    public function getPathAttribute(): ?string
+    {
+        return $this->storage_path;
+    }
+
+    /** Alias legado: project_attachments/contract_attachments usam size (int bytes). */
+    public function getSizeAttribute(): ?int
+    {
+        return $this->size_bytes;
+    }
+
+    /**
+     * Alias legado: project_attachments/contract_attachments usam type (pt).
+     * Inversa do map en→pt usado no register.
+     */
+    public function getTypeAttribute(): ?string
+    {
+        return match (strtolower((string) $this->category)) {
+            'proposal'        => 'proposta',
+            'contract'        => 'contrato',
+            'logo'            => 'logo',
+            'client_approval' => 'aprovacao_cliente',
+            'evidence'        => 'evidencia',
+            'image'           => 'imagem',
+            'attachment'      => 'outro',
+            default           => $this->category,
+        };
     }
 }

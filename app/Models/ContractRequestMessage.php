@@ -20,8 +20,13 @@ class ContractRequestMessage extends Model
         return $this->belongsTo(User::class, 'user_id');
     }
 
+    /**
+     * Anexos da mensagem — FASE 11.7 (PR 7b): polimórficos via tabela `attachments`.
+     */
     public function attachments(): HasMany
     {
-        return $this->hasMany(ContractRequestMessageAttachment::class, 'message_id');
+        return $this->hasMany(Attachment::class, 'entity_id')
+            ->where('attachments.entity_type', 'REQUEST_MESSAGE')
+            ->whereNull('attachments.deleted_at');
     }
 }

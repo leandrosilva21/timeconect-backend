@@ -4,14 +4,9 @@ namespace App\Console\Commands;
 
 use App\Attachments\AttachmentService;
 use App\Attachments\Backfill\BackfillModule;
-use App\Attachments\Backfill\ContractAttachmentBackfill;
-use App\Attachments\Backfill\ContractMessageAttachmentBackfill;
 use App\Attachments\Backfill\ExpenseReceiptBackfill;
 use App\Attachments\Backfill\FechamentoNotaBackfill;
 use App\Attachments\Backfill\HourContributionPropostaBackfill;
-use App\Attachments\Backfill\ProjectAttachmentBackfill;
-use App\Attachments\Backfill\ProjectMessageAttachmentBackfill;
-use App\Attachments\Backfill\RequestMessageAttachmentBackfill;
 use App\Attachments\Backfill\TimesheetAttachmentBackfill;
 use App\Attachments\Backfill\UserAvatarBackfill;
 use App\Models\User;
@@ -57,18 +52,17 @@ class AttachmentsBackfill extends Command
      * descoberta via `--list`. Cada classe implementa BackfillModule.
      */
     private const MODULES = [
+        // FASE 11.7 — todos os backfills inline com Schema::hasColumn guard
+        // (PR 7a) viram noop em prod após a migration; em dev/homolog ainda
+        // podem ter colunas vivas e fazer trabalho real.
         'user-avatar'                 => UserAvatarBackfill::class,
         'expense-receipt'             => ExpenseReceiptBackfill::class,
         'timesheet-attachment'        => TimesheetAttachmentBackfill::class,
         'hourcontribution-proposta'   => HourContributionPropostaBackfill::class,
-        'projectmessage-attachment'   => ProjectMessageAttachmentBackfill::class,
-        'contractmessage-attachment'  => ContractMessageAttachmentBackfill::class,
-        'requestmessage-attachment'   => RequestMessageAttachmentBackfill::class,
-        'project-attachment'          => ProjectAttachmentBackfill::class,
-        'contract-attachment'         => ContractAttachmentBackfill::class,
         'fechamento-nota'             => FechamentoNotaBackfill::class,
-        // STAGE_ACTIVITY_EVENT pendente: 3 controllers de stage ainda não estão em prod
-        // (feature cronograma em desenvolvimento). Adicionar quando chegarem.
+        // PR 7b removeu 5 backfills (project/contract/3 messages) — as tabelas
+        // dedicadas foram dropadas.
+        // STAGE_ACTIVITY_EVENT pendente: 3 controllers de stage ainda não estão em prod.
     ];
 
     public function handle(AttachmentService $service): int

@@ -639,15 +639,14 @@ class ApprovalController extends Controller
             }
         }
 
-        // Se não é admin, filtrar apenas timesheets dos projetos que pode aprovar
-        if (!$user->isAdmin()) {
-            $isSustentacao = $user->isCoordenador() && $user->coordinator_type === 'sustentacao';
-            $query->whereHas('project', function ($q) use ($user, $isSustentacao) {
-                $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id));
-                if ($isSustentacao) {
-                    $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'));
-                }
-            });
+        // Coordenador de SUSTENTAÇÃO: regra de perfil — só vê fila de sustentacao/cloud
+        // (não é flexível, é definição do perfil). Para coord-projetos (default) NÃO
+        // forçamos filtro: o FE controla o escopo via chip "Meus projetos / Todos"
+        // mandando `coordinator_id` quando o coord quer ver só os dele — mesmo padrão
+        // que Apontamentos/Despesas (PRs #36 / #33). Middleware
+        // `permission.or.admin:timesheets.approve` continua bloqueando perfis sem acesso.
+        if (!$user->isAdmin() && $user->isCoordenador() && $user->coordinator_type === 'sustentacao') {
+            $query->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
         }
 
         // Aplicar filtros se fornecidos
@@ -684,15 +683,10 @@ class ApprovalController extends Controller
             }
         }
 
-        // Se não é admin, filtrar apenas despesas dos projetos que pode aprovar
-        if (!$user->isAdmin()) {
-            $isSustentacao = $user->isCoordenador() && $user->coordinator_type === 'sustentacao';
-            $query->whereHas('project', function ($q) use ($user, $isSustentacao) {
-                $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id));
-                if ($isSustentacao) {
-                    $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'));
-                }
-            });
+        // Coordenador de SUSTENTAÇÃO: ver comentário em buildTimesheetQuery (mesmo padrão).
+        // Coord-projetos sem filtro forçado; FE controla via chip "Meus projetos / Todos".
+        if (!$user->isAdmin() && $user->isCoordenador() && $user->coordinator_type === 'sustentacao') {
+            $query->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
         }
 
         // Aplicar filtros se fornecidos

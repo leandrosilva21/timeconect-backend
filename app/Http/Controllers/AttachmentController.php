@@ -144,8 +144,16 @@ class AttachmentController extends Controller
 
             // Localiza o attachment pelo storage_path (canonical).
             $att = Attachment::where('storage_path', $key)->whereNull('deleted_at')->firstOrFail();
-            // Re-checa permissão mesmo com URL assinada: defesa em profundidade.
-            $stream = $this->service->downloadStream($att, $request->user(), $request);
+            // URL assinada é stateless (sem auth Sanctum no middleware 'signed');
+            // a autorização já está embutida no signature ttl. Como actor pra
+            // o service usamos o uploader original — mantém audit trail coerente.
+            $actor = $request->user() ?? \App\Models\User::find($att->uploaded_by);
+            if (!$actor) {
+                // Defesa em profundidade: se o uploader não existe mais (user deletado),
+                // recusamos o download — sem actor não dá pra logar/auditar.
+                abort(404, 'attachment órfão de ator');
+            }
+            $stream = $this->service->downloadStream($att, $actor, $request);
             $stream->headers->set('Content-Disposition', sprintf(
                 'inline; filename="%s"',
                 addslashes($att->original_name),

@@ -135,9 +135,14 @@ class Contract extends Model
         return $this->hasMany(ContractContact::class);
     }
 
+    /**
+     * Anexos do contrato — FASE 11.7 (PR 7b): polimórficos via tabela `attachments`.
+     */
     public function attachments(): HasMany
     {
-        return $this->hasMany(ContractAttachment::class);
+        return $this->hasMany(\App\Models\Attachment::class, 'entity_id')
+            ->where('attachments.entity_type', 'CONTRACT')
+            ->whereNull('attachments.deleted_at');
     }
 
     public function kanbanLogs(): HasMany

@@ -18,7 +18,6 @@ class TimesheetObserver
     private const IGNORED_FIELDS = [
         'created_at',
         'updated_at',
-        'attachment_path',
     ];
 
     /**

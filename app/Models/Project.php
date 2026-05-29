@@ -375,9 +375,15 @@ class Project extends Model
         return $this->hasMany(ProjectContact::class);
     }
 
+    /**
+     * Anexos do projeto — FASE 11.7 (PR 7b): polimórficos via tabela `attachments`.
+     * O hasMany com WHERE manual cobre a polimorfia (entity_type='PROJECT').
+     */
     public function attachments(): HasMany
     {
-        return $this->hasMany(ProjectAttachment::class);
+        return $this->hasMany(Attachment::class, 'entity_id')
+            ->where('attachments.entity_type', 'PROJECT')
+            ->whereNull('attachments.deleted_at');
     }
 
     /**

@@ -18,6 +18,10 @@ class User extends Authenticatable
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable, HasApiTokens;
+    use \App\Attachments\Concerns\HasGlobalAttachments;
+
+    // FASE 11 — chave do registry global de anexos.
+    public static function attachmentEntityType(): string { return 'USER'; }
 
     /**
      * Campos que controlam autorização e identidade — fora de $fillable para evitar
@@ -57,7 +61,6 @@ class User extends Authenticatable
         'theme_preference',
         'has_temporary_password',
         'temporary_password_expires_at',
-        'profile_photo',
         'customer_id',
         'partner_id',
         // Type/permission flags
@@ -352,31 +355,32 @@ class User extends Authenticatable
     }
 
     /**
-     * Obtém a URL da foto de perfil
+     * Obtém a URL da foto de perfil — 100% via nova camada (FASE 11.7).
      */
     public function getProfilePhotoUrlAttribute(): ?string
     {
-        if (!$this->profile_photo) {
-            return null;
-        }
-
-        return asset('storage/' . $this->profile_photo);
+        return $this->attachmentUrl('avatar');
     }
 
+
     /**
-     * Remove a foto de perfil
+     * Remove a foto de perfil — soft-delete na camada Attachment.
+     * O arquivo físico não é removido; só a referência é invalidada
+     * (deleted_at na tabela attachments). Restore possível.
      */
     public function removeProfilePhoto(): void
     {
-        if ($this->profile_photo) {
-            // Remove o arquivo físico
-            $path = storage_path('app/public/' . $this->profile_photo);
-            if (file_exists($path)) {
-                unlink($path);
-            }
-
-            // Remove a referência do banco
-            $this->update(['profile_photo' => null]);
+        try {
+            \App\Models\Attachment::query()
+                ->forEntity('USER', $this->id)
+                ->ofCategory('avatar')
+                ->whereNull('deleted_at')
+                ->get()
+                ->each(fn ($att) => $att->delete());
+        } catch (\Throwable $e) {
+            \Log::warning('USER.avatar soft-delete falhou', [
+                'user_id' => $this->id, 'error' => $e->getMessage(),
+            ]);
         }
     }
 

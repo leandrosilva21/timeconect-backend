@@ -1062,7 +1062,9 @@ class SustentacaoController extends Controller
                 'requester'      => $this->parseRequesterName($t->ticket_solicitante),
                 'status'         => $t->status,
                 'status_display' => $t->status_display,
-                'attachment_path'=> $t->attachment_path,
+                // FASE 11.7 — coluna inline dropada; payload mantém a chave
+                // 'attachment_path' como URL pra não quebrar FE em vôo.
+                'attachment_path'=> $t->attachment_url,
                 'user'           => $t->user ? ['id' => $t->user->id, 'name' => $t->user->name] : null,
                 'customer'       => $t->project && $t->project->customer ? $t->project->customer->name : null,
                 'project'        => $t->project ? [

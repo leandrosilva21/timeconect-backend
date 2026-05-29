@@ -1047,15 +1047,20 @@ class TimesheetController extends Controller
                     ? (float) $request->input('consultant_extra_pct') : null;
             }
 
+            $newAttachmentInfo = null;
             if ($request->hasFile('attachment')) {
                 $file = $request->file('attachment');
                 $filename = time() . '_' . $file->getClientOriginalName();
                 $path = $file->storeAs('timesheets/' . date('Y/m'), $filename, 'public');
-                $timesheet->attachment_path = $path;
-                $timesheet->attachment_original_name = $file->getClientOriginalName();
+                $newAttachmentInfo = ['path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType()];
             }
 
             $timesheet->save();
+
+            // FASE 11.7 — Attachment persiste 100% na camada Attachment.
+            if ($newAttachmentInfo !== null) {
+                $this->registerTimesheetAttachment($timesheet, $newAttachmentInfo);
+            }
 
             // Persiste "última etapa usada" pra pré-selecionar no próximo apontamento.
             // Só atualiza quando stage_id ficou definido (auto-inferido ou veio do request).
@@ -1654,15 +1659,14 @@ class TimesheetController extends Controller
                 }
             }
 
+            $newAttachmentInfoUpd = null;
             if ($request->hasFile('attachment')) {
-                if ($timesheet->attachment_path) {
-                    \Storage::disk('public')->delete($timesheet->attachment_path);
-                }
+                // FASE 11.7 — soft-delete dos attachment(s) atuais (fonte única).
+                $this->softDeleteTimesheetAttachments($timesheet);
                 $file = $request->file('attachment');
                 $filename = time() . '_' . $file->getClientOriginalName();
                 $path = $file->storeAs('timesheets/' . date('Y/m'), $filename, 'public');
-                $timesheet->attachment_path = $path;
-                $timesheet->attachment_original_name = $file->getClientOriginalName();
+                $newAttachmentInfoUpd = ['path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType()];
             }
 
             // Bloquear edição que criaria sobreposição de horários (mesmo cliente)
@@ -1705,6 +1709,11 @@ class TimesheetController extends Controller
             }
 
             $timesheet->save();
+
+            // FASE 11.7 — Attachment persiste 100% na camada Attachment.
+            if (isset($newAttachmentInfoUpd) && $newAttachmentInfoUpd !== null) {
+                $this->registerTimesheetAttachment($timesheet->fresh(), $newAttachmentInfoUpd);
+            }
 
             // Re-detectar conflitos após a edição (mesmo cliente, com horários definidos)
             if ($timesheet->start_time && $timesheet->end_time) {
@@ -1835,12 +1844,13 @@ class TimesheetController extends Controller
         }
 
         // Captura user_id/date ANTES do delete pra resolver conflitos órfãos depois.
-        // Se o apontamento deletado estava em conflito com outro(s), o(s) outro(s)
-        // devem voltar a 'pending' agora que o conflito sumiu.
         $tsUserId = $timesheet->user_id;
         $tsDate   = $timesheet->date instanceof \Carbon\Carbon
             ? $timesheet->date->format('Y-m-d')
             : (string) $timesheet->date;
+
+        // FASE 11.7 — soft-delete attachment(s) ANTES do timesheet sumir.
+        $this->softDeleteTimesheetAttachments($timesheet);
 
         $timesheet->delete();
         $this->resolveStaleConflicts($tsUserId, $tsDate);
@@ -2851,30 +2861,36 @@ class TimesheetController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        if (!$timesheet->attachment_path) {
+        // FASE 11.7 — Attachment vem 100% da camada Attachment.
+        $att = \App\Models\Attachment::query()
+            ->forEntity('TIMESHEET', $timesheet->id)
+            ->ofCategory('attachment')
+            ->visible()
+            ->latest('id')
+            ->first();
+
+        if (!$att) {
             return response()->json(['message' => 'Anexo não encontrado'], 404);
         }
 
         try {
-            $disk = \Storage::disk('public');
+            $service = app(\App\Attachments\AttachmentService::class);
+            $stream  = $service->downloadStream($user, $att->id);
 
-            if (!$disk->exists($timesheet->attachment_path)) {
-                return response()->json(['message' => 'Arquivo não encontrado no servidor'], 404);
-            }
-
-            $mime = $disk->mimeType($timesheet->attachment_path) ?: 'application/octet-stream';
-            $name = $timesheet->attachment_original_name ?? basename($timesheet->attachment_path);
-
-            return response($disk->get($timesheet->attachment_path), 200, [
-                'Content-Type'        => $mime,
-                'Content-Disposition' => 'inline; filename="' . addslashes($name) . '"',
+            return response()->stream(function () use ($stream) {
+                while (!feof($stream)) { echo fread($stream, 8192); }
+                fclose($stream);
+            }, 200, [
+                'Content-Type'        => $att->mime_type ?: 'application/octet-stream',
+                'Content-Disposition' => 'inline; filename="' . addslashes($att->original_name ?: basename($att->storage_path)) . '"',
                 'Cache-Control'       => 'no-cache',
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             \Log::error('Erro ao servir anexo de apontamento', [
-                'timesheet_id'    => $id,
-                'attachment_path' => $timesheet->attachment_path,
-                'error'           => $e->getMessage(),
+                'timesheet_id' => $id,
+                'attachment_id'=> $att->id,
+                'storage_path' => $att->storage_path,
+                'error'        => $e->getMessage(),
             ]);
             return response()->json(['message' => 'Erro ao acessar o anexo.'], 503);
         }
@@ -2975,5 +2991,41 @@ class TimesheetController extends Controller
             'errors'  => $errors,
             'details' => $details,
         ]);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // FASE 11.7 — Helpers da camada Attachment (fonte única).
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private function registerTimesheetAttachment(Timesheet $timesheet, array $info): void
+    {
+        $actor = Auth::user() ?? \App\Models\User::find($timesheet->user_id);
+        if (!$actor) {
+            throw new \RuntimeException("Não há ator pra registrar attachment do timesheet {$timesheet->id}");
+        }
+        app(\App\Attachments\AttachmentService::class)->registerExisting($actor, [
+            'entity_type'   => 'TIMESHEET',
+            'entity_id'     => $timesheet->id,
+            'category'      => 'attachment',
+            'storage_path'  => $info['path'],
+            'original_name' => $info['original'] ?? basename($info['path']),
+            'mime_type'     => $info['mime'] ?? 'application/octet-stream',
+        ]);
+    }
+
+    private function softDeleteTimesheetAttachments(Timesheet $timesheet): void
+    {
+        try {
+            \App\Models\Attachment::query()
+                ->forEntity('TIMESHEET', $timesheet->id)
+                ->ofCategory('attachment')
+                ->whereNull('deleted_at')
+                ->get()
+                ->each(fn ($att) => $att->delete());
+        } catch (\Throwable $e) {
+            \Log::warning('TIMESHEET.attachment soft-delete falhou', [
+                'timesheet_id' => $timesheet->id, 'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

@@ -2,10 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Attachment;
 use App\Models\CardEnvolvido;
 use App\Models\Project;
 use App\Models\ProjectMessage;
-use App\Models\ProjectMessageAttachment;
 use App\Models\ProjectMessageMention;
 use App\Models\ProjectMessageRead;
 use App\Models\User;
@@ -20,6 +20,7 @@ use Illuminate\Support\Str;
 
 class ProjectMessageController extends Controller
 {
+
     public function index(Request $request, Project $project): JsonResponse
     {
         $user = $request->user();
@@ -96,16 +97,18 @@ class ProjectMessageController extends Controller
             ]);
         }
 
-        // Upload de anexos
+        // FASE 11.7 (PR 7b) — Upload de anexos 100% via camada Attachment.
         if ($request->hasFile('files')) {
+            $service = app(\App\Attachments\AttachmentService::class);
             foreach ($request->file('files') as $file) {
                 $path = $file->store('message-attachments', 'public');
-                ProjectMessageAttachment::create([
-                    'message_id'    => $msg->id,
+                $service->registerExisting($user, [
+                    'entity_type'   => 'PROJECT_MESSAGE',
+                    'entity_id'     => $msg->id,
+                    'category'      => 'attachment',
+                    'storage_path'  => $path,
                     'original_name' => $file->getClientOriginalName(),
-                    'file_path'     => $path,
-                    'file_size'     => $file->getSize(),
-                    'mime_type'     => $file->getMimeType(),
+                    'mime_type'     => $file->getMimeType() ?: 'application/octet-stream',
                 ]);
             }
         }
@@ -159,7 +162,7 @@ class ProjectMessageController extends Controller
         }
     }
 
-    public function downloadAttachment(Request $request, ProjectMessage $message, ProjectMessageAttachment $attachment): mixed
+    public function downloadAttachment(Request $request, ProjectMessage $message, Attachment $attachment): mixed
     {
         $user = $request->user();
 
@@ -171,7 +174,12 @@ class ProjectMessageController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        return Storage::disk('public')->download($attachment->file_path, $attachment->original_name);
+        // FASE 11.7 (PR 7b) — valida vínculo polimórfico.
+        if ($attachment->entity_type !== 'PROJECT_MESSAGE' || (int) $attachment->entity_id !== (int) $message->id) {
+            return response()->json(['message' => 'Anexo não encontrado'], 404);
+        }
+
+        return Storage::disk('public')->download($attachment->storage_path, $attachment->original_name);
     }
 
     public function markRead(Request $request, Project $project): JsonResponse

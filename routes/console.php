@@ -121,3 +121,21 @@ Schedule::job(new CleanupContractEventsJob)
 
 // (Removido) Fase 2 — leitura de respostas via Graph. Modelo simplificado: a resposta
 // do consultor volta pro Reply-To (quem enviou) e é tratada no Outlook, sem leitura no app.
+
+// Alerta de reajustes vencidos ao Financeiro — roda todo dia às 08:00, mas o comando
+// só envia de fato no 1º DIA ÚTIL do mês (pula fim de semana). Não aplica reajuste.
+Schedule::command('reajustes:alerta-vencidos')
+  ->dailyAt('08:00')
+  ->name('alerta-reajustes-vencidos')
+  ->description('Avisa o Financeiro sobre contratos com reajuste vencido (1º dia útil do mês)')
+  ->withoutOverlapping();
+
+// FASE 11.1 — Integrity sweep diário dos anexos (verifica entidade-dona, arquivo
+// físico, checksum e provider). Default incremental (últimos 7 dias) pra não
+// pesar; varredura completa pode ser disparada manualmente com --all.
+Schedule::command('attachments:integrity-check')
+  ->dailyAt('03:00')
+  ->name('attachments-integrity-check')
+  ->description('FASE 11: verifica integridade dos anexos (entidade-dona, arquivo, checksum)')
+  ->withoutOverlapping()
+  ->runInBackground();

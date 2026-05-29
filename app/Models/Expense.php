@@ -13,6 +13,10 @@ use App\Models\PaymentMethod;
 class Expense extends Model
 {
     use HasFactory;
+    use \App\Attachments\Concerns\HasGlobalAttachments;
+
+    // FASE 11 — chave do registry global de anexos.
+    public static function attachmentEntityType(): string { return 'EXPENSE'; }
 
     // Status constants
     const STATUS_PENDING = 'pending';
@@ -41,8 +45,6 @@ class Expense extends Model
         'amount',
         'expense_type',
         'payment_method',
-        'receipt_path',
-        'receipt_original_name',
         'status',
         'rejection_reason',
         'charge_client',
@@ -169,17 +171,13 @@ class Expense extends Model
     }
 
     /**
-     * Accessor para URL completa do comprovante
+     * Accessor para URL completa do comprovante — 100% via nova camada (FASE 11.7).
      */
     public function getReceiptUrlAttribute(): ?string
     {
-        if (!$this->receipt_path) {
-            return null;
-        }
-
-        // Serve via endpoint da API (não depende de symlink do storage)
-        $backendUrl = rtrim(config('app.url'), '/');
-        return $backendUrl . '/api/v1/expenses/' . $this->id . '/receipt';
+        $newUrl = $this->attachmentUrl('receipt');
+        if ($newUrl === null) return null;
+        return rtrim(config('app.url'), '/') . $newUrl;
     }
 
     /**

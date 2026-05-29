@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\Contract;
-use App\Models\ContractAttachment;
 use App\Models\ContractContact;
 use App\Models\ContractEvent;
 use App\Models\ContractFlowSnapshot;
@@ -14,7 +13,6 @@ use App\Models\ProjectKanbanLog;
 use App\Models\ContractType;
 use App\Models\Customer;
 use App\Models\Project;
-use App\Models\ProjectAttachment;
 use App\Models\ProjectContact;
 use App\Models\ServiceType;
 use App\Models\User;
@@ -30,6 +28,24 @@ use Illuminate\Support\Facades\Storage;
 
 class ContractController extends Controller
 {
+    /**
+     * FASE 11.7 (PR 7b) — Map type-legado-pt → category-en (canônico). Vivia na
+     * trait DualWritesEntityAttachments que foi removida junto com o legado.
+     */
+    private static function mapAttachmentTypeToCategory(string $legacyType): string
+    {
+        return match (strtolower($legacyType)) {
+            'proposta'           => 'proposal',
+            'contrato'           => 'contract',
+            'logo'               => 'logo',
+            'aprovacao_cliente'  => 'client_approval',
+            'evidencia'          => 'evidence',
+            'imagem'             => 'image',
+            'outro'              => 'attachment',
+            default              => 'attachment',
+        };
+    }
+
     public function index(Request $request): JsonResponse
     {
         $query = Contract::with([
@@ -279,8 +295,10 @@ class ContractController extends Controller
             }
         }
 
+        // FASE 11.7 (PR 7b) — soft-delete dos anexos via camada Attachment.
+        // Arquivo físico mantido (SoftDeletes na row em `attachments`); restore possível.
         foreach ($contract->attachments as $att) {
-            Storage::delete($att->path);
+            $att->delete();
         }
 
         $contract->delete();
@@ -395,13 +413,9 @@ class ContractController extends Controller
                 ]);
             }
 
-            // Referenciar anexos (sem duplicar arquivo)
-            foreach ($contract->attachments as $a) {
-                ProjectAttachment::create([
-                    'project_id'             => $project->id,
-                    'contract_attachment_id' => $a->id,
-                ]);
-            }
+            // FASE 11.7 (PR 7b) — anexos do contrato aparecem no projeto via
+            // ProjectController::listAttachments (que une PROJECT + CONTRACT
+            // do contract_id vinculado). Não precisa mais row de "shadow".
 
             // Vincular coordenadores: usa os selecionados no modal; fallback para o arquiteto do contrato
             if (empty($coordinatorIds) && $contract->architect_id) {
@@ -480,32 +494,40 @@ class ContractController extends Controller
         $file = $request->file('file');
         $path = $file->store("contracts/{$contract->id}/attachments");
 
-        $attachment = ContractAttachment::create([
-            'contract_id'    => $contract->id,
-            'type'           => $request->input('type'),
-            'path'           => $path,
-            'original_name'  => $file->getClientOriginalName(),
-            'mime_type'      => $file->getMimeType(),
-            'size'           => $file->getSize(),
-            'uploaded_by_id' => auth()->id(),
+        // FASE 11.7 (PR 7b) — persistência 100% na camada Attachment.
+        $attachment = app(\App\Attachments\AttachmentService::class)->registerExisting(auth()->user(), [
+            'entity_type'   => 'CONTRACT',
+            'entity_id'     => $contract->id,
+            'category'      => self::mapAttachmentTypeToCategory($request->input('type')),
+            'storage_path'  => $path,
+            'original_name' => $file->getClientOriginalName(),
+            'mime_type'     => $file->getMimeType() ?: 'application/octet-stream',
+            'metadata'      => ['legacy_type' => $request->input('type')],
         ]);
 
         return response()->json($attachment, 201);
     }
 
-    public function downloadAttachment(Contract $contract, ContractAttachment $attachment): \Symfony\Component\HttpFoundation\StreamedResponse
+    public function downloadAttachment(Contract $contract, \App\Models\Attachment $attachment): \Symfony\Component\HttpFoundation\StreamedResponse
     {
-        abort_if($attachment->contract_id !== $contract->id, 404);
-        abort_unless(Storage::exists($attachment->path), 404, 'Arquivo não encontrado.');
+        // FASE 11.7 (PR 7b) — valida vínculo polimórfico.
+        abort_if(
+            $attachment->entity_type !== 'CONTRACT' || (int) $attachment->entity_id !== (int) $contract->id,
+            404
+        );
+        abort_unless(Storage::exists($attachment->storage_path), 404, 'Arquivo não encontrado.');
 
-        return Storage::download($attachment->path, $attachment->original_name);
+        return Storage::download($attachment->storage_path, $attachment->original_name);
     }
 
-    public function deleteAttachment(Contract $contract, ContractAttachment $attachment): JsonResponse
+    public function deleteAttachment(Contract $contract, \App\Models\Attachment $attachment): JsonResponse
     {
-        abort_if($attachment->contract_id !== $contract->id, 404);
+        abort_if(
+            $attachment->entity_type !== 'CONTRACT' || (int) $attachment->entity_id !== (int) $contract->id,
+            404
+        );
 
-        Storage::delete($attachment->path);
+        // FASE 11.7 (PR 7b) — SoftDeletes; arquivo físico preservado pra recovery.
         $attachment->delete();
 
         return response()->json(null, 204);
@@ -789,9 +811,19 @@ class ContractController extends Controller
                 $aporteQuery->whereHas('project', fn($q) => $q->where('customer_id', $user->customer_id));
             }
 
-            $aporteCards = $aporteQuery->get()->map(function ($a) {
+            // FASE 11.7 — proposta agora vive na camada Attachment (HOUR_CONTRIBUTION.proposal).
+            $aporteIds = $aporteQuery->pluck('id')->all();
+            $propostaByHc = empty($aporteIds) ? collect() : \App\Models\Attachment::query()
+                ->where('entity_type', 'HOUR_CONTRIBUTION')
+                ->whereIn('entity_id', $aporteIds)
+                ->where('category', 'proposal')
+                ->whereNull('deleted_at')
+                ->get(['entity_id', 'original_name'])
+                ->keyBy('entity_id');
+            $aporteCards = $aporteQuery->get()->map(function ($a) use ($propostaByHc) {
                 $horas = (float) $a->contributed_hours;
                 $valor = (float) $a->hourly_rate;
+                $prop = $propostaByHc->get($a->id);
                 return [
                     'id'              => $a->id,
                     'kind'            => 'aporte',
@@ -806,8 +838,8 @@ class ContractController extends Controller
                     'total'           => round($horas * $valor, 2),
                     'motivo'          => $a->motivo,
                     'description'     => $a->description,
-                    'has_proposta'           => !empty($a->proposta_path),
-                    'proposta_original_name' => $a->proposta_original_name,
+                    'has_proposta'           => $prop !== null,
+                    'proposta_original_name' => $prop?->original_name,
                     'kanban_status'   => $a->kanban_status ?? 'aporte',
                     'contributed_by'  => $a->contributedBy?->name,
                     'contributed_at'  => $a->contributed_at?->toISOString(),
@@ -1310,9 +1342,8 @@ class ContractController extends Controller
                     foreach ($contract->contacts as $c) {
                         \App\Models\ProjectContact::create(['project_id' => $project->id, 'contract_contact_id' => $c->id, 'name' => $c->name, 'cargo' => $c->cargo, 'email' => $c->email, 'phone' => $c->phone]);
                     }
-                    foreach ($contract->attachments as $a) {
-                        \App\Models\ProjectAttachment::create(['project_id' => $project->id, 'contract_attachment_id' => $a->id]);
-                    }
+                    // FASE 11.7 (PR 7b) — sem shadow ProjectAttachment;
+                    // listAttachments do projeto une os do CONTRACT vinculado.
                     if ($coordinatorId) {
                         $project->coordinators()->attach($coordinatorId);
                     }
@@ -1581,9 +1612,8 @@ class ContractController extends Controller
         foreach ($contract->contacts as $c) {
             ProjectContact::create(['project_id' => $project->id, 'contract_contact_id' => $c->id, 'name' => $c->name, 'cargo' => $c->cargo, 'email' => $c->email, 'phone' => $c->phone]);
         }
-        foreach ($contract->attachments as $a) {
-            ProjectAttachment::create(['project_id' => $project->id, 'contract_attachment_id' => $a->id]);
-        }
+        // FASE 11.7 (PR 7b) — sem shadow ProjectAttachment;
+        // listAttachments do projeto une os do CONTRACT vinculado.
 
         if ($coordinatorId) {
             $project->coordinators()->attach($coordinatorId);

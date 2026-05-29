@@ -1127,5 +1127,27 @@ Route::prefix('v1')->group(function () {
         Route::post('/projects/{id}/allocate',        [GapController::class, 'allocate'])->name('projects.allocate');
         Route::get('/projects/{id}/team-recommendation', [GapController::class, 'teamRecommendation'])->name('projects.team-recommendation');
         Route::post('/projects/{id}/allocate-team',    [GapController::class, 'allocateTeam'])->name('projects.allocate-team');
+
+        // ────────────────────────────────────────────────────────────────────
+        // 📎 ATTACHMENTS (FASE 11.1 — camada global polimórfica)
+        // Rotas REST genéricas. Permissão delegada ao service via registry.
+        // ────────────────────────────────────────────────────────────────────
+        Route::get('/attachments',                   [\App\Http\Controllers\AttachmentController::class, 'index'])->name('attachments.index');
+        Route::post('/attachments',                  [\App\Http\Controllers\AttachmentController::class, 'store'])->name('attachments.store');
+        // FASE 11.5 — Observability (admin-only, validado no controller).
+        Route::get('/attachments/stats',             [\App\Http\Controllers\AttachmentsAnalyticsController::class, 'stats'])->name('attachments.stats');
+        Route::get('/attachments/events',            [\App\Http\Controllers\AttachmentsAnalyticsController::class, 'events'])->name('attachments.events');
+        Route::get('/attachments/health',            [\App\Http\Controllers\AttachmentsAnalyticsController::class, 'health'])->name('attachments.health');
+        Route::get('/attachments/{id}',              [\App\Http\Controllers\AttachmentController::class, 'show'])->name('attachments.show');
+        Route::get('/attachments/{id}/download',     [\App\Http\Controllers\AttachmentController::class, 'download'])->name('attachments.download');
+        Route::get('/attachments/{id}/url',          [\App\Http\Controllers\AttachmentController::class, 'signedUrl'])->name('attachments.signed-url');
+        Route::delete('/attachments/{id}',           [\App\Http\Controllers\AttachmentController::class, 'destroy'])->name('attachments.destroy');
+        Route::post('/attachments/{id}/restore',     [\App\Http\Controllers\AttachmentController::class, 'restore'])->name('attachments.restore');
     });
+
+    // Signed URL externa (sem auth:sanctum; o middleware 'signed' garante
+    // autenticidade do link; controller revalida permissão no service).
+    Route::middleware('signed')->get('/attachments-signed-download',
+        [\App\Http\Controllers\AttachmentController::class, 'signedDownload'])
+        ->name('attachments.signed-download');
 });

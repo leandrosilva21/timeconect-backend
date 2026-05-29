@@ -51,14 +51,35 @@ class FechamentoClienteController extends Controller
         // Além disso, o contrato on_demand precisa ser PAI (parent_project_id null);
         // projeto FILHO on_demand (sub-contrato de um pai de outro tipo) NÃO habilita
         // o cliente na rotina de fechamento On Demand.
+        $expFrom = $yearMonth ? "{$yearMonth}-01" : null;
+        $expTo   = $yearMonth ? Carbon::parse("{$yearMonth}-01")->endOfMonth()->toDateString() : null;
+
         $customers = Customer::whereRaw('"active" = true')
-            ->whereHas('projects', function ($q) {
-                $q->where(function ($qq) {
-                        $qq->where('is_investimento_comercial', false)
-                           ->orWhereNull('is_investimento_comercial');
-                    })
-                  ->whereNull('parent_project_id')
-                  ->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand'));
+            ->where(function ($outer) use ($yearMonth, $expFrom, $expTo) {
+                // (1) clientes com projeto On Demand PAI (regra original).
+                $outer->whereHas('projects', function ($q) {
+                    $q->where(function ($qq) {
+                            $qq->where('is_investimento_comercial', false)
+                               ->orWhereNull('is_investimento_comercial');
+                        })
+                      ->whereNull('parent_project_id')
+                      ->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand'));
+                });
+                // (2) OU clientes com DESPESA A COBRAR no mês (qualquer tipo de contrato) —
+                // antes só apareciam clientes On Demand, escondendo quem tem só despesa.
+                if ($yearMonth) {
+                    $outer->orWhereHas('projects', function ($q) use ($expFrom, $expTo) {
+                        $q->where(function ($qq) {
+                                $qq->where('is_investimento_comercial', false)
+                                   ->orWhereNull('is_investimento_comercial');
+                            })
+                          ->whereHas('expenses', function ($qe) use ($expFrom, $expTo) {
+                              $qe->where('charge_client', true)
+                                 ->where('status', Expense::STATUS_APPROVED)
+                                 ->whereBetween('expense_date', [$expFrom, $expTo]);
+                          });
+                    });
+                }
             })
             ->orderBy('name')
             ->get(['id', 'name', 'company_name']);
@@ -112,7 +133,7 @@ class FechamentoClienteController extends Controller
         // ele aqui escondia despesas legítimas do fechamento. Mantém só status válidos.
         $byCustomer = Expense::query()
             ->where('charge_client', true)
-            ->whereNotIn('status', [Expense::STATUS_REJECTED, Expense::STATUS_ADJUSTMENT_REQUESTED])
+            ->where('status', Expense::STATUS_APPROVED)
             ->whereBetween('expense_date', [$from, $to])
             ->whereHas('project', fn ($q) => $q->where('is_investimento_comercial', false)->whereNotNull('customer_id'))
             ->with('project:id,customer_id')
@@ -713,21 +734,38 @@ class FechamentoClienteController extends Controller
         return $rows;
     }
 
+    /** Acréscimo fixo por despesa na visão do CLIENTE (só Auster). */
+    private const AUSTER_EXPENSE_SURCHARGE = 30.0;
+
+    /** R$30 por despesa quando o cliente é Auster; 0 para os demais. */
+    private function austerExpenseSurcharge(int $customerId): float
+    {
+        $name = \App\Models\Customer::where('id', $customerId)->value('name');
+        return ($name !== null && stripos($name, 'auster') !== false)
+            ? self::AUSTER_EXPENSE_SURCHARGE
+            : 0.0;
+    }
+
     private function despesasData(int $customerId, string $fromMonth, string $toMonth): array
     {
         $from = "{$fromMonth}-01";
         $to   = Carbon::parse("{$toMonth}-01")->endOfMonth()->toDateString();
 
-        // Fechamento do cliente lista todas as despesas a cobrar (charge_client) cujo status
-        // é diferente de rejected/adjustment_requested. is_paid (reembolso ao consultor) é
-        // controle interno e não deve filtrar o que o cliente vê.
+        // Particularidade Auster: toda despesa cobrada leva +R$30 SÓ na visão do cliente
+        // (fechamento enviado + perfil). O consultor recebe o valor original (amount), que
+        // fica intacto no banco e na visão interna. Markup puramente de faturamento.
+        $surcharge = $this->austerExpenseSurcharge($customerId);
+
+        // Fechamento do cliente lista as despesas a cobrar (charge_client) APROVADAS.
+        // Pendente/ajuste/rejeitado ficam de fora (a despesa só entra no fechamento depois
+        // de aprovada). is_paid (reembolso ao consultor) é controle interno e não filtra aqui.
         return Expense::with([
             'user:id,name',
             'project:id,name,code',
             'category:id,name',
         ])
             ->where('charge_client', true)
-            ->whereNotIn('status', [Expense::STATUS_REJECTED, Expense::STATUS_ADJUSTMENT_REQUESTED])
+            ->where('status', Expense::STATUS_APPROVED)
             ->whereBetween('expense_date', [$from, $to])
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)->where('is_investimento_comercial', false))
             ->get()
@@ -738,7 +776,7 @@ class FechamentoClienteController extends Controller
                 'categoria'   => $e->category?->name ?? '—',
                 'colaborador' => $e->user?->name ?? '—',
                 'projeto'     => $e->project?->name ?? '—',
-                'valor'       => (float) $e->amount,
+                'valor'       => (float) $e->amount + $surcharge,
             ])
             ->toArray();
     }

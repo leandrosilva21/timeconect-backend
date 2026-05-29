@@ -1928,6 +1928,7 @@ class TimesheetController extends Controller
 
         if ($timesheet->approve($user)) {
             $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
+            $this->invalidateListCache('timesheets');
             $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
 
             return response()->json([
@@ -2060,6 +2061,7 @@ class TimesheetController extends Controller
 
         if ($timesheet->reject($user, $request->reason)) {
             $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
+            $this->invalidateListCache('timesheets');
             $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
 
             return response()->json([
@@ -2111,6 +2113,7 @@ class TimesheetController extends Controller
         }
 
         if ($timesheet->requestAdjustment($user, $request->reason)) {
+            $this->invalidateListCache('timesheets');
             $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
 
             return response()->json([
@@ -2186,6 +2189,7 @@ class TimesheetController extends Controller
         }
 
         if ($timesheet->reverseApproval($user, $request->reason)) {
+            $this->invalidateListCache('timesheets');
             $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
 
             return response()->json([
@@ -2261,6 +2265,7 @@ class TimesheetController extends Controller
         }
 
         if ($timesheet->reverseRejection($user, $request->reason)) {
+            $this->invalidateListCache('timesheets');
             $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
 
             return response()->json([

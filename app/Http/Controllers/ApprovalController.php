@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Traits\ListCacheable;
 use App\Models\Expense;
 use App\Models\Timesheet;
 use App\Models\User;
@@ -19,6 +20,8 @@ use Illuminate\Validation\ValidationException;
  */
 class ApprovalController extends Controller
 {
+    use ListCacheable;
+
     /**
      * @OA\Get(
      *     path="/api/v1/approvals/pending",
@@ -384,6 +387,7 @@ class ApprovalController extends Controller
             }
 
             DB::commit();
+            $this->invalidateListCache('timesheets');
 
             return response()->json([
                 'success' => true,
@@ -442,6 +446,7 @@ class ApprovalController extends Controller
             }
 
             DB::commit();
+            $this->invalidateListCache('timesheets');
             return response()->json([
                 'success' => true,
                 'message' => sprintf('%d rejeitados, %d falharam', count($results['rejected']), count($results['failed'])),
@@ -483,6 +488,7 @@ class ApprovalController extends Controller
                 }
             }
             DB::commit();
+            $this->invalidateListCache('timesheets');
             return response()->json([
                 'success' => true,
                 'message' => sprintf('%d ajustes solicitados, %d falharam', count($results['requested']), count($results['failed'])),

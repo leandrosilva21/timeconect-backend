@@ -868,6 +868,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/economic-index',                                 [\App\Http\Controllers\EconomicIndexController::class, 'show'])->name('economic-index.show');
         Route::get('/contracts/{contract}/adjustment-preview',        [ContractController::class, 'adjustmentPreview'])->name('contracts.adjustment-preview');
         Route::post('/contracts/{contract}/apply-adjustment',         [ContractController::class, 'applyAdjustment'])->name('contracts.apply-adjustment');
+        Route::post('/contracts/{contract}/renew-no-adjustment',      [ContractController::class, 'renewWithoutAdjustment'])->name('contracts.renew-no-adjustment');
         Route::post('/contracts/{contract}/notify-client-adjustment', [ContractController::class, 'notifyClientAdjustment'])->name('contracts.notify-client-adjustment');
         // Dashboard de reajustes (resumo/KPIs + lista priorizada + histórico)
         Route::get('/contracts/reajustes/summary',                    [ContractController::class, 'reajustesSummary'])->name('contracts.reajustes-summary');

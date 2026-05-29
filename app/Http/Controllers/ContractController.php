@@ -1802,6 +1802,48 @@ class ContractController extends Controller
     }
 
     /**
+     * Renovação SEM reajuste: avança a data de vencimento em +1 ano, mantendo
+     * o valor inalterado. Registra na história dos reajustes (indice='RENOVACAO')
+     * pra ficar auditável. POST /contracts/{id}/renew-no-adjustment.
+     */
+    public function renewWithoutAdjustment(Request $request, Contract $contract): JsonResponse
+    {
+        if (!$contract->data_vencimento) {
+            return response()->json(['message' => 'Contrato sem data de vencimento para renovar.'], 422);
+        }
+
+        $novoVencimento = Carbon::parse($contract->data_vencimento)->addYear()->toDateString();
+
+        DB::transaction(function () use ($contract, $novoVencimento, $request) {
+            $contract->update([
+                'data_vencimento' => $novoVencimento,
+                'pct_reajuste'    => null,
+            ]);
+
+            // Auditoria: registra na MESMA história dos reajustes que houve uma
+            // renovação SEM reajuste (valor inalterado). indice='RENOVACAO' é o
+            // marcador (a história trata esse caso com rótulo próprio).
+            $isOnDemand = $contract->tipo_faturamento === 'on_demand';
+            $valorAtual = $isOnDemand ? $contract->valor_hora : $contract->valor_projeto;
+            $valorAtual = $valorAtual !== null ? round((float) $valorAtual, 2) : 0;
+            ContractValueChange::create([
+                'contract_id'       => $contract->id,
+                'valor_anterior'    => $valorAtual,
+                'valor_novo'        => $valorAtual,
+                'percentual'        => 0,
+                'indice'            => 'RENOVACAO',
+                'periodo_formatado' => 'Renovado sem reajuste (+1 ano)',
+                'user_id'           => $request->user()?->id,
+            ]);
+        });
+
+        return response()->json([
+            'ok'              => true,
+            'data_vencimento' => $novoVencimento,
+        ]);
+    }
+
+    /**
      * Comunica o cliente sobre o reajuste aplicado (último registro do histórico).
      * POST /contracts/{id}/notify-client-adjustment  (body: email? p/ sobrescrever).
      */

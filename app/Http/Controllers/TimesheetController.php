@@ -696,7 +696,10 @@ class TimesheetController extends Controller
             'end_time'   => $hasTotalHours ? 'nullable|date_format:H:i' : 'required|date_format:H:i|after:start_time',
             // Aceita HH:MM ("4:30"), decimal com ponto ou vírgula ("4.5", "4,5", "4.25"),
             // ou inteiro puro ("4"). Parseado por Timesheet::parseTotalHoursToMinutes.
-            'total_hours' => 'nullable|string|regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/',
+            // Sintaxe ARRAY obrigatória: a regex tem `|` (alternation), que o Laravel
+            // confunde com separador de regras quando rules vêm como string —
+            // `preg_match(): No ending delimiter '/' found` em prod (29/05/2026).
+            'total_hours' => ['nullable', 'string', 'regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/'],
             'observation' => 'nullable|string|max:5000',
             'ticket' => 'nullable',
             'attachment' => 'nullable|file|mimes:pdf,jpg,jpeg,png,doc,docx|max:5120',
@@ -1239,7 +1242,10 @@ class TimesheetController extends Controller
             'end_time' => 'sometimes|date_format:H:i|after:start_time',
             // Aceita HH:MM ("4:30"), decimal com ponto ou vírgula ("4.5", "4,5", "4.25"),
             // ou inteiro puro ("4"). Parseado por Timesheet::parseTotalHoursToMinutes.
-            'total_hours' => 'nullable|string|regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/',
+            // Sintaxe ARRAY obrigatória: a regex tem `|` (alternation), que o Laravel
+            // confunde com separador de regras quando rules vêm como string —
+            // `preg_match(): No ending delimiter '/' found` em prod (29/05/2026).
+            'total_hours' => ['nullable', 'string', 'regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/'],
             'observation' => 'nullable|string|max:5000',
             'ticket' => 'nullable|string|max:100',
             'customer_id' => 'sometimes|exists:customers,id',

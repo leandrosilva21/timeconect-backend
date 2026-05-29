@@ -106,6 +106,12 @@ class AttachmentsLegacyDropPreview extends Command
      */
     private function probeColumn(string $modelClass, string $legacyColumn, string $entityType, string $category): array
     {
+        // FASE 11.7 — colunas inline removidas viram noop aqui.
+        $table = (new $modelClass)->getTable();
+        if (!\Schema::hasColumn($table, $legacyColumn)) {
+            return ['legacy_total' => 0, 'ok' => 0, 'missing' => 0];
+        }
+
         $rowsWithLegacy = $modelClass::query()->whereNotNull($legacyColumn)->pluck('id');
         $legacyTotal = $rowsWithLegacy->count();
 
@@ -176,6 +182,11 @@ class AttachmentsLegacyDropPreview extends Command
 
     private function probeFechamentoNotas(): array
     {
+        // FASE 11.7 — após o drop das colunas inline o probe nada tem o que verificar.
+        if (!\Schema::hasColumn('fechamento_notas', 'nfse_path')) {
+            return ['legacy_total' => 0, 'ok' => 0, 'missing' => 0];
+        }
+
         // Cada row tem ATÉ 2 docs (nfse_path + nota_debito_path).
         $rows = FechamentoNota::query()
             ->whereNotNull('nfse_path')

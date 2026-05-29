@@ -22,8 +22,8 @@ class FechamentoNota extends Model
 
     protected $fillable = [
         'notable_type', 'notable_id', 'year_month',
-        'nfse_path', 'nfse_original_name', 'nfse_status', 'nfse_reject_reason', 'nfse_decided_by', 'nfse_decided_at',
-        'nota_debito_path', 'nota_debito_original_name', 'nota_debito_status', 'nota_debito_reject_reason', 'nota_debito_decided_by', 'nota_debito_decided_at',
+        'nfse_status', 'nfse_reject_reason', 'nfse_decided_by', 'nfse_decided_at',
+        'nota_debito_status', 'nota_debito_reject_reason', 'nota_debito_decided_by', 'nota_debito_decided_at',
     ];
 
     protected $casts = [
@@ -46,15 +46,27 @@ class FechamentoNota extends Model
         return $this->belongsTo(User::class, 'nota_debito_decided_by');
     }
 
-    /** Bloco serializado de um documento (nfse|nota_debito) para o frontend. */
+    /**
+     * Bloco serializado de um documento (nfse|nota_debito) para o frontend.
+     *
+     * FASE 11.7 — has_file / original_name vêm do attachment vivo da categoria.
+     * Status / decisão continuam aqui (não há equivalente na camada Attachment).
+     */
     public function docPayload(string $tipo): array
     {
         $prefix = $tipo; // 'nfse' | 'nota_debito'
         $decidedBy = $tipo === 'nfse' ? $this->nfseDecidedBy : $this->notaDebitoDecidedBy;
 
+        $att = Attachment::query()
+            ->forEntity('FECHAMENTO_NOTA', $this->id)
+            ->ofCategory($prefix)
+            ->visible()
+            ->latest('id')
+            ->first();
+
         return [
-            'has_file'      => !empty($this->{$prefix . '_path'}),
-            'original_name' => $this->{$prefix . '_original_name'},
+            'has_file'      => $att !== null,
+            'original_name' => $att?->original_name,
             'status'        => $this->{$prefix . '_status'} ?? self::STATUS_PENDING,
             'reject_reason' => $this->{$prefix . '_reject_reason'},
             'decided_by'    => $decidedBy?->name,

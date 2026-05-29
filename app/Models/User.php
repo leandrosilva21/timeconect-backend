@@ -61,7 +61,6 @@ class User extends Authenticatable
         'theme_preference',
         'has_temporary_password',
         'temporary_password_expires_at',
-        'profile_photo',
         'customer_id',
         'partner_id',
         // Type/permission flags
@@ -356,50 +355,32 @@ class User extends Authenticatable
     }
 
     /**
-     * Obtém a URL da foto de perfil.
-     *
-     * FASE 11 reader-shim: prefere attachment da nova camada quando existe;
-     * fallback pra coluna legada profile_photo. Quando 11.4 deprecar legado,
-     * basta remover o `?? asset(...)` final.
+     * Obtém a URL da foto de perfil — 100% via nova camada (FASE 11.7).
      */
     public function getProfilePhotoUrlAttribute(): ?string
     {
-        $newUrl = $this->attachmentUrl('avatar');
-        if ($newUrl !== null) return $newUrl;
-        if (!$this->profile_photo) return null;
-        return asset('storage/' . $this->profile_photo);
+        return $this->attachmentUrl('avatar');
     }
 
 
     /**
-     * Remove a foto de perfil
+     * Remove a foto de perfil — soft-delete na camada Attachment.
+     * O arquivo físico não é removido; só a referência é invalidada
+     * (deleted_at na tabela attachments). Restore possível.
      */
     public function removeProfilePhoto(): void
     {
-        if ($this->profile_photo) {
-            // Remove o arquivo físico
-            $path = storage_path('app/public/' . $this->profile_photo);
-            if (file_exists($path)) {
-                unlink($path);
-            }
-
-            // Remove a referência do banco
-            $this->update(['profile_photo' => null]);
-
-            // FASE 11 — Dual-write: soft-delete dos attachment(s) correspondentes.
-            // Não-fatal: se falhar, o legado já foi removido com sucesso.
-            try {
-                \App\Models\Attachment::query()
-                    ->forEntity('USER', $this->id)
-                    ->ofCategory('avatar')
-                    ->whereNull('deleted_at')
-                    ->get()
-                    ->each(fn ($att) => $att->delete());
-            } catch (\Throwable $e) {
-                \Log::warning('FASE11 dual-delete USER.avatar falhou (não-fatal)', [
-                    'user_id' => $this->id, 'error' => $e->getMessage(),
-                ]);
-            }
+        try {
+            \App\Models\Attachment::query()
+                ->forEntity('USER', $this->id)
+                ->ofCategory('avatar')
+                ->whereNull('deleted_at')
+                ->get()
+                ->each(fn ($att) => $att->delete());
+        } catch (\Throwable $e) {
+            \Log::warning('USER.avatar soft-delete falhou', [
+                'user_id' => $this->id, 'error' => $e->getMessage(),
+            ]);
         }
     }
 

@@ -514,25 +514,24 @@ class ExpenseController extends Controller
         $expenseData['expense_type']   = $expenseData['expense_type']   ?? 'reimbursement';
         $expenseData['payment_method'] = $expenseData['payment_method'] ?? 'pix';
 
-        // Upload do comprovante se fornecido
+        // Upload do comprovante se fornecido — guardado pra registrar APÓS o create
+        // (precisamos do expense->id pra entity_id da camada Attachment).
         $newReceiptInfo = null;
         if ($request->hasFile('receipt')) {
             $file = $request->file('receipt');
             $filename = time() . '_' . $file->getClientOriginalName();
             $path = $file->storeAs('receipts/' . date('Y/m'), $filename, 'public');
-
-            $expenseData['receipt_path'] = $path;
-            $expenseData['receipt_original_name'] = $file->getClientOriginalName();
-            $newReceiptInfo = ['path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType()];
+            $newReceiptInfo = ['path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType(), 'file' => $file];
         }
 
         $expense = Expense::create($expenseData);
         $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
         $this->invalidateListCache('expenses');
 
-        // FASE 11 — Dual-write do receipt (não-fatal).
+        // FASE 11.7 — Receipt persiste 100% na camada Attachment.
         if ($newReceiptInfo !== null) {
-            $this->dualWriteReceiptAttachment($expense, $newReceiptInfo);
+            $this->registerReceiptAttachment($expense, $newReceiptInfo);
+            $expense->refresh();
         }
 
         return response()->json($expense, 201);
@@ -705,19 +704,13 @@ class ExpenseController extends Controller
         // Upload de novo comprovante se fornecido
         $newReceiptInfo = null;
         if ($request->hasFile('receipt')) {
-            // Deletar arquivo anterior se existir + soft-delete attachment paralelo
-            if ($expense->receipt_path) {
-                Storage::disk('public')->delete($expense->receipt_path);
-                $this->dualSoftDeleteReceiptAttachments($expense);
-            }
+            // Soft-delete dos attachment(s) atuais (FASE 11.7: única fonte).
+            $this->softDeleteReceiptAttachments($expense);
 
             $file = $request->file('receipt');
             $filename = time() . '_' . $file->getClientOriginalName();
             $path = $file->storeAs('receipts/' . date('Y/m'), $filename, 'public');
-
-            $updateData['receipt_path'] = $path;
-            $updateData['receipt_original_name'] = $file->getClientOriginalName();
-            $newReceiptInfo = ['path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType()];
+            $newReceiptInfo = ['path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType(), 'file' => $file];
         }
 
         // Resetar status para pendente se houve alterações após solicitação de ajuste ou rejeição
@@ -732,9 +725,10 @@ class ExpenseController extends Controller
         $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
         $this->invalidateListCache('expenses');
 
-        // FASE 11 — Dual-write do novo receipt (após save).
+        // FASE 11.7 — Receipt persiste 100% na camada Attachment.
         if ($newReceiptInfo !== null) {
-            $this->dualWriteReceiptAttachment($expense->fresh(), $newReceiptInfo);
+            $this->registerReceiptAttachment($expense->fresh(), $newReceiptInfo);
+            $expense->refresh();
         }
 
         return response()->json($expense);
@@ -784,11 +778,8 @@ class ExpenseController extends Controller
             );
         }
 
-        // Deletar arquivo de comprovante se existir + soft-delete attachment paralelo
-        if ($expense->receipt_path) {
-            Storage::disk('public')->delete($expense->receipt_path);
-            $this->dualSoftDeleteReceiptAttachments($expense);
-        }
+        // FASE 11.7 — soft-delete dos receipts; arquivo físico mantido pra recovery.
+        $this->softDeleteReceiptAttachments($expense);
 
         $expense->delete();
         $this->invalidateListCache('expenses');
@@ -1149,29 +1140,35 @@ class ExpenseController extends Controller
             }
         }
 
-        if (!$expense->receipt_path) {
+        // FASE 11.7 — Receipt vem 100% da camada Attachment.
+        $att = \App\Models\Attachment::query()
+            ->forEntity('EXPENSE', $expense->id)
+            ->ofCategory('receipt')
+            ->visible()
+            ->latest('id')
+            ->first();
+
+        if (!$att) {
             return response()->json(['message' => 'Comprovante não encontrado'], 404);
         }
 
         try {
-            $disk = \Storage::disk('public');
+            $service = app(\App\Attachments\AttachmentService::class);
+            $stream  = $service->downloadStream($user, $att->id);
 
-            if (!$disk->exists($expense->receipt_path)) {
-                return response()->json(['message' => 'Arquivo não encontrado no servidor. O comprovante pode ter sido perdido após uma atualização do servidor.'], 404);
-            }
-
-            $mime = $disk->mimeType($expense->receipt_path) ?: 'application/octet-stream';
-            $name = $expense->receipt_original_name ?? basename($expense->receipt_path);
-
-            return response($disk->get($expense->receipt_path), 200, [
-                'Content-Type'        => $mime,
-                'Content-Disposition' => 'inline; filename="' . addslashes($name) . '"',
+            return response()->stream(function () use ($stream) {
+                while (!feof($stream)) { echo fread($stream, 8192); }
+                fclose($stream);
+            }, 200, [
+                'Content-Type'        => $att->mime_type ?: 'application/octet-stream',
+                'Content-Disposition' => 'inline; filename="' . addslashes($att->original_name ?: basename($att->storage_path)) . '"',
                 'Cache-Control'       => 'no-cache',
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             \Log::error('Erro ao servir comprovante de despesa', [
                 'expense_id'   => $id,
-                'receipt_path' => $expense->receipt_path,
+                'attachment_id'=> $att->id,
+                'storage_path' => $att->storage_path,
                 'error'        => $e->getMessage(),
             ]);
             return response()->json(['message' => 'Erro ao acessar o comprovante. O arquivo pode não estar disponível neste servidor.'], 503);
@@ -1196,25 +1193,18 @@ class ExpenseController extends Controller
             'receipt' => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120',
         ]);
 
-        // Deletar arquivo anterior se existir + soft-delete attachment paralelo
-        if ($expense->receipt_path) {
-            \Storage::disk('public')->delete($expense->receipt_path);
-            $this->dualSoftDeleteReceiptAttachments($expense);
-        }
+        // FASE 11.7 — Receipt persiste 100% na camada Attachment.
+        $this->softDeleteReceiptAttachments($expense);
 
         $file = $request->file('receipt');
         $filename = time() . '_' . $file->getClientOriginalName();
         $path = $file->storeAs('receipts/' . date('Y/m'), $filename, 'public');
 
-        $expense->receipt_path = $path;
-        $expense->receipt_original_name = $file->getClientOriginalName();
-        $expense->save();
-        $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
-
-        // FASE 11 — Dual-write do receipt.
-        $this->dualWriteReceiptAttachment($expense, [
-            'path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType(),
+        $this->registerReceiptAttachment($expense, [
+            'path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType(), 'file' => $file,
         ]);
+        $expense->refresh();
+        $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
 
         return response()->json($expense);
     }
@@ -1467,35 +1457,30 @@ class ExpenseController extends Controller
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // FASE 11 — Helpers de dual-write do receipt.
+    // FASE 11.7 — Helpers da camada Attachment (fonte única).
     //
-    // Registra o MESMO arquivo legado em `attachments` (sem duplicar em disco)
-    // e soft-deleta paralelos quando o receipt legado é removido ou substituído.
-    // Falhas são NÃO-FATAIS: `receipt_path` continua sendo fonte de verdade até
-    // a FASE 11.4 deprecar o legado.
+    // Disco físico é local 'public' (legacy storage paths preservados).
+    // softDelete não remove o arquivo; só a row em attachments — restore
+    // possível dentro do retention.
     // ──────────────────────────────────────────────────────────────────────────
 
-    private function dualWriteReceiptAttachment(Expense $expense, array $info): void
+    private function registerReceiptAttachment(Expense $expense, array $info): void
     {
-        try {
-            $actor = Auth::user() ?? \App\Models\User::find($expense->user_id);
-            if (!$actor) return;
-            app(\App\Attachments\AttachmentService::class)->registerExisting($actor, [
-                'entity_type'   => 'EXPENSE',
-                'entity_id'     => $expense->id,
-                'category'      => 'receipt',
-                'storage_path'  => $info['path'],
-                'original_name' => $info['original'] ?? basename($info['path']),
-                'mime_type'     => $info['mime'] ?? 'application/octet-stream',
-            ]);
-        } catch (\Throwable $e) {
-            \Log::warning('FASE11 dual-write EXPENSE.receipt falhou (não-fatal)', [
-                'expense_id' => $expense->id, 'error' => $e->getMessage(),
-            ]);
+        $actor = Auth::user() ?? \App\Models\User::find($expense->user_id);
+        if (!$actor) {
+            throw new \RuntimeException("Não há ator pra registrar receipt do expense {$expense->id}");
         }
+        app(\App\Attachments\AttachmentService::class)->registerExisting($actor, [
+            'entity_type'   => 'EXPENSE',
+            'entity_id'     => $expense->id,
+            'category'      => 'receipt',
+            'storage_path'  => $info['path'],
+            'original_name' => $info['original'] ?? basename($info['path']),
+            'mime_type'     => $info['mime'] ?? 'application/octet-stream',
+        ]);
     }
 
-    private function dualSoftDeleteReceiptAttachments(Expense $expense): void
+    private function softDeleteReceiptAttachments(Expense $expense): void
     {
         try {
             \App\Models\Attachment::query()
@@ -1505,7 +1490,7 @@ class ExpenseController extends Controller
                 ->get()
                 ->each(fn ($att) => $att->delete());
         } catch (\Throwable $e) {
-            \Log::warning('FASE11 dual-delete EXPENSE.receipt falhou (não-fatal)', [
+            \Log::warning('EXPENSE.receipt soft-delete falhou', [
                 'expense_id' => $expense->id, 'error' => $e->getMessage(),
             ]);
         }

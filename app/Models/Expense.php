@@ -45,8 +45,6 @@ class Expense extends Model
         'amount',
         'expense_type',
         'payment_method',
-        'receipt_path',
-        'receipt_original_name',
         'status',
         'rejection_reason',
         'charge_client',
@@ -175,25 +173,13 @@ class Expense extends Model
     }
 
     /**
-     * Accessor para URL completa do comprovante.
-     *
-     * FASE 11 reader-shim: prefere o attachment da nova camada quando existe;
-     * fallback pra coluna legada receipt_path. Quando 11.4 deprecar legado,
-     * basta remover o fallback final.
+     * Accessor para URL completa do comprovante — 100% via nova camada (FASE 11.7).
      */
     public function getReceiptUrlAttribute(): ?string
     {
         $newUrl = $this->attachmentUrl('receipt');
-        if ($newUrl !== null) {
-            $backendUrl = rtrim(config('app.url'), '/');
-            return $backendUrl . $newUrl;
-        }
-        if (!$this->receipt_path) {
-            return null;
-        }
-        // Serve via endpoint da API (não depende de symlink do storage)
-        $backendUrl = rtrim(config('app.url'), '/');
-        return $backendUrl . '/api/v1/expenses/' . $this->id . '/receipt';
+        if ($newUrl === null) return null;
+        return rtrim(config('app.url'), '/') . $newUrl;
     }
 
     /**

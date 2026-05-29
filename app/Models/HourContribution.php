@@ -27,8 +27,6 @@ class HourContribution extends Model
         'hourly_rate',
         'description',
         'motivo',
-        'proposta_path',
-        'proposta_original_name',
         'kanban_status',
         'contributed_by',
         'contributed_at',

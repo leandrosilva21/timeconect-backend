@@ -25,6 +25,12 @@ class HourContributionPropostaBackfill implements BackfillModule
     {
         $stats = ['migrated' => 0, 'deduped' => 0, 'orphan_file' => 0, 'errors' => 0, 'skipped' => 0];
 
+        // FASE 11.7 — coluna inline removida; backfill noop.
+        if (!\Schema::hasColumn('hour_contributions', 'proposta_path')) {
+            $cli->info('Coluna hour_contributions.proposta_path já removida (FASE 11.7). Backfill não aplicável.');
+            return $stats;
+        }
+
         $q = HourContribution::query()->whereNotNull('proposta_path');
         if ($limit > 0) $q->limit($limit);
 

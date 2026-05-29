@@ -26,6 +26,12 @@ class FechamentoNotaBackfill implements BackfillModule
     {
         $stats = ['migrated' => 0, 'deduped' => 0, 'orphan_file' => 0, 'errors' => 0, 'skipped' => 0];
 
+        // FASE 11.7 — colunas inline dropadas. Backfill obsoleto.
+        if (!\Schema::hasColumn('fechamento_notas', 'nfse_path')) {
+            $cli->info('Colunas inline já removidas (FASE 11.7). Backfill não aplicável.');
+            return $stats;
+        }
+
         // Pega rows com pelo menos 1 documento.
         $q = FechamentoNota::query()
             ->where(function ($w) {

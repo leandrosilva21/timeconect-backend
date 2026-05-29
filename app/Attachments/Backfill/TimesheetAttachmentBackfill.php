@@ -24,6 +24,12 @@ class TimesheetAttachmentBackfill implements BackfillModule
     {
         $stats = ['migrated' => 0, 'deduped' => 0, 'orphan_file' => 0, 'errors' => 0, 'skipped' => 0];
 
+        // FASE 11.7 — coluna inline removida; backfill noop.
+        if (!\Schema::hasColumn('timesheets', 'attachment_path')) {
+            $cli->info('Coluna timesheets.attachment_path já removida (FASE 11.7). Backfill não aplicável.');
+            return $stats;
+        }
+
         $q = Timesheet::query()->whereNotNull('attachment_path');
         if ($limit > 0) $q->limit($limit);
 

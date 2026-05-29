@@ -65,8 +65,6 @@ class Timesheet extends Model
         'rejection_reason',
         'reviewed_by',
         'reviewed_at',
-        'attachment_path',
-        'attachment_original_name',
         'manual_project_edit',
     ];
 
@@ -186,23 +184,13 @@ class Timesheet extends Model
     }
 
     /**
-     * Accessor para URL do anexo.
-     *
-     * FASE 11 reader-shim: prefere attachment da nova camada quando existe;
-     * fallback pra coluna legada attachment_path.
+     * Accessor para URL do anexo — 100% via nova camada (FASE 11.7).
      */
     public function getAttachmentUrlAttribute(): ?string
     {
         $newUrl = $this->attachmentUrl('attachment');
-        if ($newUrl !== null) {
-            $backendUrl = rtrim(config('app.url'), '/');
-            return $backendUrl . $newUrl;
-        }
-        if (!$this->attachment_path) {
-            return null;
-        }
-        $backendUrl = rtrim(config('app.url'), '/');
-        return $backendUrl . '/api/v1/timesheets/' . $this->id . '/attachment';
+        if ($newUrl === null) return null;
+        return rtrim(config('app.url'), '/') . $newUrl;
     }
 
     /**

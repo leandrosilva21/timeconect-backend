@@ -25,6 +25,12 @@ class ExpenseReceiptBackfill implements BackfillModule
     {
         $stats = ['migrated' => 0, 'deduped' => 0, 'orphan_file' => 0, 'errors' => 0, 'skipped' => 0];
 
+        // FASE 11.7 — coluna inline removida; backfill noop.
+        if (!\Schema::hasColumn('expenses', 'receipt_path')) {
+            $cli->info('Coluna expenses.receipt_path já removida (FASE 11.7). Backfill não aplicável.');
+            return $stats;
+        }
+
         $q = Expense::query()->whereNotNull('receipt_path');
         if ($limit > 0) $q->limit($limit);
 

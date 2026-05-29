@@ -29,6 +29,12 @@ class UserAvatarBackfill implements BackfillModule
     {
         $stats = ['migrated' => 0, 'deduped' => 0, 'orphan_file' => 0, 'errors' => 0, 'skipped' => 0];
 
+        // FASE 11.7 — coluna inline removida; backfill noop.
+        if (!\Schema::hasColumn('users', 'profile_photo')) {
+            $cli->info('Coluna users.profile_photo já removida (FASE 11.7). Backfill não aplicável.');
+            return $stats;
+        }
+
         $q = User::query()->whereNotNull('profile_photo');
         if ($limit > 0) $q->limit($limit);
 

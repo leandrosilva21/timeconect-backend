@@ -687,9 +687,19 @@ class ContractController extends Controller
                 $aporteQuery->whereHas('project', fn($q) => $q->where('customer_id', $user->customer_id));
             }
 
-            $aporteCards = $aporteQuery->get()->map(function ($a) {
+            // FASE 11.7 — proposta agora vive na camada Attachment (HOUR_CONTRIBUTION.proposal).
+            $aporteIds = $aporteQuery->pluck('id')->all();
+            $propostaByHc = empty($aporteIds) ? collect() : \App\Models\Attachment::query()
+                ->where('entity_type', 'HOUR_CONTRIBUTION')
+                ->whereIn('entity_id', $aporteIds)
+                ->where('category', 'proposal')
+                ->whereNull('deleted_at')
+                ->get(['entity_id', 'original_name'])
+                ->keyBy('entity_id');
+            $aporteCards = $aporteQuery->get()->map(function ($a) use ($propostaByHc) {
                 $horas = (float) $a->contributed_hours;
                 $valor = (float) $a->hourly_rate;
+                $prop = $propostaByHc->get($a->id);
                 return [
                     'id'              => $a->id,
                     'kind'            => 'aporte',
@@ -704,8 +714,8 @@ class ContractController extends Controller
                     'total'           => round($horas * $valor, 2),
                     'motivo'          => $a->motivo,
                     'description'     => $a->description,
-                    'has_proposta'           => !empty($a->proposta_path),
-                    'proposta_original_name' => $a->proposta_original_name,
+                    'has_proposta'           => $prop !== null,
+                    'proposta_original_name' => $prop?->original_name,
                     'kanban_status'   => $a->kanban_status ?? 'aporte',
                     'contributed_by'  => $a->contributedBy?->name,
                     'contributed_at'  => $a->contributed_at?->toISOString(),

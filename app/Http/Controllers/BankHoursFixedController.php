@@ -4823,7 +4823,7 @@ class BankHoursFixedController extends Controller
                 'requester'      => $parseReq($t->ticket_solicitante),
                 'status'         => $t->status,
                 'status_display' => $t->status_display,
-                'attachment_path'=> $t->attachment_path,
+                'attachment_path'=> $t->attachment_url, // FASE 11.7 — coluna inline dropada
                 'user'           => $t->user ? ['id' => $t->user->id, 'name' => $t->user->name] : null,
                 'customer'       => $t->project && $t->project->customer ? $t->project->customer->name : null,
                 'project'        => $t->project ? ['id' => $t->project->id, 'code' => $t->project->code, 'name' => $t->project->name] : null,
@@ -4909,7 +4909,7 @@ class BankHoursFixedController extends Controller
                 'ticket'             => $t->ticket,
                 'ticket_subject'     => $t->ticket_subject,
                 'requester'          => $parseRequester($t->ticket_solicitante),
-                'attachment_path'    => $t->attachment_path,
+                'attachment_path'    => $t->attachment_url, // FASE 11.7 — coluna inline dropada
                 'user'               => $t->user ? ['id' => $t->user->id, 'name' => $t->user->name] : null,
                 'customer'           => $t->project && $t->project->customer ? $t->project->customer->name : null,
                 'project'            => $t->project ? [
@@ -4983,7 +4983,7 @@ class BankHoursFixedController extends Controller
                 'requester'      => $reqName,
                 'status'         => $t->status,
                 'status_display' => $t->status_display,
-                'attachment_path'=> $t->attachment_path,
+                'attachment_path'=> $t->attachment_url, // FASE 11.7 — coluna inline dropada
                 'user'           => $t->user ? ['id' => $t->user->id, 'name' => $t->user->name] : null,
                 'customer'       => $t->project && $t->project->customer ? $t->project->customer->name : null,
                 'project'        => $t->project ? [

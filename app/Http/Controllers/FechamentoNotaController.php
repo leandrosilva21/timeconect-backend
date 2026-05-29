@@ -77,27 +77,22 @@ class FechamentoNotaController extends Controller
             'year_month'   => $yearMonth,
         ]);
 
-        // Apaga o arquivo anterior do mesmo tipo, se houver.
-        $oldPath = $nota->{$tipo . '_path'};
-        if ($oldPath && Storage::disk(self::DISK)->exists($oldPath)) {
-            Storage::disk(self::DISK)->delete($oldPath);
-            // FASE 11.2 — soft-delete attachment paralelo do anterior (mesma categoria).
-            $this->dualSoftDeleteFechamentoNotaByCategory($nota, $tipo);
+        // FASE 11.7 — soft-delete do attachment anterior (mesma categoria) antes do novo upload.
+        if ($nota->exists) {
+            $this->softDeleteFechamentoNotaByCategory($nota, $tipo);
         }
 
         // Novo upload reseta o status do documento para pendente.
-        $nota->{$tipo . '_path'}          = $path;
-        $nota->{$tipo . '_original_name'} = $original;
         $nota->{$tipo . '_status'}        = FechamentoNota::STATUS_PENDING;
         $nota->{$tipo . '_reject_reason'} = null;
         $nota->{$tipo . '_decided_by'}    = null;
         $nota->{$tipo . '_decided_at'}    = null;
         $nota->save();
 
-        // FASE 11.2 — dual-write do novo upload (categoria = $tipo: nfse | nota_debito).
-        $this->dualWriteFechamentoNota($nota, $tipo, $file, $path);
+        // FASE 11.7 — Persistência 100% na camada Attachment.
+        $this->registerFechamentoNota($nota, $tipo, $file, $path);
 
-        return response()->json(['ok' => true, 'notas' => $nota->toRowPayload()]);
+        return response()->json(['ok' => true, 'notas' => $nota->fresh()->toRowPayload()]);
     }
 
     /** GET .../fechamento/notas/{type}/{id}/{yearMonth} — estado atual das notas (dono ou admin). */
@@ -132,12 +127,22 @@ class FechamentoNotaController extends Controller
             ->where('year_month', $yearMonth)
             ->first();
 
-        $path = $nota?->{$tipo . '_path'};
-        if (!$path || !Storage::disk(self::DISK)->exists($path)) {
+        if (!$nota) {
             abort(404, 'Anexo não encontrado');
         }
 
-        return Storage::disk(self::DISK)->download($path, $nota->{$tipo . '_original_name'} ?? basename($path));
+        // FASE 11.7 — Doc vem 100% da camada Attachment.
+        $att = \App\Models\Attachment::query()
+            ->forEntity('FECHAMENTO_NOTA', $nota->id)
+            ->ofCategory($tipo)
+            ->visible()
+            ->latest('id')
+            ->first();
+        if (!$att || !Storage::disk(self::DISK)->exists($att->storage_path)) {
+            abort(404, 'Anexo não encontrado');
+        }
+
+        return Storage::disk(self::DISK)->download($att->storage_path, $att->original_name ?: basename($att->storage_path));
     }
 
     /** POST .../fechamento/notas/{type}/{id}/{yearMonth}/{tipo}/decisao — só admin. */
@@ -166,7 +171,16 @@ class FechamentoNotaController extends Controller
             ->where('year_month', $yearMonth)
             ->first();
 
-        if (!$nota || empty($nota->{$tipo . '_path'})) {
+        if (!$nota) {
+            return response()->json(['error' => 'Não há nota enviada para decidir'], 422);
+        }
+        // FASE 11.7 — verifica via Attachment (não mais via _path inline).
+        $hasFile = \App\Models\Attachment::query()
+            ->forEntity('FECHAMENTO_NOTA', $nota->id)
+            ->ofCategory($tipo)
+            ->visible()
+            ->exists();
+        if (!$hasFile) {
             return response()->json(['error' => 'Não há nota enviada para decidir'], 422);
         }
 
@@ -182,7 +196,7 @@ class FechamentoNotaController extends Controller
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // FASE 11.2 — Helpers de dual-write da nota fiscal
+    // FASE 11.7 — Helpers da camada Attachment (fonte única).
     //
     // A FechamentoNota é polimórfica (notable_type=User|Partner). No registry o
     // entity_type é 'FECHAMENTO_NOTA' e entity_id = fechamento_notas.id (a row
@@ -190,34 +204,28 @@ class FechamentoNotaController extends Controller
     // nfse | nota_debito.
     // ──────────────────────────────────────────────────────────────────────────
 
-    private function dualWriteFechamentoNota(FechamentoNota $nota, string $tipo, \Illuminate\Http\UploadedFile $file, string $path): void
+    private function registerFechamentoNota(FechamentoNota $nota, string $tipo, \Illuminate\Http\UploadedFile $file, string $path): void
     {
-        try {
-            $actor = Auth::user();
-            if (!$actor) return;
-            app(\App\Attachments\AttachmentService::class)->registerExisting($actor, [
-                'entity_type'   => 'FECHAMENTO_NOTA',
-                'entity_id'     => $nota->id,
-                'category'      => $tipo,  // 'nfse' | 'nota_debito'
-                'storage_path'  => $path,
-                'original_name' => $file->getClientOriginalName(),
-                'mime_type'     => $file->getMimeType() ?: 'application/pdf',
-                'metadata'      => [
-                    'notable_type' => $nota->notable_type,
-                    'notable_id'   => $nota->notable_id,
-                    'year_month'   => $nota->year_month,
-                ],
-            ]);
-        } catch (\Throwable $e) {
-            \Log::warning('FASE11 dual-write FECHAMENTO_NOTA falhou (não-fatal)', [
-                'fechamento_nota_id' => $nota->id,
-                'tipo'               => $tipo,
-                'error'              => $e->getMessage(),
-            ]);
+        $actor = Auth::user();
+        if (!$actor) {
+            throw new \RuntimeException("Não há ator pra registrar nota do fechamento {$nota->id}");
         }
+        app(\App\Attachments\AttachmentService::class)->registerExisting($actor, [
+            'entity_type'   => 'FECHAMENTO_NOTA',
+            'entity_id'     => $nota->id,
+            'category'      => $tipo,  // 'nfse' | 'nota_debito'
+            'storage_path'  => $path,
+            'original_name' => $file->getClientOriginalName(),
+            'mime_type'     => $file->getMimeType() ?: 'application/pdf',
+            'metadata'      => [
+                'notable_type' => $nota->notable_type,
+                'notable_id'   => $nota->notable_id,
+                'year_month'   => $nota->year_month,
+            ],
+        ]);
     }
 
-    private function dualSoftDeleteFechamentoNotaByCategory(FechamentoNota $nota, string $tipo): void
+    private function softDeleteFechamentoNotaByCategory(FechamentoNota $nota, string $tipo): void
     {
         try {
             \App\Models\Attachment::query()
@@ -227,7 +235,7 @@ class FechamentoNotaController extends Controller
                 ->get()
                 ->each(fn ($att) => $att->delete()); // SoftDeletes
         } catch (\Throwable $e) {
-            \Log::warning('FASE11 dual-delete FECHAMENTO_NOTA falhou (não-fatal)', [
+            \Log::warning('FECHAMENTO_NOTA soft-delete falhou', [
                 'fechamento_nota_id' => $nota->id,
                 'tipo'               => $tipo,
                 'error'              => $e->getMessage(),

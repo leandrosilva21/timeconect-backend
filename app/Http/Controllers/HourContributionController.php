@@ -157,8 +157,6 @@ class HourContributionController extends Controller
             'hourly_rate'       => $validated['hourly_rate'],
             'description'       => $validated['description'] ?? null,
             'motivo'            => $validated['motivo'] ?? 'aporte',
-            'proposta_path'           => $propostaPath,
-            'proposta_original_name'  => $propostaOriginal,
             'contributed_by'    => $request->user()->id,
             'contributed_at'    => $validated['contributed_at'] ?? now(),
         ]);
@@ -169,11 +167,12 @@ class HourContributionController extends Controller
         // Aporte muda as horas disponíveis do projeto (e o consumo do pai, se for subprojeto) — refaz o cache da lista.
         $this->invalidateListCache('projects');
 
-        // FASE 11 — Dual-write da proposta (não-fatal).
+        // FASE 11.7 — Proposta persiste 100% na camada Attachment.
         if ($propostaPath !== null) {
-            $this->dualWriteHourContributionProposta($contribution, [
+            $this->registerHourContributionProposta($contribution, [
                 'path' => $propostaPath, 'original' => $propostaOriginal, 'mime' => $propostaMime,
             ]);
+            $contribution->refresh();
         }
 
         return response()->json($contribution, 201);
@@ -187,10 +186,17 @@ class HourContributionController extends Controller
         if ($contribution->project_id !== $project->id) {
             return response()->json(['message' => 'Aporte não encontrado'], 404);
         }
-        if (!$contribution->proposta_path || !Storage::exists($contribution->proposta_path)) {
+        // FASE 11.7 — Proposta vem 100% da camada Attachment.
+        $att = \App\Models\Attachment::query()
+            ->forEntity('HOUR_CONTRIBUTION', $contribution->id)
+            ->ofCategory('proposal')
+            ->visible()
+            ->latest('id')
+            ->first();
+        if (!$att || !Storage::exists($att->storage_path)) {
             return response()->json(['message' => 'Proposta não encontrada'], 404);
         }
-        return Storage::download($contribution->proposta_path, $contribution->proposta_original_name ?? 'proposta');
+        return Storage::download($att->storage_path, $att->original_name ?: 'proposta');
     }
 
     /**
@@ -324,10 +330,8 @@ class HourContributionController extends Controller
             ], 404);
         }
 
-        // FASE 11 — soft-delete attachment paralelo (preserva documento).
-        if ($contribution->proposta_path) {
-            $this->dualSoftDeleteHourContributionPropostas($contribution);
-        }
+        // FASE 11.7 — soft-delete proposta (preserva arquivo físico).
+        $this->softDeleteHourContributionPropostas($contribution);
 
         $contribution->delete();
 
@@ -337,31 +341,27 @@ class HourContributionController extends Controller
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // FASE 11 — Helpers de dual-write da proposta do aporte
+    // FASE 11.7 — Helpers da camada Attachment (fonte única).
     // ──────────────────────────────────────────────────────────────────────────
 
-    private function dualWriteHourContributionProposta(HourContribution $contribution, array $info): void
+    private function registerHourContributionProposta(HourContribution $contribution, array $info): void
     {
-        try {
-            $actor = \Illuminate\Support\Facades\Auth::user()
-                ?? \App\Models\User::find($contribution->contributed_by);
-            if (!$actor) return;
-            app(\App\Attachments\AttachmentService::class)->registerExisting($actor, [
-                'entity_type'   => 'HOUR_CONTRIBUTION',
-                'entity_id'     => $contribution->id,
-                'category'      => 'proposal',
-                'storage_path'  => $info['path'],
-                'original_name' => $info['original'] ?? basename($info['path']),
-                'mime_type'     => $info['mime'] ?? 'application/octet-stream',
-            ]);
-        } catch (\Throwable $e) {
-            \Log::warning('FASE11 dual-write HOUR_CONTRIBUTION.proposta falhou (não-fatal)', [
-                'contribution_id' => $contribution->id, 'error' => $e->getMessage(),
-            ]);
+        $actor = \Illuminate\Support\Facades\Auth::user()
+            ?? \App\Models\User::find($contribution->contributed_by);
+        if (!$actor) {
+            throw new \RuntimeException("Não há ator pra registrar proposta do aporte {$contribution->id}");
         }
+        app(\App\Attachments\AttachmentService::class)->registerExisting($actor, [
+            'entity_type'   => 'HOUR_CONTRIBUTION',
+            'entity_id'     => $contribution->id,
+            'category'      => 'proposal',
+            'storage_path'  => $info['path'],
+            'original_name' => $info['original'] ?? basename($info['path']),
+            'mime_type'     => $info['mime'] ?? 'application/octet-stream',
+        ]);
     }
 
-    private function dualSoftDeleteHourContributionPropostas(HourContribution $contribution): void
+    private function softDeleteHourContributionPropostas(HourContribution $contribution): void
     {
         try {
             \App\Models\Attachment::query()
@@ -371,7 +371,7 @@ class HourContributionController extends Controller
                 ->get()
                 ->each(fn ($att) => $att->delete());
         } catch (\Throwable $e) {
-            \Log::warning('FASE11 dual-delete HOUR_CONTRIBUTION.proposta falhou (não-fatal)', [
+            \Log::warning('HOUR_CONTRIBUTION.proposta soft-delete falhou', [
                 'contribution_id' => $contribution->id, 'error' => $e->getMessage(),
             ]);
         }

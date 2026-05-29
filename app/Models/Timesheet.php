@@ -157,14 +157,42 @@ class Timesheet extends Model
     }
 
     /**
-     * Converte total_hours (formato HH:MM) para effort_minutes
+     * Converte uma string `total_hours` em minutos (int) ou null se inválido.
+     * Aceita 3 formatos:
+     *   - HH:MM     ("4:30"   → 270)
+     *   - Decimal   ("4.5", "4,5" → 270; "4.25" → 255; "4.75" → 285)
+     *   - Inteiro   ("4"      → 240)
+     *
+     * Centralizado aqui pra que TimesheetController (store + update) e setTotalHours
+     * usem a mesma regra. Fração com mais de 2 casas é arredondada.
+     */
+    public static function parseTotalHoursToMinutes(?string $totalHours): ?int
+    {
+        if ($totalHours === null || $totalHours === '') {
+            return null;
+        }
+        // HH:MM (minutos 00-59)
+        if (preg_match('/^(\d+):([0-5][0-9])$/', $totalHours, $m)) {
+            return ((int) $m[1]) * 60 + ((int) $m[2]);
+        }
+        // Decimal (ponto ou vírgula) ou inteiro puro
+        if (preg_match('/^(\d+)(?:[.,](\d{1,2}))?$/', $totalHours, $m)) {
+            $hours    = (int) $m[1];
+            $fracStr  = $m[2] ?? '';
+            $fraction = $fracStr === '' ? 0.0 : (float) ('0.' . $fracStr);
+            return $hours * 60 + (int) round($fraction * 60);
+        }
+        return null;
+    }
+
+    /**
+     * Converte total_hours (HH:MM ou decimal) para effort_minutes do model.
      */
     public function setTotalHours(string $totalHours): void
     {
-        if (preg_match('/^(\d+):([0-5][0-9])$/', $totalHours, $matches)) {
-            $hours = intval($matches[1]);
-            $minutes = intval($matches[2]);
-            $this->effort_minutes = ($hours * 60) + $minutes;
+        $minutes = self::parseTotalHoursToMinutes($totalHours);
+        if ($minutes !== null) {
+            $this->effort_minutes = $minutes;
         }
     }
 

@@ -694,7 +694,9 @@ class TimesheetController extends Controller
             'date' => 'required|date|before_or_equal:today',
             'start_time' => $hasTotalHours ? 'nullable|date_format:H:i' : 'required|date_format:H:i',
             'end_time'   => $hasTotalHours ? 'nullable|date_format:H:i' : 'required|date_format:H:i|after:start_time',
-            'total_hours' => 'nullable|string|regex:/^\d+:[0-5][0-9]$/',
+            // Aceita HH:MM ("4:30"), decimal com ponto ou vírgula ("4.5", "4,5", "4.25"),
+            // ou inteiro puro ("4"). Parseado por Timesheet::parseTotalHoursToMinutes.
+            'total_hours' => 'nullable|string|regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/',
             'observation' => 'nullable|string|max:5000',
             'ticket' => 'nullable',
             'attachment' => 'nullable|file|mimes:pdf,jpg,jpeg,png,doc,docx|max:5120',
@@ -897,14 +899,11 @@ class TimesheetController extends Controller
         try {
             $validatedData = $validator->validated();
 
-            // Processar total_hours se fornecido
+            // Processar total_hours se fornecido (HH:MM | decimal | inteiro).
             $effortMinutes = null;
             if (!empty($validatedData['total_hours'])) {
-                // Converter total_hours para effort_minutes antes de criar o timesheet
-                if (preg_match('/^(\d+):([0-5][0-9])$/', $validatedData['total_hours'], $matches)) {
-                    $hours = intval($matches[1]);
-                    $minutes = intval($matches[2]);
-                    $effortMinutes = ($hours * 60) + $minutes;
+                $effortMinutes = Timesheet::parseTotalHoursToMinutes($validatedData['total_hours']);
+                if ($effortMinutes !== null) {
                     $validatedData['effort_minutes'] = $effortMinutes;
                 }
                 // Remover total_hours dos dados validados pois não é um campo do modelo
@@ -1238,7 +1237,9 @@ class TimesheetController extends Controller
             'date' => 'sometimes|date|before_or_equal:today',
             'start_time' => 'sometimes|date_format:H:i',
             'end_time' => 'sometimes|date_format:H:i|after:start_time',
-            'total_hours' => 'nullable|string|regex:/^\d+:[0-5][0-9]$/',
+            // Aceita HH:MM ("4:30"), decimal com ponto ou vírgula ("4.5", "4,5", "4.25"),
+            // ou inteiro puro ("4"). Parseado por Timesheet::parseTotalHoursToMinutes.
+            'total_hours' => 'nullable|string|regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/',
             'observation' => 'nullable|string|max:5000',
             'ticket' => 'nullable|string|max:100',
             'customer_id' => 'sometimes|exists:customers,id',
@@ -1414,14 +1415,11 @@ class TimesheetController extends Controller
             // Determinar qual usuário usar para validação
             $userIdForValidation = isset($validatedData['user_id']) ? $validatedData['user_id'] : $timesheet->user_id;
 
-            // Processar total_hours se fornecido
+            // Processar total_hours se fornecido (HH:MM | decimal | inteiro).
             $newEffortMinutes = null;
             if (!empty($validatedData['total_hours'])) {
-                // Converter total_hours para effort_minutes antes de atualizar
-                if (preg_match('/^(\d+):([0-5][0-9])$/', $validatedData['total_hours'], $matches)) {
-                    $hours = intval($matches[1]);
-                    $minutes = intval($matches[2]);
-                    $newEffortMinutes = ($hours * 60) + $minutes;
+                $newEffortMinutes = Timesheet::parseTotalHoursToMinutes($validatedData['total_hours']);
+                if ($newEffortMinutes !== null) {
                     $validatedData['effort_minutes'] = $newEffortMinutes;
                 }
                 // Remover total_hours dos dados validados pois não é um campo do modelo

@@ -796,6 +796,8 @@ Route::prefix('v1')->group(function () {
             Route::post('/fechamento/notas/{type}/{id}/{yearMonth}',                [\App\Http\Controllers\FechamentoNotaController::class, 'upload']);
             Route::get('/fechamento/notas/{type}/{id}/{yearMonth}/{tipo}/download',  [\App\Http\Controllers\FechamentoNotaController::class, 'download']);
             Route::post('/fechamento/notas/{type}/{id}/{yearMonth}/{tipo}/decisao',  [\App\Http\Controllers\FechamentoNotaController::class, 'decisao']);
+            // Admin libera o envio de notas após o prazo (dia 15) para um notable+mês.
+            Route::post('/fechamento/notas/{type}/{id}/{yearMonth}/liberar',         [\App\Http\Controllers\FechamentoNotaController::class, 'liberar']);
 
             // Folha Cooperativa (planilha de importação)
             Route::get('/fechamento-folha/{yearMonth}',          [\App\Http\Controllers\FolhaPagamentoController::class, 'grid']);

@@ -193,12 +193,30 @@ class ApprovalController extends Controller
                     $ticketTotalsMap[$key] = ($ticketTotalsMap[$key] ?? 0) + (int) $r->initial_minutes;
                 }
             }
-            $items = collect($timesheets->items())->map(function ($ts) use ($ticketTotalsMap) {
+            // Coordenadores de sustentação (fallback p/ projetos sem override/coordenadores).
+            $sustentacaoCoordNames = \App\Models\User::where('coordinator_type', 'sustentacao')
+                ->where('enabled', true)->pluck('name')->all();
+
+            $items = collect($timesheets->items())->map(function ($ts) use ($ticketTotalsMap, $sustentacaoCoordNames) {
                 $arr = $ts->toArray();
                 $tk = (string) ($ts->ticket ?? '');
                 $arr['ticket_total_minutes'] = ($tk !== '' && preg_match('/^\d{5}$/', $tk) && $ts->customer_id)
                     ? ($ticketTotalsMap[$ts->customer_id . ':' . $tk] ?? null)
                     : null;
+                // Coordenador: override do coordenador > coordenadores do projeto >
+                // (se serviço de sustentação) coordenadores de sustentação.
+                $proj = $ts->project;
+                $coordLabel = null;
+                if ($proj) {
+                    if ($proj->kanbanOverrideCoordinator) {
+                        $coordLabel = $proj->kanbanOverrideCoordinator->name;
+                    } elseif ($proj->coordinators && $proj->coordinators->count()) {
+                        $coordLabel = $proj->coordinators->pluck('name')->implode(', ');
+                    } elseif (optional($proj->serviceType)->code === 'sustentacao' && !empty($sustentacaoCoordNames)) {
+                        $coordLabel = implode(', ', $sustentacaoCoordNames);
+                    }
+                }
+                $arr['coordinator_label'] = $coordLabel;
                 return $arr;
             })->all();
 
@@ -621,9 +639,12 @@ class ApprovalController extends Controller
         $query = Timesheet::with([
             'user:id,name,email',
             'customer:id,name',
-            'project:id,name,customer_id,service_type_id',
-            'project.customer:id,name',
-            'project.serviceType:id,name'
+            'project:id,name,customer_id,service_type_id,kanban_coordinator_override_id',
+            'project.customer:id,name,executive_id',
+            'project.customer.executive:id,name',
+            'project.serviceType:id,name,code',
+            'project.coordinators:id,name',
+            'project.kanbanOverrideCoordinator:id,name',
         ])
         ->where('status', Timesheet::STATUS_PENDING)
         ->orderBy('date', 'desc')

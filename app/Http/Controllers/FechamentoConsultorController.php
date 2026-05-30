@@ -429,6 +429,16 @@ class FechamentoConsultorController extends Controller
         $soServico  = $mode === 'servicos';
         $totalValue = $soDespesa ? $totalDespesas : ($soServico ? $totalServico : (float) $closing['total_geral']);
 
+        // Ajustes manuais (desconto/adiantamento/adicional) — entram no Recebimento final.
+        $ajuste        = \App\Models\FechamentoConsultorAjuste::where('user_id', $consultant->id)
+            ->where('year_month', $yearMonth)->first();
+        $desconto      = round((float) ($ajuste->desconto ?? 0), 2);
+        $adiantamento  = round((float) ($ajuste->adiantamento ?? 0), 2);
+        $adicional     = round((float) ($ajuste->adicional ?? 0), 2);
+        $temAjustes    = ($desconto != 0 || $adiantamento != 0 || $adicional != 0);
+        // Recebimento = valor base do relatório (conforme mode) − desconto − adiantamento + adicional.
+        $recebimento   = round($totalValue - $desconto - $adiantamento + $adicional, 2);
+
         $prefix       = $soDespesa ? 'Despesas' : 'Fechamento';
         $safeName     = $this->sanitizeFilename($consultant->name);
         $pdfFileName  = "{$prefix}_{$yearMonth}_{$safeName}.pdf";
@@ -460,6 +470,13 @@ class FechamentoConsultorController extends Controller
             'temDespesas'      => !empty($closing['despesas']) && !$soServico,
             'valorTotal'       => $this->brl($totalValue),
             'grupos'           => $soDespesa ? [] : $this->buildPdfGroups($rows),
+            'temAjustes'       => $temAjustes,
+            'descontoFmt'      => $this->brl($desconto),
+            'descontoDesc'     => $ajuste->desconto_desc ?? null,
+            'adiantamentoFmt'  => $this->brl($adiantamento),
+            'adicionalFmt'     => $this->brl($adicional),
+            'adicionalDesc'    => $ajuste->adicional_desc ?? null,
+            'recebimentoFmt'   => $this->brl($recebimento),
         ])->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
         file_put_contents($pdfFullPath, $pdf->output());
 
@@ -482,10 +499,14 @@ class FechamentoConsultorController extends Controller
 
 
     /** Mensagem padrão (corpo) do e-mail de fechamento — editável na tela antes de enviar. */
-    private function defaultMensagem(string $periodo, string $mode = 'ambos'): string
+    private function defaultMensagem(string $periodo, string $yearMonth, string $mode = 'ambos'): string
     {
         $doc = $mode === 'despesa' ? 'a apuração das despesas' : 'o fechamento';
-        return "Segue em anexo {$doc} referente ao período de {$periodo}.\n\nEm caso de dúvidas ou divergências, por gentileza entrar em contato.";
+        // Recebimento sempre no dia 20 do mês seguinte à competência.
+        $dataRecebimento = \Carbon\Carbon::parse($yearMonth . '-01')->addMonth()->day(20)->format('d/m/Y');
+        return "Este e-mail é apenas para informar que o seu recebimento será no dia {$dataRecebimento}.\n\n"
+            . "Segue em anexo {$doc} referente ao período de {$periodo}.\n\n"
+            . "ATENÇÃO: Para garantir o bom andamento dos processos financeiros, pedimos que, ao receber o fechamento, revise todas as informações com atenção e informe imediatamente ao departamento financeiro se houver necessidade de ajustes. Para consultores que emitem notas fiscais pedimos que as notas sejam enviadas com antecedência, para evitar impacto no fluxo do financeiro.";
     }
 
     // ─── Enviar fechamento por e-mail ───────────────────────────────────────────
@@ -522,7 +543,7 @@ class FechamentoConsultorController extends Controller
         $periodo      = $this->periodoExtenso($yearMonth);
         $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
         // Corpo editável (texto livre); vazio = mensagem padrão.
-        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo, $mode);
+        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo, $yearMonth, $mode);
 
         // Message-ID determinístico DESTA mensagem (sempre persistido) + chave da thread.
         $messageId    = $this->buildMessageId($consultant->id, $yearMonth);
@@ -720,7 +741,7 @@ class FechamentoConsultorController extends Controller
         $valorPreview   = $mode === 'despesa'
             ? (float) $closing['total_despesas']
             : ($mode === 'servicos' ? (float) $closing['total_servico'] : (float) $closing['total_geral']);
-        $mensagemPadrao = $this->defaultMensagem($periodo, $mode);
+        $mensagemPadrao = $this->defaultMensagem($periodo, $yearMonth, $mode);
         $mensagem       = trim((string) $request->input('mensagem'));
         $mensagem       = $mensagem !== '' ? $mensagem : $mensagemPadrao;
 
@@ -989,6 +1010,172 @@ class FechamentoConsultorController extends Controller
         return response()->json(['data' => $this->buildConsultoresData($yearMonth)]);
     }
 
+    // ─── Meu fechamento (próprio usuário) ─────────────────────────────────────
+    /**
+     * GET /my-closing/{yearMonth}
+     * Devolve, para o PRÓPRIO usuário autenticado, o MESMO recebimento que o admin vê
+     * na tela de fechamento — refletindo ajustes (desconto/adiantamento/adicional + motivos)
+     * e o recebimento final. Cada usuário só enxerga o próprio dado (sem vazamento).
+     *
+     * Identificação consultor × parceiro:
+     *  - PARCEIRO: usuário é o ADMIN do parceiro → type='parceiro_admin' E is_executive=true
+     *    (mesmo critério de parceiroAdminEmails do FechamentoParceiroController; é quem
+     *    recebe o valor agregado do parceiro). Reusa o cálculo do controller de parceiro.
+     *  - CONSULTOR: qualquer outro com movimento no fechamento. Um consultor com partner_id
+     *    (ex.: Raho) NÃO é parceiro_admin/is_executive → cai no fluxo de consultor, onde de
+     *    fato aparece em buildConsultoresData. Prioriza o fluxo de consultor.
+     *
+     * Payload normalizado:
+     *  { tipo, total_servico, total_despesas, total_base, desconto, desconto_desc,
+     *    adiantamento, adicional, adicional_desc, recebimento }
+     *  com total_base = total_servico + total_despesas
+     *  e  recebimento = total_base − desconto − adiantamento + adicional.
+     */
+    public function myClosing(Request $request, string $yearMonth): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Não autenticado.'], 401);
+        }
+
+        // ── PARCEIRO (admin do parceiro): só o parceiro_admin executivo do parceiro ──
+        if ($user->isParceiroAdmin() && $user->is_executive && $user->partner_id) {
+            $partner = \App\Models\Partner::find($user->partner_id);
+            if ($partner) {
+                $parceiroCtrl = app(FechamentoParceiroController::class);
+                // Reusa a MESMA listagem do admin e isola a linha deste parceiro,
+                // garantindo total_a_pagar + ajustes + recebimento idênticos ao fechamento.
+                $listReq  = Request::create('', 'GET', ['year_month' => $yearMonth]);
+                $listReq->setUserResolver(fn () => $user);
+                $rows     = $parceiroCtrl->index($listReq)->getData(true)['data'] ?? [];
+                $row      = collect($rows)->firstWhere('partner_id', $partner->id);
+
+                $totalBase     = round((float) ($row['total_a_pagar'] ?? 0), 2);
+                $totalDespesas = round((float) ($row['total_despesas'] ?? 0), 2);
+                $desconto      = round((float) ($row['desconto'] ?? 0), 2);
+                $adiantamento  = round((float) ($row['adiantamento'] ?? 0), 2);
+                $adicional     = round((float) ($row['adicional'] ?? 0), 2);
+
+                return response()->json(['data' => [
+                    'tipo'           => 'parceiro',
+                    'total_servico'  => round($totalBase - $totalDespesas, 2),
+                    'total_despesas' => $totalDespesas,
+                    'total_base'     => $totalBase,
+                    'desconto'       => $desconto,
+                    'desconto_desc'  => $row['desconto_desc'] ?? null,
+                    'adiantamento'   => $adiantamento,
+                    'adicional'      => $adicional,
+                    'adicional_desc' => $row['adicional_desc'] ?? null,
+                    'recebimento'    => round((float) ($row['recebimento'] ?? ($totalBase - $desconto - $adiantamento + $adicional)), 2),
+                ]]);
+            }
+        }
+
+        // ── CONSULTOR: acha a própria linha em buildConsultoresData (horistas+banco+fixos) ──
+        $data = $this->buildConsultoresData($yearMonth);
+        $row  = collect($data['horistas'])
+            ->merge($data['banco_horas'])
+            ->merge($data['fixos'])
+            ->firstWhere('user_id', $user->id);
+
+        if ($row) {
+            $totalServico  = round((float) ($row['total'] ?? 0), 2);
+            $totalDespesas = round((float) ($row['total_despesas'] ?? 0), 2);
+            $desconto      = round((float) ($row['desconto'] ?? 0), 2);
+            $adiantamento  = round((float) ($row['adiantamento'] ?? 0), 2);
+            $adicional     = round((float) ($row['adicional'] ?? 0), 2);
+
+            return response()->json(['data' => [
+                'tipo'           => 'consultor',
+                'total_servico'  => $totalServico,
+                'total_despesas' => $totalDespesas,
+                'total_base'     => round($totalServico + $totalDespesas, 2),
+                'desconto'       => $desconto,
+                'desconto_desc'  => $row['desconto_desc'] ?? null,
+                'adiantamento'   => $adiantamento,
+                'adicional'      => $adicional,
+                'adicional_desc' => $row['adicional_desc'] ?? null,
+                'recebimento'    => round((float) ($row['recebimento'] ?? ($totalServico + $totalDespesas - $desconto - $adiantamento + $adicional)), 2),
+            ]]);
+        }
+
+        // ── Sem movimento no fechamento: zeros + eventuais ajustes manuais salvos ──
+        $ajuste        = \App\Models\FechamentoConsultorAjuste::where('user_id', $user->id)
+            ->where('year_month', $yearMonth)->first();
+        $desconto      = round((float) ($ajuste->desconto ?? 0), 2);
+        $adiantamento  = round((float) ($ajuste->adiantamento ?? 0), 2);
+        $adicional     = round((float) ($ajuste->adicional ?? 0), 2);
+
+        return response()->json(['data' => [
+            'tipo'           => 'consultor',
+            'total_servico'  => 0.0,
+            'total_despesas' => 0.0,
+            'total_base'     => 0.0,
+            'desconto'       => $desconto,
+            'desconto_desc'  => $ajuste->desconto_desc ?? null,
+            'adiantamento'   => $adiantamento,
+            'adicional'      => $adicional,
+            'adicional_desc' => $ajuste->adicional_desc ?? null,
+            'recebimento'    => round(0 - $desconto - $adiantamento + $adicional, 2),
+        ]]);
+    }
+
+    /**
+     * POST /fechamento-consultor/{userId}/{yearMonth}/ajustes
+     * Salva (upsert) os ajustes manuais de um consultor no mês:
+     * desconto / adiantamento / adicional (+ descritivos de desconto e adicional).
+     * Recebimento = serviços + despesas − desconto − adiantamento + adicional.
+     */
+    public function salvarAjustes(Request $request, string $userId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
+        }
+
+        $data = $request->validate([
+            'desconto'       => 'nullable|numeric',
+            'desconto_desc'  => 'nullable|string',
+            'adiantamento'   => 'nullable|numeric',
+            'adicional'      => 'nullable|numeric',
+            'adicional_desc' => 'nullable|string',
+        ]);
+
+        $consultant = User::find($userId);
+        if (!$consultant) {
+            return response()->json(['success' => false, 'message' => 'Consultor não encontrado.'], 404);
+        }
+
+        $ajuste = \App\Models\FechamentoConsultorAjuste::updateOrCreate(
+            ['user_id' => (int) $userId, 'year_month' => $yearMonth],
+            [
+                'desconto'       => round((float) ($data['desconto'] ?? 0), 2),
+                'desconto_desc'  => $data['desconto_desc'] ?? null,
+                'adiantamento'   => round((float) ($data['adiantamento'] ?? 0), 2),
+                'adicional'      => round((float) ($data['adicional'] ?? 0), 2),
+                'adicional_desc' => $data['adicional_desc'] ?? null,
+            ]
+        );
+
+        // Recalcula o recebimento (serviços + despesas − desconto − adiantamento + adicional).
+        $closing       = $this->closingComDespesas($consultant, $yearMonth);
+        $totalServico  = (float) ($closing['total_servico'] ?? 0);
+        $totalDespesas = (float) ($closing['total_despesas'] ?? 0);
+        $recebimento   = round(
+            $totalServico + $totalDespesas
+            - (float) $ajuste->desconto
+            - (float) $ajuste->adiantamento
+            + (float) $ajuste->adicional,
+            2
+        );
+
+        return response()->json([
+            'success'     => true,
+            'ajuste'      => $ajuste,
+            'recebimento' => $recebimento,
+        ]);
+    }
+
     /** Computa horistas/banco_horas/fixos + totais (compartilhado por index, exportExcel e folha). */
     public function buildConsultoresData(string $yearMonth): array
     {
@@ -1057,6 +1244,12 @@ class FechamentoConsultorController extends Controller
             ->get()
             ->keyBy('notable_id');
 
+        // Ajustes manuais (desconto/adiantamento/adicional) por consultor no mês.
+        $ajustesMap = \App\Models\FechamentoConsultorAjuste::where('year_month', $yearMonth)
+            ->whereIn('user_id', $users->pluck('id'))
+            ->get()
+            ->keyBy('user_id');
+
         foreach ($users as $user) {
             $hist             = UserHourlyRateLog::effectiveValuesAt($user->id, $user, $from);
             $hourlyRate       = (float) ($hist['hourly_rate'] ?? 0);
@@ -1070,6 +1263,11 @@ class FechamentoConsultorController extends Controller
                 2
             );
 
+            $ajuste            = $ajustesMap->get($user->id);
+            $descontoAjuste    = round((float) ($ajuste->desconto ?? 0), 2);
+            $adiantamentoAjuste= round((float) ($ajuste->adiantamento ?? 0), 2);
+            $adicionalAjuste   = round((float) ($ajuste->adicional ?? 0), 2);
+
             $base = [
                 'user_id'           => $user->id,
                 'nome'              => $user->name,
@@ -1082,6 +1280,11 @@ class FechamentoConsultorController extends Controller
                 'rate_type'         => $rateType,
                 'effective_rate'    => $effectiveRate,
                 'total_despesas'    => round((float) ($despesasByUser[$user->id] ?? 0), 2),
+                'desconto'          => $descontoAjuste,
+                'desconto_desc'     => $ajuste->desconto_desc ?? null,
+                'adiantamento'      => $adiantamentoAjuste,
+                'adicional'         => $adicionalAjuste,
+                'adicional_desc'    => $ajuste->adicional_desc ?? null,
                 'envio_em'          => $envioMap[$user->id]['envio_em'] ?? null,
                 'envio_por'         => $envioMap[$user->id]['envio_por'] ?? null,
                 // Notas fiscais só para PJ AVULSO (sem parceiro). Consultor de parceiro PJ
@@ -1194,6 +1397,22 @@ class FechamentoConsultorController extends Controller
                     break;
             }
         }
+
+        // Recebimento = total (serviços) + despesas − desconto − adiantamento + adicional.
+        $addRecebimento = function (array $c): array {
+            $c['recebimento'] = round(
+                (float) ($c['total'] ?? 0)
+                + (float) ($c['total_despesas'] ?? 0)
+                - (float) ($c['desconto'] ?? 0)
+                - (float) ($c['adiantamento'] ?? 0)
+                + (float) ($c['adicional'] ?? 0),
+                2
+            );
+            return $c;
+        };
+        $horistas   = array_map($addRecebimento, $horistas);
+        $bancoHoras = array_map($addRecebimento, $bancoHoras);
+        $fixos      = array_map($addRecebimento, $fixos);
 
         return [
             'horistas'    => $horistas,

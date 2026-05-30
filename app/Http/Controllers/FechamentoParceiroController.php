@@ -78,10 +78,14 @@ class FechamentoParceiroController extends Controller
     }
 
     /** Mensagem padrão (corpo) do e-mail de fechamento — editável na tela antes de enviar. */
-    private function defaultMensagem(string $periodo, string $mode = 'ambos'): string
+    private function defaultMensagem(string $periodo, string $yearMonth, string $mode = 'ambos'): string
     {
         $doc = $mode === 'despesa' ? 'a apuração das despesas' : 'o fechamento';
-        return "Segue em anexo {$doc} referente ao período de {$periodo}.\n\nEm caso de dúvidas ou divergências, por gentileza entrar em contato.";
+        // Recebimento sempre no dia 20 do mês seguinte à competência.
+        $dataRecebimento = \Carbon\Carbon::parse($yearMonth . '-01')->addMonth()->day(20)->format('d/m/Y');
+        return "Este e-mail é apenas para informar que o seu recebimento será no dia {$dataRecebimento}.\n\n"
+            . "Segue em anexo {$doc} referente ao período de {$periodo}.\n\n"
+            . "ATENÇÃO: Para garantir o bom andamento dos processos financeiros, pedimos que, ao receber o fechamento, revise todas as informações com atenção e informe imediatamente ao departamento financeiro se houver necessidade de ajustes. Para consultores que emitem notas fiscais pedimos que as notas sejam enviadas com antecedência, para evitar impacto no fluxo do financeiro.";
     }
 
     // ─── Index ────────────────────────────────────────────────────────────────
@@ -113,8 +117,30 @@ class FechamentoParceiroController extends Controller
                 ->get()->keyBy('notable_id')
             : collect();
 
-        $data = $partners->map(function ($partner) use ($fechamentos, $envioMap, $notasMap) {
+        // Ajustes manuais (desconto/adiantamento/adicional) por parceiro no mês.
+        $ajustesMap = $yearMonth
+            ? \App\Models\FechamentoParceiroAjuste::where('year_month', $yearMonth)
+                ->get()->keyBy('partner_id')
+            : collect();
+
+        $data = $partners->map(function ($partner) use ($fechamentos, $envioMap, $notasMap, $ajustesMap, $yearMonth) {
             $f = $fechamentos->get($partner->id);
+
+            $ajuste       = $ajustesMap->get($partner->id);
+            $desconto     = round((float) ($ajuste->desconto ?? 0), 2);
+            $adiantamento = round((float) ($ajuste->adiantamento ?? 0), 2);
+            $adicional    = round((float) ($ajuste->adicional ?? 0), 2);
+
+            // Total a pagar = base (serviços + despesas), SEM ajustes. Recebimento = base − desconto − adiantamento + adicional.
+            // No snapshot fechado o total_a_pagar gravado JÁ inclui os ajustes (= recebimento); reconstrói a base p/ exibição.
+            if ($f?->isClosed()) {
+                $recebimento = round((float) ($f->total_a_pagar ?? 0), 2);
+                $totalAPagar = round($recebimento + $desconto + $adiantamento - $adicional, 2);
+            } else {
+                $totalAPagar = $yearMonth ? $this->parceiroTotals($partner, $yearMonth) : 0.0;
+                $recebimento = round($totalAPagar - $desconto - $adiantamento + $adicional, 2);
+            }
+
             return [
                 'partner_id'     => $partner->id,
                 'nome'           => $partner->name,
@@ -127,11 +153,18 @@ class FechamentoParceiroController extends Controller
                 'status'         => $f?->status ?? 'sem_registro',
                 'total_horas'    => (float) ($f?->total_horas ?? 0),
                 'total_despesas' => (float) ($f?->total_despesas ?? 0),
-                'total_a_pagar'  => (float) ($f?->total_a_pagar ?? 0),
+                'total_a_pagar'  => round($totalAPagar, 2),
                 'closed_at'      => $f?->closed_at?->toISOString(),
                 'closed_by_name' => $f?->closedByUser?->name,
                 'envio_em'       => $envioMap[$partner->id]['envio_em'] ?? null,
                 'envio_por'      => $envioMap[$partner->id]['envio_por'] ?? null,
+                // Ajustes do recebimento.
+                'desconto'       => $desconto,
+                'desconto_desc'  => $ajuste->desconto_desc ?? null,
+                'adiantamento'   => $adiantamento,
+                'adicional'      => $adicional,
+                'adicional_desc' => $ajuste->adicional_desc ?? null,
+                'recebimento'    => $recebimento,
             ];
         });
 
@@ -193,13 +226,20 @@ class FechamentoParceiroController extends Controller
         $totalServicos = round(collect($consultores)->sum('total'), 2);
         $totalDespesas = round(collect($despesas)->sum('valor'), 2);
 
+        // Ajustes manuais do recebimento entram no total a pagar gravado no snapshot.
+        $ajuste        = \App\Models\FechamentoParceiroAjuste::where('partner_id', $partnerId)
+            ->where('year_month', $yearMonth)->first();
+        $desconto      = round((float) ($ajuste->desconto ?? 0), 2);
+        $adiantamento  = round((float) ($ajuste->adiantamento ?? 0), 2);
+        $adicional     = round((float) ($ajuste->adicional ?? 0), 2);
+
         $fechamento->fill([
             'status'               => 'closed',
             'snapshot_consultores' => $consultores,
             'snapshot_despesas'    => $despesas,
             'total_horas'          => $totalHoras,
             'total_despesas'       => $totalDespesas,
-            'total_a_pagar'        => round($totalServicos + $totalDespesas, 2),
+            'total_a_pagar'        => round($totalServicos + $totalDespesas - $desconto - $adiantamento + $adicional, 2),
             'closed_at'            => now(),
             'closed_by'            => $request->user()->id,
             'notes'                => $request->input('notes'),
@@ -558,7 +598,7 @@ class FechamentoParceiroController extends Controller
         $totalAll       = $this->parceiroTotals($partner, $yearMonth); // serviços + despesas
         $totalDesp      = round(collect($this->despesasData((int) $partner->id, $yearMonth))->where('is_paid', false)->sum('valor'), 2);
         $valorPreview   = $mode === 'despesa' ? $totalDesp : ($mode === 'servicos' ? $totalAll - $totalDesp : $totalAll);
-        $mensagemPadrao = $this->defaultMensagem($periodo, $mode);
+        $mensagemPadrao = $this->defaultMensagem($periodo, $yearMonth, $mode);
         $mensagem       = trim((string) $request->input('mensagem'));
         $mensagem       = $mensagem !== '' ? $mensagem : $mensagemPadrao;
 
@@ -614,7 +654,7 @@ class FechamentoParceiroController extends Controller
 
         $periodo      = $this->periodoExtenso($yearMonth);
         $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
-        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo, $mode);
+        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo, $yearMonth, $mode);
 
         // Destinatários: e-mails informados na tela (To) ou, se vazios, os parceiro_admin.
         $customEmails = $request->input('emails') ?: [];
@@ -775,6 +815,62 @@ class FechamentoParceiroController extends Controller
         return response()->json([
             'success'          => true,
             'fechamento_email' => $partner->fechamento_email,
+        ]);
+    }
+
+    // ─── Ajustes do recebimento ──────────────────────────────────────────────────
+    /**
+     * POST /fechamento-parceiro/{partnerId}/{yearMonth}/ajustes
+     * Salva (upsert) os ajustes manuais de um parceiro no mês:
+     * desconto / adiantamento / adicional (+ descritivos de desconto e adicional).
+     * Recebimento = serviços + despesas − desconto − adiantamento + adicional.
+     */
+    public function salvarAjustes(Request $request, string $partnerId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
+        }
+
+        $data = $request->validate([
+            'desconto'       => 'nullable|numeric',
+            'desconto_desc'  => 'nullable|string',
+            'adiantamento'   => 'nullable|numeric',
+            'adicional'      => 'nullable|numeric',
+            'adicional_desc' => 'nullable|string',
+        ]);
+
+        $partner = Partner::find($partnerId);
+        if (!$partner) {
+            return response()->json(['success' => false, 'message' => 'Parceiro não encontrado.'], 404);
+        }
+
+        $ajuste = \App\Models\FechamentoParceiroAjuste::updateOrCreate(
+            ['partner_id' => (int) $partnerId, 'year_month' => $yearMonth],
+            [
+                'desconto'       => round((float) ($data['desconto'] ?? 0), 2),
+                'desconto_desc'  => $data['desconto_desc'] ?? null,
+                'adiantamento'   => round((float) ($data['adiantamento'] ?? 0), 2),
+                'adicional'      => round((float) ($data['adicional'] ?? 0), 2),
+                'adicional_desc' => $data['adicional_desc'] ?? null,
+            ]
+        );
+
+        // Recalcula o recebimento (serviços + despesas − desconto − adiantamento + adicional).
+        $totalAPagar = $this->parceiroTotals($partner, $yearMonth);
+        $recebimento = round(
+            $totalAPagar
+            - (float) $ajuste->desconto
+            - (float) $ajuste->adiantamento
+            + (float) $ajuste->adicional,
+            2
+        );
+
+        return response()->json([
+            'success'       => true,
+            'ajuste'        => $ajuste,
+            'total_a_pagar' => round($totalAPagar, 2),
+            'recebimento'   => $recebimento,
         ]);
     }
 }

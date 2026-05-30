@@ -782,6 +782,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/excel',                       [\App\Http\Controllers\FechamentoParceiroController::class, 'excel']);
             Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/email-preview',              [\App\Http\Controllers\FechamentoParceiroController::class, 'emailPreview']);
             Route::post('/fechamento-parceiro/{partnerId}/fechamento-email',                       [\App\Http\Controllers\FechamentoParceiroController::class, 'saveFechamentoEmail']);
+            // Ajustes do recebimento (desconto/adiantamento/adicional) do parceiro no mês.
+            Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/ajustes',                     [\App\Http\Controllers\FechamentoParceiroController::class, 'salvarAjustes']);
         });
 
         // 👤 FECHAMENTO CONSULTOR
@@ -809,6 +811,10 @@ Route::prefix('v1')->group(function () {
             Route::post('/fechamento-consultor/{userId}/{yearMonth}/enviar-email',       [\App\Http\Controllers\FechamentoConsultorController::class, 'enviarEmail']);
             Route::post('/fechamento-consultor/{userId}/{yearMonth}/limpar-envio',       [\App\Http\Controllers\FechamentoConsultorController::class, 'limparEnvio']);
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/excel',               [\App\Http\Controllers\FechamentoConsultorController::class, 'excel']);
+            // Ajustes do recebimento (desconto/adiantamento/adicional) do consultor no mês.
+            Route::post('/fechamento-consultor/{userId}/{yearMonth}/ajustes',            [\App\Http\Controllers\FechamentoConsultorController::class, 'salvarAjustes']);
+            // Recebimento do próprio usuário (meu-painel / partner-dashboard).
+            Route::get('/my-closing/{yearMonth}',                                        [\App\Http\Controllers\FechamentoConsultorController::class, 'myClosing']);
             Route::post('/fechamento-consultor/{userId}/{yearMonth}/email-preview',      [\App\Http\Controllers\FechamentoConsultorController::class, 'emailPreview']);
         });
 

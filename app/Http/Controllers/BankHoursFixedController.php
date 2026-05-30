@@ -4881,8 +4881,21 @@ class BankHoursFixedController extends Controller
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
             ->whereIn('timesheets.project_id', $projectIds)
             ->where('timesheets.status', '!=', 'rejected');
-        if ($dateFrom) $ts->where('timesheets.date', '>=', $dateFrom);
-        if ($dateTo)   $ts->where('timesheets.date', '<=', $dateTo);
+        // date_from/date_to: por serviço (padrão) ou por digitação (created_at).
+        $byDigitacao = $request->get('date_field') === 'digitacao';
+        if ($byDigitacao) {
+            if ($dateFrom) $ts->whereDate('timesheets.created_at', '>=', $dateFrom);
+            if ($dateTo)   $ts->whereDate('timesheets.created_at', '<=', $dateTo);
+        } else {
+            if ($dateFrom) $ts->where('timesheets.date', '>=', $dateFrom);
+            if ($dateTo)   $ts->where('timesheets.date', '<=', $dateTo);
+        }
+        // Competência: trava a data do serviço, independente do date_field.
+        if ($request->filled('competencia_start')) $ts->where('timesheets.date', '>=', $request->competencia_start);
+        if ($request->filled('competencia_end'))   $ts->where('timesheets.date', '<=', $request->competencia_end);
+        // Digitação (range opcional, created_at).
+        if ($request->filled('dig_from')) $ts->whereDate('timesheets.created_at', '>=', $request->dig_from);
+        if ($request->filled('dig_to'))   $ts->whereDate('timesheets.created_at', '<=', $request->dig_to);
         $ts = $ts->orderByDesc('timesheets.date')->orderByDesc('timesheets.id')->limit(500)->get();
 
         $fmtTime = fn ($v) => $v instanceof \DateTimeInterface ? $v->format('H:i') : (is_string($v) && strlen($v) >= 5 ? substr($v, -8, 5) : null);
@@ -4900,6 +4913,7 @@ class BankHoursFixedController extends Controller
             'data' => $ts->map(fn ($t) => [
                 'id'                 => $t->id,
                 'date'               => optional($t->date)->format('Y-m-d'),
+                'created_at'         => optional($t->created_at)->toIso8601String(),
                 'start_time'         => $fmtTime($t->start_time),
                 'end_time'           => $fmtTime($t->end_time),
                 'effort_minutes'     => $t->effort_minutes,
@@ -5131,9 +5145,23 @@ class BankHoursFixedController extends Controller
             ->whereRaw("timesheets.ticket ~ '^[0-9]{5}$'")
             ->where('timesheets.status', '!=', 'rejected');
 
+        // Competência: trava a data do serviço (afeta tickets E agregações via clone).
+        if ($request->filled('competencia_start')) $base->where('timesheets.date', '>=', $request->competencia_start);
+        if ($request->filled('competencia_end'))   $base->where('timesheets.date', '<=', $request->competencia_end);
+
+        // date_from/date_to: por serviço (padrão) ou por digitação (created_at).
+        $byDigitacao = $request->get('date_field') === 'digitacao';
         $periodQ = (clone $base);
-        if ($dateFrom) $periodQ->where('timesheets.date', '>=', $dateFrom);
-        if ($dateTo)   $periodQ->where('timesheets.date', '<=', $dateTo);
+        if ($byDigitacao) {
+            if ($dateFrom) $periodQ->whereDate('timesheets.created_at', '>=', $dateFrom);
+            if ($dateTo)   $periodQ->whereDate('timesheets.created_at', '<=', $dateTo);
+        } else {
+            if ($dateFrom) $periodQ->where('timesheets.date', '>=', $dateFrom);
+            if ($dateTo)   $periodQ->where('timesheets.date', '<=', $dateTo);
+        }
+        // Digitação (range opcional, created_at).
+        if ($request->filled('dig_from')) $periodQ->whereDate('timesheets.created_at', '>=', $request->dig_from);
+        if ($request->filled('dig_to'))   $periodQ->whereDate('timesheets.created_at', '<=', $request->dig_to);
         $ticketsInPeriod = $periodQ->select('timesheets.ticket')->distinct()->pluck('ticket')->toArray();
 
         if (empty($ticketsInPeriod)) return response()->json(['tickets' => []]);
@@ -5149,7 +5177,7 @@ class BankHoursFixedController extends Controller
                 DB::raw("MAX(movidesk_tickets.base_status) AS ticket_base_status"),
                 DB::raw("SUM(timesheets.effort_minutes) AS lifetime_minutes"),
                 DB::raw(
-                    "SUM(CASE WHEN timesheets.date BETWEEN " .
+                    "SUM(CASE WHEN " . ($byDigitacao ? 'timesheets.created_at::date' : 'timesheets.date') . " BETWEEN " .
                     "COALESCE(?, timesheets.date) AND COALESCE(?, timesheets.date) " .
                     "THEN timesheets.effort_minutes ELSE 0 END) AS period_minutes"
                 ),
@@ -5225,9 +5253,23 @@ class BankHoursFixedController extends Controller
             ->whereRaw("timesheets.ticket ~ '^[0-9]{5}$'")
             ->where('timesheets.status', '!=', 'rejected');
 
+        // Competência: trava a data do serviço (afeta tickets E agregações via clone).
+        if ($request->filled('competencia_start')) $base->where('timesheets.date', '>=', $request->competencia_start);
+        if ($request->filled('competencia_end'))   $base->where('timesheets.date', '<=', $request->competencia_end);
+
+        // date_from/date_to: por serviço (padrão) ou por digitação (created_at).
+        $byDigitacao = $request->get('date_field') === 'digitacao';
         $periodQ = (clone $base);
-        if ($dateFrom) $periodQ->where('timesheets.date', '>=', $dateFrom);
-        if ($dateTo)   $periodQ->where('timesheets.date', '<=', $dateTo);
+        if ($byDigitacao) {
+            if ($dateFrom) $periodQ->whereDate('timesheets.created_at', '>=', $dateFrom);
+            if ($dateTo)   $periodQ->whereDate('timesheets.created_at', '<=', $dateTo);
+        } else {
+            if ($dateFrom) $periodQ->where('timesheets.date', '>=', $dateFrom);
+            if ($dateTo)   $periodQ->where('timesheets.date', '<=', $dateTo);
+        }
+        // Digitação (range opcional, created_at).
+        if ($request->filled('dig_from')) $periodQ->whereDate('timesheets.created_at', '>=', $request->dig_from);
+        if ($request->filled('dig_to'))   $periodQ->whereDate('timesheets.created_at', '<=', $request->dig_to);
         $ticketsInPeriod = $periodQ->select('timesheets.ticket')->distinct()->pluck('ticket')->toArray();
 
         if (empty($ticketsInPeriod)) return response()->json(['tickets' => []]);
@@ -5243,7 +5285,7 @@ class BankHoursFixedController extends Controller
                 DB::raw("MAX(movidesk_tickets.base_status) AS ticket_base_status"),
                 DB::raw("SUM(timesheets.effort_minutes) AS lifetime_minutes"),
                 DB::raw(
-                    "SUM(CASE WHEN timesheets.date BETWEEN " .
+                    "SUM(CASE WHEN " . ($byDigitacao ? 'timesheets.created_at::date' : 'timesheets.date') . " BETWEEN " .
                     "COALESCE(?, timesheets.date) AND COALESCE(?, timesheets.date) " .
                     "THEN timesheets.effort_minutes ELSE 0 END) AS period_minutes"
                 ),

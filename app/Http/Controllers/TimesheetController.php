@@ -329,6 +329,15 @@ class TimesheetController extends Controller
             }
         }
 
+        // Competência: trava a DATA DO SERVIÇO no intervalo, independente do date_field.
+        // Permite filtrar por digitação num range amplo sem trazer serviço de outros meses.
+        if ($request->filled('competencia_start')) {
+            $query->where('timesheets.date', '>=', $request->competencia_start);
+        }
+        if ($request->filled('competencia_end')) {
+            $query->where('timesheets.date', '<=', $request->competencia_end);
+        }
+
         if ($request->boolean('only_investimento_comercial')) {
             $query->whereHas('project', fn ($q) => $q->where('is_investimento_comercial', true));
         }
@@ -2378,13 +2387,15 @@ class TimesheetController extends Controller
 
         $request->validate([
             'customer_id' => 'required|integer',
-            'start_date'  => 'required|date',
-            'end_date'    => 'required|date',
+            // Opcionais: quando só a competência é usada, o período (digitação) pode vir vazio.
+            'start_date'  => 'nullable|date',
+            'end_date'    => 'nullable|date',
         ]);
 
         $customerId  = (int) $request->customer_id;
-        $startDate   = $request->start_date;
-        $endDate     = $request->end_date;
+        // Competência (serviço) trava o conjunto; o período (digitação) é opcional → fallback p/ a competência.
+        $startDate   = $request->start_date ?: $request->competencia_start;
+        $endDate     = $request->end_date ?: $request->competencia_end;
         $statusInput = $request->input('status');
         $statuses    = $statusInput === null
             ? []
@@ -2434,6 +2445,10 @@ class TimesheetController extends Controller
                 $base->whereHas('project.serviceType', fn($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
             }
         }
+
+        // Competência: trava a DATA DO SERVIÇO (afeta tickets-no-período E agregações via clone).
+        if ($request->filled('competencia_start')) $base->where('timesheets.date', '>=', $request->competencia_start);
+        if ($request->filled('competencia_end'))   $base->where('timesheets.date', '<=', $request->competencia_end);
 
         // date_field: 'date' (padrão) ou 'created_at' (data de inclusão).
         $useCreatedAt = $request->input('date_field') === 'created_at';

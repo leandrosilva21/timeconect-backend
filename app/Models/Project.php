@@ -834,8 +834,83 @@ class Project extends Model
     }
 
     /**
+     * Decomposição de horas pela ÓTICA DA GESTÃO DE PROJETOS — FONTE DA VERDADE canônica
+     * (decisão 2026-06-01). Espelha exatamente ProjectController@index (gestão-mode):
+     *   disponível − apontado − consumo inicial − consumo dos filhos.
+     * Filhos Fechado/BH-Fixo comprometem as horas CONTRATADAS (vendidas + aporte do filho);
+     * On Demand consome pelo apontado; filho Projeto/BH-Mensal é ignorado. NÃO usa
+     * initial_hours_balance (≠ getGeneralHoursBalance).
+     *
+     * @return array{available: float, consumed: float, balance: float}
+     */
+    public function managementBreakdown(): array
+    {
+        $this->loadMissing('contractType', 'childProjects.contractType');
+
+        if ($this->isOnDemand()) {
+            return ['available' => 0.0, 'consumed' => 0.0, 'balance' => 0.0];
+        }
+
+        $consumed = round((($this->timesheets()
+            ->whereIn('status', ['approved', 'pending'])
+            ->sum('effort_minutes')) ?? 0) / 60, 2);
+        $initialConsumed = (float) ($this->initial_hours_consumed ?? 0);
+
+        // Consumo dos filhos — mesma regra do ProjectController gestão-mode.
+        $childrenConsumed = 0.0;
+        if ($this->hasChildProjects()) {
+            foreach ($this->childProjects as $child) {
+                if ($child->isAusterFrozen()) continue;
+                if (!$child->contractType) continue;
+                $code = (string) ($child->contractType->code ?? '');
+                $name = strtolower(trim($child->contractType->name));
+                $isClosed   = $code === 'closed'      || $name === 'fechado';
+                $isBhFixo   = $code === 'fixed_hours' || $name === 'banco de horas fixo';
+                $isOnDemand = $code === 'on_demand'   || $name === 'on demand';
+                if ($isClosed || $isBhFixo) {
+                    $childrenConsumed += (float) $child->getTotalAvailableHours();
+                } elseif ($isOnDemand) {
+                    $childLogged = round((($child->timesheets()
+                        ->whereIn('status', ['approved', 'pending'])
+                        ->sum('effort_minutes')) ?? 0) / 60, 2);
+                    $childrenConsumed += round($childLogged + (float) ($child->initial_hours_consumed ?? 0), 2);
+                }
+                // else: filho Projeto / BH-Mensal — ignorado (idêntico à Gestão).
+            }
+        }
+
+        if ($this->isBankHoursMonthly()) {
+            $dbAccum = $this->getRawOriginal('accumulated_sold_hours') ?? $this->accumulated_sold_hours;
+            if ($dbAccum !== null && $dbAccum > 0) {
+                $accumulated = (int) $dbAccum;
+            } else {
+                $startDate = $this->start_date ? \Carbon\Carbon::parse($this->start_date) : null;
+                $refDate   = $this->encerramento_date ? \Carbon\Carbon::parse($this->encerramento_date) : \Carbon\Carbon::now();
+                $months    = $startDate ? max(1, (int) $startDate->diffInMonths($refDate) + 1) : 1;
+                $accumulated = $months * (int) ($this->sold_hours ?? 0);
+            }
+            $available = $accumulated + ($this->getTotalAvailableHours() - ($this->sold_hours ?? 0));
+        } else {
+            $available = (float) $this->getTotalAvailableHours();
+        }
+
+        $totalConsumed = round($consumed + $initialConsumed + $childrenConsumed, 2);
+        return [
+            'available' => round($available, 2),
+            'consumed'  => $totalConsumed,
+            'balance'   => round($available - $totalConsumed, 2),
+        ];
+    }
+
+    /** Saldo pela ótica da Gestão de Projetos (fonte da verdade). Ver managementBreakdown(). */
+    public function managementHoursBalance(): float
+    {
+        return $this->managementBreakdown()['balance'];
+    }
+
+    /**
      * Calcular o saldo geral de horas do projeto excluindo o mês atual
-     * 
+     *
      * Este método calcula o saldo considerando apenas meses fechados (até o final do mês anterior).
      * Para projetos "Banco de Horas Mensal", usa accumulated_sold_hours calculado até o mês anterior.
      * Exclui horas apontadas do mês atual.

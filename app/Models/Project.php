@@ -677,7 +677,11 @@ class Project extends Model
     /** Consumo de coordenação = horas apontadas pelos coordenadores do projeto. */
     public function getCoordinationConsumedHours(bool $includeChildProjects = false): float
     {
-        return $this->getCoordinatorLoggedHours($includeChildProjects);
+        // Regra "Horas Apontáveis" (decisão 2026-06-01): o CONSUMIDO do banco de horas
+        // apontáveis = CONSUMO REAL (mesmo da Gestão de Projetos), não as horas lançadas
+        // pelo coordenador. Assim o bloco "Horas Apontáveis" e a visão do coordenador
+        // (Horas Apontáveis disponíveis = informadas − consumo real) batem com o card.
+        return $this->managementBreakdown()['consumed'];
     }
 
     /**

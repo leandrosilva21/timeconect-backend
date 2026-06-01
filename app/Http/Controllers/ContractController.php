@@ -80,13 +80,12 @@ class ContractController extends Controller
 
             foreach ($paginated->items() as $contract) {
                 if ($contract->project) {
-                    $logged  = (float) ($timesheetSums[$contract->project_id] ?? 0);
-                    $consumed = round($logged / 60, 1);
-                    $contract->project->setAttribute('consumed_hours', $consumed);
-                    $contract->project->setAttribute('general_hours_balance', round(
-                        ($contract->project->sold_hours ?? 0) + ($contract->project->hour_contribution ?? 0) - $consumed,
-                        1
-                    ));
+                    // Saldo + consumido pela regra da GESTÃO DE PROJETOS (fonte da verdade) — conta os
+                    // subprojetos (Fechado/BH-Fixo pelas contratadas, On Demand pelo apontado).
+                    // Antes ignorava filhos (saldo inflado, ex.: AUSTER 9602 vs 1957 real).
+                    $b = $contract->project->managementBreakdown();
+                    $contract->project->setAttribute('consumed_hours', round($b['consumed'], 1));
+                    $contract->project->setAttribute('general_hours_balance', round($b['balance'], 1));
                 }
             }
         }
@@ -1273,8 +1272,10 @@ class ContractController extends Controller
 
     private function formatProjectCard(\App\Models\Project $project, float $loggedMinutes = 0): array
     {
-        $consumed = round($loggedMinutes / 60, 1);
-        $saldo    = round(($project->sold_hours ?? 0) - $consumed, 1);
+        // Saldo + consumido pela regra da GESTÃO DE PROJETOS (fonte da verdade) — conta os subprojetos.
+        $b        = $project->managementBreakdown();
+        $consumed = round($b['consumed'], 1);
+        $saldo    = round($b['balance'], 1);
 
         return [
             'card_type'             => 'project',

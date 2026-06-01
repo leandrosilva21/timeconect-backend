@@ -59,6 +59,27 @@ class Attachment extends Model
     ];
 
     /**
+     * FASE 11.7 — Compat FE: os accessors legados (abaixo) PRECISAM ir no JSON.
+     *
+     * Após o PR 7b o FE de Contract/Kanban/Chat/Mensagens continua lendo os nomes
+     * legados (`type`, `path`, `size`, `file_path`, `file_size`, `message_id`) — que
+     * deixaram de ser colunas e viraram accessors. Sem `$appends`, accessor não
+     * serializa: a relação devolvia o anexo SEM esses campos → o FE renderizava
+     * label/tamanho vazios e sumia com o item nas telas que agrupam/condicionam por
+     * eles ("aparece no upload, some no refresh"). `human_size` entra por robustez
+     * (já vinha via AttachmentController::present(); aqui cobre qualquer serialização).
+     */
+    protected $appends = [
+        'type',
+        'path',
+        'size',
+        'file_path',
+        'file_size',
+        'message_id',
+        'human_size',
+    ];
+
+    /**
      * Uploader (único FK real).
      */
     public function uploader(): BelongsTo

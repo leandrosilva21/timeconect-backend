@@ -632,6 +632,16 @@ class BankHoursFixedController extends Controller
         }
         // ─────────────────────────────────────────────────────────────────────────
 
+        // has_children: o pai tem subprojetos (não-frozen) → habilita a aba "Projetos" pro
+        // cliente drillar nos filhos, independente do tipo de serviço (Fechado/Projeto/etc).
+        $hasChildren = false;
+        foreach ($parentProjects as $proj) {
+            foreach ($proj->childProjects ?? [] as $child) {
+                if (method_exists($child, 'isAusterFrozen') && $child->isAusterFrozen()) continue;
+                $hasChildren = true; break 2;
+            }
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Dados do dashboard obtidos com sucesso',
@@ -654,6 +664,7 @@ class BankHoursFixedController extends Controller
                 'contributed_hours_history' => $contributionHistory,
                 'has_support' => $hasSupport,
                 'has_architecture' => $hasArchitecture,
+                'has_children' => $hasChildren,
                 'customer_id' => $customerId,
                 'project_id' => $projectId ? (int) $projectId : null
             ]
@@ -4961,11 +4972,16 @@ class BankHoursFixedController extends Controller
             return response()->json(['success' => false, 'message' => 'project_id obrigatório'], 422);
         }
 
+        $isClienteViewer = $user && method_exists($user, 'isCliente') && $user->isCliente();
         $projectIds = Project::where(function ($q) use ($projectId) {
                 $q->where('id', $projectId)->orWhere('parent_project_id', $projectId);
             })
             ->when($customerId, fn ($q) => $q->where('customer_id', $customerId))
             ->whereNull('deleted_at')
+            // Cliente NÃO vê apontamentos de subprojetos Fechado (escopo fechado = horas internas;
+            // o cliente paga pelo escopo, não pelas horas apontadas do Fechado).
+            ->when($isClienteViewer, fn ($q) => $q->whereDoesntHave('contractType', fn ($c) =>
+                $c->where('code', 'closed')->orWhereRaw("lower(trim(name)) = 'fechado'")))
             ->pluck('id');
 
         if ($projectIds->isEmpty()) {

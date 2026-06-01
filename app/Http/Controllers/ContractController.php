@@ -1297,7 +1297,8 @@ class ContractController extends Controller
             'coordinators'          => $project->coordinators->pluck('name'),
             // Banco de coordenação — pra lente do coordenador no card (vendidas = banco).
             'coordination_hours'          => $project->coordination_hours,
-            'coordination_consumed_hours' => $project->getCoordinationConsumedHours(),
+            // "Horas Apontáveis consumidas" = consumo real (reusa o breakdown já calculado).
+            'coordination_consumed_hours' => $b['consumed'],
             'kanban_coordinator_override_id' => $project->kanban_coordinator_override_id,
             'consultants'           => $project->consultants->pluck('name'),
             'executivo_conta_name'  => $project->executivoConta?->name ?? $project->customer?->executive?->name,

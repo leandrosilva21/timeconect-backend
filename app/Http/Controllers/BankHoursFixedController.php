@@ -346,17 +346,20 @@ class BankHoursFixedController extends Controller
                         continue;
                     }
 
-                    // Verificar se o projeto filho é do tipo "Fechado"
-                    $isClosedContract = $childProject->contractType &&
-                                        strtolower(trim($childProject->contractType->name)) === 'fechado';
+                    // Regra de negócio: o pai consome as HORAS CONTRATADAS (vendidas + aporte)
+                    // dos filhos Fechado E Banco de Horas Fixo; só On Demand consome pelo apontado.
+                    // Alinhado a Project::getGeneralHoursBalance (fonte da verdade da lista/saldo).
+                    $childName = $childProject->contractType ? strtolower(trim($childProject->contractType->name)) : '';
+                    $childCode = (string) ($childProject->contractType->code ?? '');
+                    $isClosedContract = $childName === 'fechado';
+                    $isBhFixoChild    = $childCode === 'fixed_hours' || $childName === 'banco de horas fixo';
 
-                    if ($isClosedContract) {
-                        // Para projetos fechados: usar total de horas disponíveis (inclui aportes novos + fallback legado)
-                        $childTotalHours = $childProject->getTotalAvailableHours();
-                        $consumedHours += $childTotalHours;
+                    if ($isClosedContract || $isBhFixoChild) {
+                        // Fechado E BH Fixo: comprometem as horas contratadas do filho no saldo do pai,
+                        // independente do apontado.
+                        $consumedHours += $childProject->getTotalAvailableHours();
                     } else {
-                        // Para outros tipos (inclui BH Fixo): apontadas + initial_hours_consumed
-                        // (alinhado com ProjectController::index gestao mode)
+                        // On Demand / demais: apontadas + initial_hours_consumed.
                         $childLoggedMinutes = $childProject->timesheets()
                             ->whereIn('status', ['approved', 'pending'])
                             ->sum('effort_minutes') ?? 0;
@@ -540,16 +543,22 @@ class BankHoursFixedController extends Controller
         $architectureMonthConsumedHours = 0.0;
 
         foreach ($parentProjects as $parentProject) {
-            $processProject = function ($proj, $stId, &$accum, &$accumMonth)
+            $processProject = function ($proj, $stId, &$accum, &$accumMonth, $isChild = false)
                 use ($targetDate, $monthStart, $monthEnd) {
                 if ($proj->service_type_id !== $stId) {
                     return;
                 }
-                $isClosedContract = $proj->contractType &&
-                                    strtolower(trim($proj->contractType->name)) === 'fechado';
+                // Regra: filho Fechado E filho Banco de Horas Fixo comprometem as horas
+                // CONTRATADAS (vendidas + aporte) no saldo do pai; só On Demand (e o próprio
+                // pai) consomem pelo apontado. Alinhado a getGeneralHoursBalance.
+                $name = $proj->contractType ? strtolower(trim($proj->contractType->name)) : '';
+                $code = (string) ($proj->contractType->code ?? '');
+                $isClosedContract = $name === 'fechado';
+                $isBhFixoChild    = $isChild && ($code === 'fixed_hours' || $name === 'banco de horas fixo');
+                $commitsSold      = $isClosedContract || $isBhFixoChild;
 
                 // Consumo acumulado
-                if ($isClosedContract) {
+                if ($commitsSold) {
                     $accum += $proj->getTotalAvailableHours();
                 } else {
                     $mins = $proj->timesheets()->whereIn('status', ['approved', 'pending'])->sum('effort_minutes') ?? 0;
@@ -565,9 +574,9 @@ class BankHoursFixedController extends Controller
                     ->sum('effort_minutes') ?? 0;
                 $accumMonth += round($mins / 60, 2);
 
-                // Fechado consome o valor vendido na data de início — soma sold_hours
-                // quando o start_date cai dentro do período do filtro.
-                if ($isClosedContract && $proj->start_date) {
+                // Fechado/BH-Fixo (filho) consome o valor vendido na data de início — soma
+                // sold_hours quando o start_date cai dentro do período do filtro.
+                if ($commitsSold && $proj->start_date) {
                     $sd = $proj->start_date->format('Y-m-d');
                     if ($sd >= $monthStart && $sd <= $monthEnd) {
                         $accumMonth += (float) ($proj->sold_hours ?? 0);
@@ -586,12 +595,12 @@ class BankHoursFixedController extends Controller
             if ($parentProject->hasChildProjects()) {
                 foreach ($parentProject->childProjects as $childProject) {
                     if ($childProject->isAusterFrozen()) continue;
-                    $processProject($childProject, $serviceTypeProjetoId, $projectsConsumedHours, $projectsMonthConsumedHours);
+                    $processProject($childProject, $serviceTypeProjetoId, $projectsConsumedHours, $projectsMonthConsumedHours, true);
                     if ($parentProject->service_type_id !== $serviceTypeManutId) {
-                        $processProject($childProject, $serviceTypeManutId, $maintenanceConsumedHours, $maintenanceMonthConsumedHours);
+                        $processProject($childProject, $serviceTypeManutId, $maintenanceConsumedHours, $maintenanceMonthConsumedHours, true);
                     }
                     if ($serviceTypeArqId && $parentProject->service_type_id !== $serviceTypeArqId) {
-                        $processProject($childProject, $serviceTypeArqId, $architectureConsumedHours, $architectureMonthConsumedHours);
+                        $processProject($childProject, $serviceTypeArqId, $architectureConsumedHours, $architectureMonthConsumedHours, true);
                     }
                 }
             }

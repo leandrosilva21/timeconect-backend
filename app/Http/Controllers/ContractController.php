@@ -128,10 +128,14 @@ class ContractController extends Controller
         ]);
 
         $contract = DB::transaction(function () use ($validated, $request) {
+            // Subprojeto (tem parent_project_id): regra antiga — nasce em "Início Autorizado",
+            // não em "Novo Contrato" (o contrato pai já está aprovado; o filho não passa pela
+            // revisão de novo contrato). Demais contratos nascem em rascunho/backlog.
+            $isSubproject = !empty($validated['parent_project_id']);
             $data = collect($validated)->except('contacts')->merge([
                 'created_by_id' => auth()->id(),
-                'status'        => Contract::STATUS_RASCUNHO,
-                'kanban_status' => Contract::KANBAN_BACKLOG,
+                'status'        => $isSubproject ? Contract::STATUS_INICIO_AUTORIZADO : Contract::STATUS_RASCUNHO,
+                'kanban_status' => $isSubproject ? Contract::KANBAN_INICIO_AUTORIZADO : Contract::KANBAN_BACKLOG,
             ])->toArray();
 
             if (empty($data['executivo_conta_id'])) {

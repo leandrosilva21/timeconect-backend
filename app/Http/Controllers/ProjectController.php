@@ -1095,11 +1095,15 @@ class ProjectController extends Controller
         $project->status_display = $project->status_display;
         $project->contract_type_display = $project->contract_type_display;
 
-        // Adicionar saldo de horas geral calculado
+        // Saldo + consumido pela regra da GESTÃO DE PROJETOS (fonte da verdade) — conta os
+        // subprojetos e popula consumed_hours (antes o detalhe mostrava 0). Mantém o detalhe
+        // batendo com a lista/kanban/gestão. NÃO usa initial_hours_balance.
         try {
-            $project->general_hours_balance = $project->getGeneralHoursBalance(false);
+            $b = $project->managementBreakdown();
+            $project->consumed_hours = $b['consumed'];
+            $project->general_hours_balance = $b['balance'];
         } catch (\Throwable $e) {
-            try { \Log::warning('ProjectController@show: falha ao calcular general_hours_balance', ['error' => $e->getMessage(), 'project_id' => $project->id]); } catch (\Throwable $_) {}
+            try { \Log::warning('ProjectController@show: falha ao calcular saldo/consumo', ['error' => $e->getMessage(), 'project_id' => $project->id]); } catch (\Throwable $_) {}
             $project->general_hours_balance = null;
         }
 

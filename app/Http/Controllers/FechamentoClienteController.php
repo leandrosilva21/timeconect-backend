@@ -1095,12 +1095,34 @@ class FechamentoClienteController extends Controller
             $byContrato[$r['contrato'] ?? ($r['projeto'] ?? '—')][] = $r;
         }
 
+        // Observação → HTML seguro pro PDF/preview: preserva quebras de linha
+        // (tags de bloco/<br> viram \n), remove o resto das tags, decodifica
+        // entidades, colapsa quebras múltiplas, escapa e re-quebra com <br>.
+        $cleanObs = function ($raw): string {
+            $raw = (string) ($raw ?? '');
+            if (trim($raw) === '') return '—';
+            $t = preg_replace('/<\s*(br|\/p|\/div|\/li|\/tr|\/h[1-6])\s*\/?>/i', "\n", $raw);
+            $t = html_entity_decode(strip_tags((string) $t), ENT_QUOTES | ENT_HTML5);
+            // URLs com percent-encoding (%C3%B4…) viram texto legível — tira o "lixo de código".
+            $t = preg_replace_callback('#https?://\S+#u', fn ($m) => rawurldecode($m[0]), (string) $t);
+            // nbsp (&nbsp; → \xC2\xA0) vira espaço normal, senão linhas "em branco" não colapsam.
+            $t = str_replace("\xC2\xA0", ' ', (string) $t);
+            // Remove espaços ao redor de cada quebra → linhas-fantasma (de imagem removida) viram \n contíguos.
+            $t = preg_replace('/[ \t]*\n[ \t]*/u', "\n", (string) $t);
+            // Colapsa o gap deixado pelas imagens: 3+ quebras → 1 linha em branco só.
+            $t = preg_replace('/\n{3,}/u', "\n\n", (string) $t);
+            $t = trim((string) $t);
+            return $t === '' ? '—' : nl2br(e($t));
+        };
+
         $fmtLinha = fn (array $l): array => [
-            'data'      => isset($l['data']) ? Carbon::parse($l['data'])->format('d/m/Y') : '',
-            'consultor' => $l['consultor'] ?? '—',
-            'ticket'    => $l['ticket'] ?? '',
-            'titulo'    => $l['titulo'] ?? '',
-            'horas_fmt' => $this->fmtHoras((float) ($l['horas'] ?? 0)),
+            'data'        => isset($l['data']) ? Carbon::parse($l['data'])->format('d/m/Y') : '',
+            'consultor'   => $l['consultor'] ?? '—',
+            'ticket'      => $l['ticket'] ?? '',
+            'titulo'      => $l['titulo'] ?? '',
+            'horas_fmt'   => $this->fmtHoras((float) ($l['horas'] ?? 0)),
+            'observacao'  => $l['observacao'] ?? null,
+            'observacao_html' => $cleanObs($l['observacao'] ?? null),
         ];
 
         $grupos = [];

@@ -3364,6 +3364,7 @@ class ProjectController extends Controller
         }
         $totalAportes = array_sum($aporteByYm);
         $lastIndex = $months - 1;
+        $prevAccumAporte = 0.0;
 
         $rows = [];
         $accumulatedHours = 0.0;
@@ -3380,6 +3381,9 @@ class ProjectController extends Controller
             $accumAporte = $i === $lastIndex
                 ? $totalAportes
                 : array_sum(array_filter($aporteByYm, fn ($k) => $k <= $ym, ARRAY_FILTER_USE_KEY));
+            // Aporte desta linha (incremento do acumulado) — exibido como "+Xh aporte" na tela.
+            $monthAporte = round($accumAporte - $prevAccumAporte, 2);
+            $prevAccumAporte = $accumAporte;
 
             if ($isMonthly) {
                 $accumulatedHours += $hoursPerMonth;
@@ -3404,6 +3408,7 @@ class ProjectController extends Controller
             $rows[] = [
                 'year_month' => $ym,
                 'vendidas_hours' => $vendidasHours,
+                'aporte_hours' => $monthAporte,
                 'consumption_hours' => $consumptionHours,
                 'accumulated_consumption_hours' => round($accumulatedConsumptionHours, 2),
                 'balance_hours' => $balanceHours,

@@ -311,7 +311,8 @@ class FechamentoClienteController extends Controller
             ->whereNull('deleted_at')
             ->whereHas('project', function ($q) use ($customerId, $contractCode, $projectId) {
                 $q->where('customer_id', $customerId)
-                  ->where('is_investimento_comercial', false);
+                  ->where('is_investimento_comercial', false)
+                  ->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand'));
                 if ($contractCode) {
                     $q->whereHas('contractType', fn ($q2) => $q2->where('code', $contractCode));
                 }
@@ -443,7 +444,8 @@ class FechamentoClienteController extends Controller
         [$from, $to] = $this->period($yearMonth);
 
         $timesheets = Timesheet::with(['user:id,name', 'project:id,name,code'])
-            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
+            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)
+                ->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand')))
             ->whereBetween('date', [$from, $to])
             ->whereIn('status', [Timesheet::STATUS_PENDING, Timesheet::STATUS_ADJUSTMENT_REQUESTED])
             ->whereNull('deleted_at')
@@ -595,12 +597,13 @@ class FechamentoClienteController extends Controller
 
         $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
 
-        $projectIds = Timesheet::whereBetween('date', [$from, $to])
-            ->whereNotIn('status', $excludeStatuses)
-            ->whereNull('deleted_at')
-            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
-            ->distinct()
-            ->pluck('project_id');
+        // Fechamento de cliente lista APENAS contratos On Demand do cliente.
+        // Base nos PROJETOS On Demand (não em timesheets) para que um contrato
+        // On Demand sem consumo no mês também apareça (= consumo / 0h).
+        $projectIds = Project::where('customer_id', $customerId)
+            ->where('is_investimento_comercial', false)
+            ->whereHas('contractType', fn ($q) => $q->where('code', 'on_demand'))
+            ->pluck('id');
 
         if ($projectIds->isEmpty()) {
             return [];

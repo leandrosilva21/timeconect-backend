@@ -188,8 +188,10 @@ class BankHoursFixedController extends Controller
         $parentProjects = $query->get();
 
         foreach ($parentProjects as $parentProject) {
-            // getGeneralHoursBalance já subtrai initial_hours_consumed do pai (fix f727001) e exclui filhos frozen
-            $hoursBalance += $parentProject->getGeneralHoursBalance();
+            // Saldo pela ótica da Gestão de Contratos (fonte da verdade): managementBreakdown
+            // (não re-soma initial_hours_balance nem subtrai coordenação). Reconcilia com o card
+            // de consumo, que já usa a mesma regra (filho Fechado/BH-Fixo consome contratadas).
+            $hoursBalance += $parentProject->managementBreakdown()['balance'];
         }
 
         // Arredondar para 2 casas decimais
@@ -869,11 +871,12 @@ class BankHoursFixedController extends Controller
                 $consumed        = (float) $totalAvailable;
                 $adjustedBalance = 0.0;
             } else {
-                // BH Fixo e outros: consumo = apontamentos + horas iniciais já consumidas
-                $balance         = round($project->getGeneralHoursBalance(), 2);
-                $initialConsumed = (float) ($project->initial_hours_consumed ?? 0);
-                $consumed        = round(max(0, $totalAvailable - $balance) + $initialConsumed, 2);
-                $adjustedBalance = round($balance - $initialConsumed, 2);
+                // BH Fixo e outros: consumo e saldo pela ótica da Gestão de Contratos (fonte da
+                // verdade). managementBreakdown já inclui initial_hours_consumed e o consumo dos
+                // filhos — não re-soma initial_hours_balance nem subtrai coordenação.
+                $b               = $project->managementBreakdown();
+                $consumed        = round($b['consumed'], 2);
+                $adjustedBalance = round($b['balance'], 2);
             }
             return [
                 'id' => $project->id,

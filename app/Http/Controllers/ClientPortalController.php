@@ -661,7 +661,10 @@ class ClientPortalController extends Controller
             }
 
             try {
-                $balance = $p->getGeneralHoursBalance(false);
+                // Saldo pela ótica da Gestão de Contratos (fonte da verdade): managementBreakdown
+                // NÃO re-soma initial_hours_balance nem subtrai horas de coordenação, ao contrário
+                // do antigo getGeneralHoursBalance — que inflava o saldo visto pelo cliente.
+                $balance = $p->managementBreakdown()['balance'];
             } catch (\Throwable $e) {
                 $balance = null;
             }

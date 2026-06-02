@@ -35,7 +35,7 @@ class FechamentoConsultorController extends Controller
     private function effectiveHourlyRate(float $hourlyRate, string $rateType): float
     {
         return ($rateType === 'monthly' && $hourlyRate > 0)
-            ? round($hourlyRate / 180, 4)
+            ? round($hourlyRate / 160, 4)
             : $hourlyRate;
     }
 
@@ -232,7 +232,7 @@ class FechamentoConsultorController extends Controller
                     (float) ($user->daily_hours ?? 8.0),
                     $startDate, $extraHoursForBank
                 );
-                $valorHoraExtra = $hourlyRate > 0 ? round($hourlyRate / 180, 4) : 0;
+                $valorHoraExtra = $hourlyRate > 0 ? round($hourlyRate / 160, 4) : 0;
                 $horasExtras    = $calc['paid_hours'];
                 $totalExtra     = round($horasExtras * $valorHoraExtra, 2);
                 return [
@@ -1358,9 +1358,9 @@ class FechamentoConsultorController extends Controller
                     );
                     // Regra: hourly_rate = salário mensal fixo (sempre pago)
                     // Horas extras = accumulated_balance > 0 (paid_hours do HourBankService)
-                    // Taxa hora extra = hourly_rate ÷ 180
+                    // Taxa hora extra = hourly_rate ÷ 160
                     $fixedSalary      = $hourlyRate;
-                    $valorHoraExtra   = $hourlyRate > 0 ? round($hourlyRate / 180, 4) : 0;
+                    $valorHoraExtra   = $hourlyRate > 0 ? round($hourlyRate / 160, 4) : 0;
                     $horasExtras      = $calc['paid_hours']; // accumulated > 0, senão 0
                     $totalExtra       = round($horasExtras * $valorHoraExtra, 2);
                     $total            = round($fixedSalary + $totalExtra, 2); // sem extrasConsultant: já virou horas no banco
@@ -1535,7 +1535,7 @@ class FechamentoConsultorController extends Controller
         // Respeita a vigência do valor hora (consultor/coordenador) na competência.
         $histExtra      = UserHourlyRateLog::effectiveValuesAt($user->id, $user, sprintf('%04d-%02d-01', $year, $month));
         $fixedSalary    = (float) ($histExtra['hourly_rate'] ?? $user->hourly_rate ?? 0);
-        $valorHoraExtra = $fixedSalary > 0 ? round($fixedSalary / 180, 4) : 0;
+        $valorHoraExtra = $fixedSalary > 0 ? round($fixedSalary / 160, 4) : 0;
         $horasExtras    = $calc['paid_hours'];
         $totalExtra     = round($horasExtras * $valorHoraExtra, 2);
 

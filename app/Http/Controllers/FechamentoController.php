@@ -25,7 +25,7 @@ class FechamentoController extends Controller
     private function effectiveHourlyRate(float $hourlyRate, string $rateType): float
     {
         return ($rateType === 'monthly' && $hourlyRate > 0)
-            ? round($hourlyRate / 180, 4)
+            ? round($hourlyRate / 160, 4)
             : $hourlyRate;
     }
 

@@ -2035,12 +2035,12 @@ class ProjectController extends Controller
 
             // Calcular o valor/hora efetivo do consultor:
             // - rate_type = 'hourly': usa hourly_rate diretamente
-            // - rate_type = 'monthly': divide hourly_rate por 180 (horas mensais convencionadas)
+            // - rate_type = 'monthly': divide hourly_rate por 160 (horas mensais convencionadas)
             // - sem hourly_rate: assume 0
             $userHourlyRate = (float) ($user->hourly_rate ?? 0);
             $rateType = $user->rate_type ?? 'hourly';
             $effectiveHourlyRate = ($rateType === 'monthly' && $userHourlyRate > 0)
-                ? round($userHourlyRate / 180, 4)
+                ? round($userHourlyRate / 160, 4)
                 : $userHourlyRate;
 
             $userCost = round($userTotalHours * $effectiveHourlyRate, 2);
@@ -2817,9 +2817,9 @@ class ProjectController extends Controller
         if ($to)   $base->where('timesheets.date', '<=', $to);
 
         // Para consultores com rate_type='monthly', hourly_rate guarda o salário
-        // mensal — converter pra valor/hora dividindo por 180 (mesmo critério usado
+        // mensal — converter pra valor/hora dividindo por 160 (mesmo critério usado
         // em FechamentoConsultorController::effectiveHourlyRate).
-        $costExpr = "SUM(timesheets.effort_minutes / 60.0 * CASE WHEN users.rate_type = 'monthly' AND users.hourly_rate > 0 THEN users.hourly_rate / 180.0 ELSE users.hourly_rate END)";
+        $costExpr = "SUM(timesheets.effort_minutes / 60.0 * CASE WHEN users.rate_type = 'monthly' AND users.hourly_rate > 0 THEN users.hourly_rate / 160.0 ELSE users.hourly_rate END)";
 
         // ── Por cliente ────────────────────────────────────────────────────────
         $byCustomer = (clone $base)

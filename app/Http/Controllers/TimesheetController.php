@@ -162,10 +162,13 @@ class TimesheetController extends Controller
         $query = Timesheet::with([
                 'user:id,name,email,type,partner_id,customer_id',
                 'customer:id,name',
-                'project' => fn($q) => $q->select('id', 'name', 'service_type_id', 'contract_type_id', 'customer_id', 'is_investimento_comercial', 'parent_project_id', 'status'),
+                'project' => fn($q) => $q->select('id', 'name', 'service_type_id', 'contract_type_id', 'customer_id', 'is_investimento_comercial', 'parent_project_id', 'status', 'kanban_coordinator_override_id'),
                 'project.contractType:id,name',
-                'project.customer:id,name',
+                'project.customer:id,name,executive_id',
+                'project.customer.executive:id,name',
                 'project.serviceType:id,code,name',
+                'project.coordinators:id,name',
+                'project.kanbanOverrideCoordinator:id,name',
                 'reviewedBy:id,name',
             ])
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject', 'movidesk_tickets.solicitante as ticket_solicitante')

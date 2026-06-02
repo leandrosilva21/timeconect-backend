@@ -642,6 +642,26 @@ class BankHoursFixedController extends Controller
             }
         }
 
+        // BH Fixo individual com "cliente NÃO acompanha apontamento": na visão do CLIENTE,
+        // esconde o detalhe e mostra tudo consumido (saldo 0). Admin/coord seguem vendo o real.
+        $isClienteViewer = $user && method_exists($user, 'isCliente') && $user->isCliente();
+        if ($isClienteViewer && $projectId) {
+            $selProj = Project::find($projectId);
+            if ($selProj && $selProj->client_follows_timesheets === false) {
+                $consumedHours       = round($contractedHours + $contributedHours, 2);
+                $hoursBalance        = 0.0;
+                $monthConsumedHours  = 0.0;
+                $exceededHours       = 0.0;
+                $amountToPay         = null;
+                $projectsConsumedHours          = $consumedHours;
+                $projectsMonthConsumedHours     = 0.0;
+                $maintenanceConsumedHours       = 0.0;
+                $maintenanceMonthConsumedHours  = 0.0;
+                $architectureConsumedHours      = 0.0;
+                $architectureMonthConsumedHours = 0.0;
+            }
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Dados do dashboard obtidos com sucesso',
@@ -4974,6 +4994,16 @@ class BankHoursFixedController extends Controller
         }
 
         $isClienteViewer = $user && method_exists($user, 'isCliente') && $user->isCliente();
+
+        // BH Fixo individual com "cliente NÃO acompanha apontamento": o cliente não vê
+        // os apontamentos desse projeto (admin/coord seguem vendo).
+        if ($isClienteViewer) {
+            $selProj = Project::find($projectId);
+            if ($selProj && $selProj->client_follows_timesheets === false) {
+                return response()->json(['success' => true, 'data' => []]);
+            }
+        }
+
         $projectIds = Project::where(function ($q) use ($projectId) {
                 $q->where('id', $projectId)->orWhere('parent_project_id', $projectId);
             })

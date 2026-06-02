@@ -827,10 +827,23 @@ class ApprovalController extends Controller
             $query->where('user_id', $request->get('user_id'));
         }
 
-        // Filtro por coordenador do projeto
-        if ($request->filled('coordinator_id')) {
-            $query->whereHas('project.coordinators', function ($q) use ($request) {
-                $q->where('users.id', $request->get('coordinator_id'));
+        // Filtro por coordenador — espelha a regra do coordinator_label:
+        //   override > (se sustentação) coordenador de sustentação > coordenadores do projeto.
+        $coordinatorIds = array_values(array_filter((array) $request->input('coordinator_id', [])));
+        if (!empty($coordinatorIds)) {
+            $sustSelected = \App\Models\User::whereIn('id', $coordinatorIds)
+                ->where('coordinator_type', 'sustentacao')->exists();
+            $query->where(function ($q) use ($coordinatorIds, $sustSelected) {
+                $q->whereHas('project', fn($pq) => $pq->whereIn('kanban_coordinator_override_id', $coordinatorIds));
+                $q->orWhere(function ($q2) use ($coordinatorIds) {
+                    $q2->whereHas('project', fn($pq) => $pq->whereNull('kanban_coordinator_override_id')
+                            ->whereDoesntHave('serviceType', fn($sq) => $sq->where('code', 'sustentacao')))
+                       ->whereHas('project.coordinators', fn($cq) => $cq->whereIn('users.id', $coordinatorIds));
+                });
+                if ($sustSelected) {
+                    $q->orWhereHas('project', fn($pq) => $pq->whereNull('kanban_coordinator_override_id')
+                        ->whereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao')));
+                }
             });
         }
 
@@ -893,10 +906,23 @@ class ApprovalController extends Controller
             $query->where('user_id', $request->get('user_id'));
         }
 
-        // Filtro por coordenador do projeto
-        if ($request->filled('coordinator_id')) {
-            $query->whereHas('project.coordinators', function ($q) use ($request) {
-                $q->where('users.id', $request->get('coordinator_id'));
+        // Filtro por coordenador — espelha a regra do coordinator_label:
+        //   override > (se sustentação) coordenador de sustentação > coordenadores do projeto.
+        $coordinatorIds = array_values(array_filter((array) $request->input('coordinator_id', [])));
+        if (!empty($coordinatorIds)) {
+            $sustSelected = \App\Models\User::whereIn('id', $coordinatorIds)
+                ->where('coordinator_type', 'sustentacao')->exists();
+            $query->where(function ($q) use ($coordinatorIds, $sustSelected) {
+                $q->whereHas('project', fn($pq) => $pq->whereIn('kanban_coordinator_override_id', $coordinatorIds));
+                $q->orWhere(function ($q2) use ($coordinatorIds) {
+                    $q2->whereHas('project', fn($pq) => $pq->whereNull('kanban_coordinator_override_id')
+                            ->whereDoesntHave('serviceType', fn($sq) => $sq->where('code', 'sustentacao')))
+                       ->whereHas('project.coordinators', fn($cq) => $cq->whereIn('users.id', $coordinatorIds));
+                });
+                if ($sustSelected) {
+                    $q->orWhereHas('project', fn($pq) => $pq->whereNull('kanban_coordinator_override_id')
+                        ->whereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao')));
+                }
             });
         }
 

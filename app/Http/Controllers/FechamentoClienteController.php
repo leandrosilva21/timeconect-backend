@@ -886,10 +886,8 @@ class FechamentoClienteController extends Controller
     /** Formata horas decimais como HHhMM (ex.: 12.5 -> "12h30"). */
     private function fmtHoras(float $h): string
     {
-        $totalMins = abs((int) round($h * 60));
-        $hrs  = intdiv($totalMins, 60);
-        $mins = $totalMins % 60;
-        return sprintf('%dh%02d', $hrs, $mins);
+        // Horas em DECIMAL 2 casas (pt-BR) — total bate com horas × taxa.
+        return number_format($h, 2, ',', '.');
     }
 
     /** Remove acentos/espaços/barras de um nome para uso em filename. */

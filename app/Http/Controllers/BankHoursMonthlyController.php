@@ -360,7 +360,9 @@ class BankHoursMonthlyController extends Controller
                         ->whereIn('status', ['approved', 'pending'])
                         ->sum('effort_minutes') ?? 0;
                     $parentLoggedHours = round($parentLoggedMinutes / 60, 2);
-                    $consumedHours += $parentLoggedHours;
+                    // + horas iniciais já consumidas antes do Minutor (saldo histórico). Sem isso o
+                    // cliente via saldo inflado (ignorava initial_hours_consumed) ≠ Gestão de Contratos.
+                    $consumedHours += $parentLoggedHours + (float) ($parentProject->initial_hours_consumed ?? 0);
                 }
             }
 
@@ -387,7 +389,7 @@ class BankHoursMonthlyController extends Controller
                             ->whereIn('status', ['approved', 'pending'])
                             ->sum('effort_minutes') ?? 0;
                         $childLoggedHours = round($childLoggedMinutes / 60, 2);
-                        $consumedHours += $childLoggedHours;
+                        $consumedHours += $childLoggedHours + (float) ($childProject->initial_hours_consumed ?? 0);
                     }
                 }
             }

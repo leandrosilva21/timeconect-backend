@@ -439,54 +439,78 @@ class FechamentoClienteController extends Controller
 
     // ─── Pendências ──────────────────────────────────────────────────────────
 
-    public function pendencias(string $customerId, string $yearMonth): JsonResponse
+    public function pendencias(Request $request, string $customerId, string $yearMonth): JsonResponse
     {
-        [$from, $to] = $this->period($yearMonth);
+        // Suporta range de meses (filtro da página); default = mês único.
+        $fromMonth = $request->query('from', $yearMonth);
+        $toMonth   = $request->query('to', $yearMonth);
+        $from = "{$fromMonth}-01";
+        $to   = Carbon::parse("{$toMonth}-01")->endOfMonth()->toDateString();
 
-        $timesheets = Timesheet::with(['user:id,name', 'project:id,name,code'])
+        $tsModels = Timesheet::with(['user:id,name', 'project', 'project.hourlyRateChanges'])
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)
+                ->where('is_investimento_comercial', false)
                 ->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand')))
             ->whereBetween('date', [$from, $to])
             ->whereIn('status', [Timesheet::STATUS_PENDING, Timesheet::STATUS_ADJUSTMENT_REQUESTED])
             ->whereNull('deleted_at')
             ->orderBy('date')
-            ->get()
-            ->map(fn ($t) => [
-                'id'          => $t->id,
-                'tipo'        => 'timesheet',
-                'data'        => $t->date->format('Y-m-d'),
-                'colaborador' => $t->user?->name ?? '—',
-                'projeto'     => $t->project?->name ?? '—',
+            ->get();
+
+        // Valor pendente do apontamento = horas × valor/hora On Demand × (1 + client_extra_pct).
+        $rateCache = [];
+        $timesheets = $tsModels->map(function ($t) use (&$rateCache) {
+            $comp  = $t->date->format('Y-m');
+            $key   = $t->project_id . '|' . $comp;
+            $rate  = $rateCache[$key] ??= (float) ($t->project?->hourlyRateForCompetencia($comp) ?? 0);
+            $horas = round($t->effort_minutes / 60, 2);
+            $mult  = 1 + (((float) ($t->client_extra_pct ?? 0)) / 100);
+            return [
+                'id'             => $t->id,
+                'tipo'           => 'timesheet',
+                'data'           => $t->date->format('Y-m-d'),
+                'colaborador'    => $t->user?->name ?? '—',
+                'projeto'        => $t->project?->name ?? '—',
                 'projeto_codigo' => $t->project?->code ?? '—',
-                'horas'       => round($t->effort_minutes / 60, 2),
-                'status'      => $t->status,
-                'ticket'      => $t->ticket,
-                'observacao'  => $t->observation,
-            ]);
+                'horas'          => $horas,
+                'valor'          => round($horas * $rate * $mult, 2),
+                'status'         => $t->status,
+                'ticket'         => $t->ticket,
+                'observacao'     => $t->observation,
+            ];
+        });
 
         $despesas = Expense::with(['user:id,name', 'project:id,name,code', 'category:id,name'])
-            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
+            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)->where('is_investimento_comercial', false))
             ->whereBetween('expense_date', [$from, $to])
             ->whereIn('status', ['pending', 'adjustment_requested'])
             ->orderBy('expense_date')
             ->get()
             ->map(fn ($e) => [
-                'id'          => $e->id,
-                'tipo'        => 'expense',
-                'data'        => $e->expense_date->format('Y-m-d'),
-                'colaborador' => $e->user?->name ?? '—',
-                'projeto'     => $e->project?->name ?? '—',
+                'id'             => $e->id,
+                'tipo'           => 'expense',
+                'data'           => $e->expense_date->format('Y-m-d'),
+                'colaborador'    => $e->user?->name ?? '—',
+                'projeto'        => $e->project?->name ?? '—',
                 'projeto_codigo' => $e->project?->code ?? '—',
-                'descricao'   => $e->description,
-                'categoria'   => $e->category?->name ?? '—',
-                'valor'       => (float) $e->amount,
-                'status'      => $e->status,
+                'descricao'      => $e->description,
+                'categoria'      => $e->category?->name ?? '—',
+                'valor'          => (float) $e->amount,
+                'status'         => $e->status,
             ]);
 
+        $valorTimesheets = round($timesheets->sum('valor'), 2);
+        $valorDespesas   = round($despesas->sum('valor'), 2);
+
         return response()->json([
-            'timesheets'        => $timesheets,
-            'despesas'          => $despesas,
-            'total_pendencias'  => count($timesheets) + count($despesas),
+            'timesheets'        => $timesheets->values(),
+            'despesas'          => $despesas->values(),
+            'qtd_timesheets'    => $timesheets->count(),
+            'qtd_despesas'      => $despesas->count(),
+            'total_pendencias'  => $timesheets->count() + $despesas->count(),
+            'valor_timesheets'  => $valorTimesheets,
+            'valor_despesas'    => $valorDespesas,
+            'valor_pendente'    => round($valorTimesheets + $valorDespesas, 2),
         ]);
     }
 

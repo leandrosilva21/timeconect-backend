@@ -235,7 +235,7 @@ class ExpenseController extends Controller
         $pageSize = min((int) $request->get('pageSize', 20), 100);
         $page = (int) $request->get('page', 1);
 
-        $query = Expense::with(['user', 'project.customer', 'project.contractType', 'project.serviceType', 'project.coordinators:id,name', 'category', 'reviewedBy']);
+        $query = Expense::with(['user', 'project.customer', 'project.customer.executive:id,name', 'project.contractType', 'project.serviceType', 'project.coordinators:id,name', 'project.kanbanOverrideCoordinator:id,name', 'category', 'reviewedBy']);
 
         // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
         if ($request->get('scope') === 'sustentacao') {
@@ -390,9 +390,30 @@ class ExpenseController extends Controller
         try {
             $result = $this->cachedList($request, 'expenses', function () use ($query, $pageSize, $page) {
                 $expenses = $query->paginate($pageSize, ['*'], 'page', $page);
+                // Coordenador exibido (tooltip): override > (sustentação) coord de sustentação
+                // (Anderson Arantes) > coordenadores do projeto. Mesma regra dos apontamentos.
+                $sustentacaoCoordNames = \App\Models\User::where('coordinator_type', 'sustentacao')
+                    ->where('enabled', true)->pluck('name')->all();
+                $items = collect($expenses->items())->map(function ($exp) use ($sustentacaoCoordNames) {
+                    $arr = $exp->toArray();
+                    $proj = $exp->project;
+                    $coordLabel = null;
+                    if ($proj) {
+                        $isSustentacao = optional($proj->serviceType)->code === 'sustentacao';
+                        if ($proj->kanbanOverrideCoordinator) {
+                            $coordLabel = $proj->kanbanOverrideCoordinator->name;
+                        } elseif ($isSustentacao && !empty($sustentacaoCoordNames)) {
+                            $coordLabel = implode(', ', $sustentacaoCoordNames);
+                        } elseif ($proj->coordinators && $proj->coordinators->count()) {
+                            $coordLabel = $proj->coordinators->pluck('name')->implode(', ');
+                        }
+                    }
+                    $arr['coordinator_label'] = $coordLabel;
+                    return $arr;
+                })->all();
                 return [
                     'hasNext' => $expenses->hasMorePages(),
-                    'items'   => $expenses->items(),
+                    'items'   => $items,
                 ];
             });
             return response()->json($result);

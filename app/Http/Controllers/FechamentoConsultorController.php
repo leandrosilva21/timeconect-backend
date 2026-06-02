@@ -1186,7 +1186,7 @@ class FechamentoConsultorController extends Controller
             ->whereNotIn('type', ['parceiro_admin', 'cliente'])
             ->whereNotNull('consultant_type')
             ->orderBy('name')
-            ->get(['id', 'name', 'email', 'type', 'consultant_type', 'contract_type', 'partner_id', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date', 'guaranteed_hours']);
+            ->get(['id', 'name', 'email', 'type', 'consultant_type', 'contract_type', 'partner_id', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date', 'guaranteed_hours', 'is_bizify']);
 
         $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
 
@@ -1275,6 +1275,7 @@ class FechamentoConsultorController extends Controller
                 'type'              => $user->type,
                 'consultant_type'   => $user->consultant_type,
                 'contract_type'     => $user->contract_type,
+                'is_bizify'         => (bool) $user->is_bizify,
                 'horas_trabalhadas' => $horasTrabalhadas,
                 'valor_hora'        => $hourlyRate,
                 'rate_type'         => $rateType,
@@ -1414,26 +1415,45 @@ class FechamentoConsultorController extends Controller
         $bancoHoras = array_map($addRecebimento, $bancoHoras);
         $fixos      = array_map($addRecebimento, $fixos);
 
+        // Separar Bizify: quem for is_bizify=true sai dos cards/totais da ERPSERV e vai para um
+        // bloco próprio "bizify", com os MESMOS campos e cálculo (aba Bizify no front).
+        $partition = function (array $rows): array {
+            $erp = array_values(array_filter($rows, fn ($c) => empty($c['is_bizify'])));
+            $biz = array_values(array_filter($rows, fn ($c) => !empty($c['is_bizify'])));
+            return [$erp, $biz];
+        };
+        [$horistasErp, $horistasBiz] = $partition($horistas);
+        [$bancoErp, $bancoBiz]       = $partition($bancoHoras);
+        [$fixosErp, $fixosBiz]       = $partition($fixos);
+
+        $buildTotais = fn (array $h, array $b, array $f): array => [
+            'total_horistas'    => round(collect($h)->sum('total'), 2),
+            'total_banco_horas' => round(collect($b)->sum('total'), 2),
+            'total_fixos'       => round(collect($f)->sum('total'), 2),
+            'total_despesas'    => round(
+                collect($h)->sum('total_despesas') +
+                collect($b)->sum('total_despesas') +
+                collect($f)->sum('total_despesas'),
+                2
+            ),
+            'total_geral'       => round(
+                collect($h)->sum('total') +
+                collect($b)->sum('total') +
+                collect($f)->sum('total'),
+                2
+            ),
+        ];
+
         return [
-            'horistas'    => $horistas,
-            'banco_horas' => $bancoHoras,
-            'fixos'       => $fixos,
-            'totais' => [
-                'total_horistas'    => round(collect($horistas)->sum('total'), 2),
-                'total_banco_horas' => round(collect($bancoHoras)->sum('total'), 2),
-                'total_fixos'       => round(collect($fixos)->sum('total'), 2),
-                'total_despesas'    => round(
-                    collect($horistas)->sum('total_despesas') +
-                    collect($bancoHoras)->sum('total_despesas') +
-                    collect($fixos)->sum('total_despesas'),
-                    2
-                ),
-                'total_geral'       => round(
-                    collect($horistas)->sum('total') +
-                    collect($bancoHoras)->sum('total') +
-                    collect($fixos)->sum('total'),
-                    2
-                ),
+            'horistas'    => $horistasErp,
+            'banco_horas' => $bancoErp,
+            'fixos'       => $fixosErp,
+            'totais'      => $buildTotais($horistasErp, $bancoErp, $fixosErp),
+            'bizify'      => [
+                'horistas'    => $horistasBiz,
+                'banco_horas' => $bancoBiz,
+                'fixos'       => $fixosBiz,
+                'totais'      => $buildTotais($horistasBiz, $bancoBiz, $fixosBiz),
             ],
         ];
     }

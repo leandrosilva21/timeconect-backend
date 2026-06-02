@@ -268,7 +268,7 @@ class FechamentoClienteController extends Controller
             ->whereHas('project', function ($q) {
                 $q->where('is_investimento_comercial', false)
                   ->whereNotNull('customer_id')
-                  ->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand'));
+                  ->where($this->rootOnDemandScope());
             })
             ->orderBy('timesheets.date')
             ->get();
@@ -299,6 +299,33 @@ class FechamentoClienteController extends Controller
         return response()->json(['data' => $data]);
     }
 
+    /**
+     * Escopo "Contrato RAIZ On Demand": restringe uma query de Project (ou um
+     * whereHas('project', ...)) aos projetos cujo CONTRATO PAI é On Demand.
+     *
+     * Um projeto entra se:
+     *   (a) é PAI (parent_project_id null) com contractType.code = on_demand; OU
+     *   (b) é FILHO cujo PAI é On Demand (não-investimento).
+     *
+     * Sem isso, um FILHO On Demand de um PAI de OUTRO tipo (ex.: "Banco de Horas")
+     * puxava o contrato pai NÃO-On-Demand pro fechamento On Demand — porque o
+     * apontamentosData consolida filho→pai. Regra "só On Demand PAI", espelhando
+     * FechamentoClienteController::index e FechamentoContratoController.
+     */
+    private function rootOnDemandScope(): \Closure
+    {
+        return function ($qr) {
+            $qr->where(function ($qp) {
+                    $qp->whereNull('parent_project_id')
+                       ->whereHas('contractType', fn ($c) => $c->where('code', 'on_demand'));
+                })
+              ->orWhereHas('parentProject', function ($pp) {
+                    $pp->where('is_investimento_comercial', false)
+                       ->whereHas('contractType', fn ($c) => $c->where('code', 'on_demand'));
+                });
+        };
+    }
+
     private function apontamentosData(int $customerId, string $fromMonth, string $toMonth, ?string $contractCode = null, ?int $projectId = null): array
     {
         $from = "{$fromMonth}-01";
@@ -312,7 +339,7 @@ class FechamentoClienteController extends Controller
             ->whereHas('project', function ($q) use ($customerId, $contractCode, $projectId) {
                 $q->where('customer_id', $customerId)
                   ->where('is_investimento_comercial', false)
-                  ->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand'));
+                  ->where($this->rootOnDemandScope());
                 if ($contractCode) {
                     $q->whereHas('contractType', fn ($q2) => $q2->where('code', $contractCode));
                 }
@@ -450,7 +477,7 @@ class FechamentoClienteController extends Controller
         $tsModels = Timesheet::with(['user:id,name', 'project', 'project.hourlyRateChanges'])
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)
                 ->where('is_investimento_comercial', false)
-                ->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand')))
+                ->where($this->rootOnDemandScope()))
             ->whereBetween('date', [$from, $to])
             ->whereIn('status', [Timesheet::STATUS_PENDING, Timesheet::STATUS_ADJUSTMENT_REQUESTED])
             ->whereNull('deleted_at')
@@ -626,7 +653,7 @@ class FechamentoClienteController extends Controller
         // On Demand sem consumo no mês também apareça (= consumo / 0h).
         $projectIds = Project::where('customer_id', $customerId)
             ->where('is_investimento_comercial', false)
-            ->whereHas('contractType', fn ($q) => $q->where('code', 'on_demand'))
+            ->where($this->rootOnDemandScope())
             ->pluck('id');
 
         if ($projectIds->isEmpty()) {
@@ -1034,7 +1061,7 @@ class FechamentoClienteController extends Controller
         // Projetos On Demand do cliente (mesma base que apontamentosData usa no fechamento).
         $projectIds = Project::where('customer_id', $customerId)
             ->where('is_investimento_comercial', false)
-            ->whereHas('contractType', fn ($q) => $q->where('code', 'on_demand'))
+            ->where($this->rootOnDemandScope())
             ->pluck('id');
 
         if ($projectIds->isEmpty()) {

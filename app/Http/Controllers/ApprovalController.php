@@ -646,9 +646,7 @@ class ApprovalController extends Controller
             'project.coordinators:id,name',
             'project.kanbanOverrideCoordinator:id,name',
         ])
-        ->where('status', Timesheet::STATUS_PENDING)
-        ->orderBy('date', 'desc')
-        ->orderBy('created_at', 'desc');
+        ->where('status', Timesheet::STATUS_PENDING);
 
         // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
         if ($request && $request->get('scope') === 'sustentacao') {
@@ -675,7 +673,48 @@ class ApprovalController extends Controller
             $this->applyTimesheetFilters($query, $request);
         }
 
+        $this->applyTimesheetOrder($query, $request);
+
         return $query;
+    }
+
+    /**
+     * Ordenação configurável da fila de apontamentos (param `order`, prefixo "-" = desc).
+     * Relações ordenadas por subquery (sem join — evita ambiguidade com os filtros whereHas).
+     * Sem `order` = comportamento atual (data desc, depois inclusão desc).
+     */
+    private function applyTimesheetOrder($query, ?Request $request): void
+    {
+        $order = $request?->get('order');
+        if (!$order) {
+            $query->orderBy('date', 'desc')->orderBy('created_at', 'desc');
+            return;
+        }
+        $dir   = str_starts_with($order, '-') ? 'desc' : 'asc';
+        $field = ltrim($order, '-');
+        $direct = [
+            'date'           => 'date',
+            'start_time'     => 'start_time',
+            'end_time'       => 'end_time',
+            'effort_minutes' => 'effort_minutes',
+            'created_at'     => 'created_at',
+            'ticket'         => 'ticket',
+            'status'         => 'status',
+            'title'          => 'title',
+        ];
+        if (isset($direct[$field])) {
+            $query->orderBy($direct[$field], $dir);
+        } elseif ($field === 'user.name') {
+            $query->orderBy(\App\Models\User::select('name')->whereColumn('users.id', 'timesheets.user_id')->limit(1), $dir);
+        } elseif ($field === 'customer.name') {
+            $query->orderBy(\App\Models\Customer::select('name')->whereColumn('customers.id', 'timesheets.customer_id')->limit(1), $dir);
+        } elseif ($field === 'project.name') {
+            $query->orderBy(\App\Models\Project::withoutGlobalScopes()->select('name')->whereColumn('projects.id', 'timesheets.project_id')->limit(1), $dir);
+        } else {
+            $query->orderBy('date', 'desc')->orderBy('created_at', 'desc');
+            return;
+        }
+        $query->orderBy('created_at', 'desc'); // desempate estável
     }
 
     /**
@@ -690,9 +729,7 @@ class ApprovalController extends Controller
             'project.serviceType:id,name',
             'category:id,name,parent_id'
         ])
-        ->where('status', Expense::STATUS_PENDING)
-        ->orderBy('expense_date', 'desc')
-        ->orderBy('created_at', 'desc');
+        ->where('status', Expense::STATUS_PENDING);
 
         // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
         if ($request && $request->get('scope') === 'sustentacao') {
@@ -715,7 +752,44 @@ class ApprovalController extends Controller
             $this->applyExpenseFilters($query, $request);
         }
 
+        $this->applyExpenseOrder($query, $request);
+
         return $query;
+    }
+
+    /**
+     * Ordenação configurável da fila de despesas (param `order`, prefixo "-" = desc).
+     * Sem `order` = comportamento atual (data da despesa desc, depois inclusão desc).
+     */
+    private function applyExpenseOrder($query, ?Request $request): void
+    {
+        $order = $request?->get('order');
+        if (!$order) {
+            $query->orderBy('expense_date', 'desc')->orderBy('created_at', 'desc');
+            return;
+        }
+        $dir   = str_starts_with($order, '-') ? 'desc' : 'asc';
+        $field = ltrim($order, '-');
+        $direct = [
+            'date'         => 'expense_date',
+            'expense_date' => 'expense_date',
+            'amount'       => 'amount',
+            'created_at'   => 'created_at',
+            'status'       => 'status',
+        ];
+        if (isset($direct[$field])) {
+            $query->orderBy($direct[$field], $dir);
+        } elseif ($field === 'user.name') {
+            $query->orderBy(\App\Models\User::select('name')->whereColumn('users.id', 'expenses.user_id')->limit(1), $dir);
+        } elseif ($field === 'project.name') {
+            $query->orderBy(\App\Models\Project::withoutGlobalScopes()->select('name')->whereColumn('projects.id', 'expenses.project_id')->limit(1), $dir);
+        } elseif ($field === 'category.name') {
+            $query->orderBy(\App\Models\ExpenseCategory::select('name')->whereColumn('expense_categories.id', 'expenses.expense_category_id')->limit(1), $dir);
+        } else {
+            $query->orderBy('expense_date', 'desc')->orderBy('created_at', 'desc');
+            return;
+        }
+        $query->orderBy('created_at', 'desc'); // desempate estável
     }
 
     /**

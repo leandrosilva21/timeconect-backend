@@ -102,7 +102,7 @@ class FolhaPagamentoController extends Controller
 
         // ── Cooperados: TODO usuário (qualquer perfil exceto cliente) marcado cooperado.
         // Exclui os sócios (entram como linha própria). Produção/horas vêm do fechamento
-        // do consultor quando houver apontamentos; senão 0 / 180.
+        // do consultor quando houver apontamentos; senão 0 / 160.
         $cooperados = User::where('contract_type', 'cooperado')->where('enabled', true)
             ->whereNotIn('type', ['cliente'])->orderBy('name')->get();
         foreach ($cooperados as $u) {
@@ -127,7 +127,7 @@ class FolhaPagamentoController extends Controller
                 ? round((float) ($c['recebimento'] ?? $c['total'] ?? 0), 2)  // recebimento (com despesa)
                 : 0.0;
             $producao     = ($f && $f->producao !== null) ? round((float) $f->producao, 2) : $producaoCalc;
-            $horas        = 180.0; // horas FIXAS (não via apontamento); Produção segue do fechamento
+            $horas        = 160.0; // horas FIXAS (não via apontamento); Produção segue do fechamento
 
             // Valor hora só p/ vínculo por hora; fixo/mensal NÃO traz valor.
             $valorHora = ($u && $u->rate_type === 'hourly') ? round((float) $u->hourly_rate, 4) : 0.0;
@@ -292,7 +292,7 @@ class FolhaPagamentoController extends Controller
                 'status'             => $f->status ?? '',
                 'nome'               => $f->nome ?? '',
                 'dias'               => (float) $f->dias_trabalhados,
-                'horas'              => $f->horas_trabalhadas !== null ? (float) $f->horas_trabalhadas : 180.0,
+                'horas'              => $f->horas_trabalhadas !== null ? (float) $f->horas_trabalhadas : 160.0,
                 'horas_apontamentos' => 0.0,
                 'valor_hora'         => $f->valor_hora !== null ? (float) $f->valor_hora : 0.0,
                 'producao'           => $producao,
@@ -340,7 +340,7 @@ class FolhaPagamentoController extends Controller
                 'status'             => $u->payroll_status ?? '',
                 'nome'               => $u->full_name ?: $u->name,
                 'dias'               => $f ? (float) $f->dias_trabalhados : 0.0,
-                'horas'              => $f && $f->horas_trabalhadas !== null ? (float) $f->horas_trabalhadas : 180.0,
+                'horas'              => $f && $f->horas_trabalhadas !== null ? (float) $f->horas_trabalhadas : 160.0,
                 'horas_apontamentos' => 0.0,
                 'valor_hora'         => $valorHora,
                 'producao'           => $producao,

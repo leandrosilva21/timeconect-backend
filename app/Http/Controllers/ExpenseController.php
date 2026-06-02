@@ -496,7 +496,8 @@ class ExpenseController extends Controller
         }
 
         // Determinar o usuário alvo da despesa
-        $canActAsUser  = $user->isAdmin() || $user->isCoordenador();
+        // Administrativo: back-office que aponta despesas pela equipe (igual admin/coordenador).
+        $canActAsUser  = $user->isAdmin() || $user->isCoordenador() || $user->isAdministrativo();
         $isParceiroAdm = $user->isParceiroAdmin() && $user->partner_id;
 
         if (!empty($request->user_id) && ($canActAsUser || $isParceiroAdm)) {

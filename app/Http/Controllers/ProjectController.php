@@ -3277,7 +3277,7 @@ class ProjectController extends Controller
         //  • monthly  (BH Mensal): vendidas acumulam mês a mês.
         //  • fixed    (BH Fixo / Fechado): vendidas = total fixo constante.
         //  • on_demand: sem vendidas/saldo — só consumo.
-        $project->loadMissing('contractType');
+        $project->loadMissing(['contractType', 'hourContributions']);
         $ctName = strtolower((string) ($project->contractType->name ?? ''));
         $isOnDemand = str_contains($ctName, 'on demand') || $project->tipo_faturamento === 'on_demand';
         $isMonthly  = !$isOnDemand && str_contains($ctName, 'mensal');
@@ -3355,6 +3355,16 @@ class ProjectController extends Controller
             ->map(fn ($v) => (int) $v)
             ->all();
 
+        // Aportes (hour_contributions) por mês — entram nas "vendidas" no mês aportado.
+        $aporteByYm = [];
+        foreach ($project->hourContributions as $c) {
+            if (!$c->contributed_at) { continue; }
+            $aym = Carbon::parse($c->contributed_at)->format('Y-m');
+            $aporteByYm[$aym] = ($aporteByYm[$aym] ?? 0) + (float) $c->contributed_hours;
+        }
+        $totalAportes = array_sum($aporteByYm);
+        $lastIndex = $months - 1;
+
         $rows = [];
         $accumulatedHours = 0.0;
         $accumulatedConsumptionHours = 0.0;
@@ -3366,11 +3376,16 @@ class ProjectController extends Controller
 
             // Vendidas exibidas: Mensal acumula (incremento/mês); Fixo/Fechado é o
             // total fixo constante; On Demand não tem vendidas.
+            // Aportes acumulados ATÉ este mês (o último mês absorve aportes futuros p/ fechar o total).
+            $accumAporte = $i === $lastIndex
+                ? $totalAportes
+                : array_sum(array_filter($aporteByYm, fn ($k) => $k <= $ym, ARRAY_FILTER_USE_KEY));
+
             if ($isMonthly) {
                 $accumulatedHours += $hoursPerMonth;
-                $vendidasHours = $accumulatedHours;
+                $vendidasHours = $accumulatedHours + $accumAporte;
             } elseif ($isFixed) {
-                $vendidasHours = (float) $hoursPerMonth;
+                $vendidasHours = (float) $hoursPerMonth + $accumAporte;
             } else {
                 $vendidasHours = null; // on_demand
             }
@@ -3398,7 +3413,7 @@ class ProjectController extends Controller
             $cursor->addMonth();
         }
 
-        $totalVendidas = $isMonthly ? $accumulatedHours : ($isFixed ? (float) $hoursPerMonth : null);
+        $totalVendidas = $isMonthly ? ($accumulatedHours + $totalAportes) : ($isFixed ? ((float) $hoursPerMonth + $totalAportes) : null);
 
         return response()->json([
             'statement_type' => $statementType,

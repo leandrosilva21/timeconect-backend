@@ -413,6 +413,146 @@ class FechamentoConsultorController extends Controller
      *   pdf_name:string, xlsx_name:string, total_value:float
      * }
      */
+    /**
+     * View-data ÚNICA do relatório do consultor — usada PELA TELA (endpoint reportHtml)
+     * E pelo PDF/e-mail (generateFechamentoFiles), garantindo que sejam IDÊNTICOS.
+     * Espelha o antigo buildReport() do front: resumo por tipo (BH/Fixo/Horista),
+     * apontamentos por tipo→cliente (8 colunas), despesas, ajustes e total.
+     */
+    private function buildConsultorReportView(int $userId, string $yearMonth, string $mode = 'ambos'): array
+    {
+        [$from, $to] = $this->period($yearMonth);
+        $consultor = collect($this->buildConsultoresData($yearMonth))
+            ->only(['horistas', 'banco_horas', 'fixos'])
+            ->flatMap(fn ($g) => $g)
+            ->firstWhere('user_id', $userId) ?? [];
+
+        $user     = User::find($userId);
+        $apont    = $this->buildApontamentosRows((string) $userId, $from, $to, $user);
+        $rows     = $apont['rows'];
+        $despesas = $this->despesasConsultor($userId, $yearMonth);
+
+        $servTotal = round((float) ($consultor['total'] ?? 0), 2);
+        $despTot   = round((float) ($consultor['total_despesas'] ?? 0), 2);
+
+        $soDespesa = $mode === 'despesa';
+        $soServico = $mode === 'servicos';
+        $baseValor = $soServico ? $servTotal : ($soDespesa ? $despTot : $servTotal + $despTot);
+
+        $desconto     = round((float) ($consultor['desconto'] ?? 0), 2);
+        $adiantamento = round((float) ($consultor['adiantamento'] ?? 0), 2);
+        $adicional    = round((float) ($consultor['adicional'] ?? 0), 2);
+        $temAjustes   = !$soDespesa && ($desconto != 0 || $adiantamento != 0 || $adicional != 0);
+        $recebimento  = round($baseValor - $desconto - $adiantamento + $adicional, 2);
+
+        // ── Resumo (cards) — espelha o summaryExtra por tipo do buildReport ──
+        $rate4 = fn ($v) => 'R$ ' . number_format((float) $v, ((float) $v == floor((float) $v)) ? 2 : 4, ',', '.');
+        $cards = [];
+        if ($soDespesa) {
+            $cards[] = ['label' => 'Despesas (fechamento)', 'value' => $this->brl($despTot), 'color' => '#7c3aed'];
+        } else {
+            $totalHoras = round(collect($rows)->sum('horas'), 2);
+            $cards[] = ['label' => 'Total Horas', 'value' => $this->fmtHoras($totalHoras)];
+            if (array_key_exists('fixed_salary', $consultor)) {            // Banco de Horas
+                $cards[] = ['label' => 'H Úteis Disponib.', 'value' => $this->fmtHoras((float) ($consultor['expected_hours'] ?? 0))];
+                $cards[] = ['label' => 'Base Mensal', 'value' => $this->brl((float) ($consultor['fixed_salary'] ?? 0))];
+                $cards[] = ['label' => 'Taxa/h (÷160)', 'value' => $rate4($consultor['valor_hora_extra'] ?? 0)];
+                $cards[] = ['label' => 'Saldo Acumulado', 'value' => $this->fmtHoras((float) ($consultor['accumulated_balance'] ?? 0))];
+                $cards[] = ['label' => 'H Extras', 'value' => ($consultor['horas_extras'] ?? 0) > 0 ? $this->fmtHoras((float) $consultor['horas_extras']) : '—'];
+            } elseif (array_key_exists('salario_mensal', $consultor)) {    // Fixo
+                $cards[] = ['label' => 'Salário Mensal', 'value' => $this->brl((float) ($consultor['salario_mensal'] ?? 0))];
+            } else {                                                        // Horista
+                $hasGuaranteed = ($consultor['guaranteed_prorated'] ?? 0) > 0 && ($consultor['horas_a_pagar'] ?? 0) > ($consultor['horas_trabalhadas'] ?? 0);
+                if ($hasGuaranteed) {
+                    $cards[] = ['label' => 'H Garantidas (mín)', 'value' => $this->fmtHoras((float) $consultor['guaranteed_prorated']), 'color' => '#d97706'];
+                    $cards[] = ['label' => 'H a Pagar', 'value' => $this->fmtHoras((float) $consultor['horas_a_pagar'])];
+                }
+                $cards[] = ['label' => 'Taxa/h', 'value' => $this->brl((float) ($consultor['effective_rate'] ?? 0))];
+            }
+            $cards[] = ['label' => 'Total Serviços', 'value' => $this->brl($servTotal), 'color' => '#7c3aed'];
+        }
+
+        // ── Apontamentos: tipo → cliente → linhas (8 colunas, espelha a tela) ──
+        $fmtTime = fn ($t) => !$t ? '—' : (str_contains((string) $t, 'T') ? substr((string) $t, 11, 5) : substr((string) $t, 0, 5));
+        $grupos = [];
+        if (!$soDespesa) {
+            $byTipo = [];
+            foreach ($rows as $r) { $byTipo[$r['tipo_contrato_nome'] ?? 'Outros'][] = $r; }
+            foreach ($byTipo as $tipo => $items) {
+                $byCliente = []; $horasTipo = 0.0;
+                foreach ($items as $r) { $byCliente[$r['cliente'] ?? '—'][] = $r; $horasTipo += (float) ($r['horas'] ?? 0); }
+                $clientes = [];
+                foreach ($byCliente as $cli => $linhasCli) {
+                    $horasCli = 0.0; $linhas = [];
+                    foreach ($linhasCli as $l) {
+                        $horasCli += (float) ($l['horas'] ?? 0);
+                        $extra = '';
+                        if (!empty($l['consultant_extra_pct'])) {
+                            $extra = ($l['valor_extra'] ?? null) !== null
+                                ? '+' . $l['consultant_extra_pct'] . '% (' . $this->brl((float) $l['valor_extra']) . ')'
+                                : '+' . $l['consultant_extra_pct'] . '% base ' . $this->fmtHoras((float) ($l['horas_base'] ?? $l['horas']));
+                        }
+                        $linhas[] = [
+                            'data'    => isset($l['data']) ? Carbon::parse($l['data'])->format('d/m/Y') : '',
+                            'cliente' => $l['cliente'] ?? '—',
+                            'codigo'  => $l['projeto_codigo'] ?? '',
+                            'projeto' => $l['projeto'] ?? '—',
+                            'ticket'  => $l['ticket'] ?: '—',
+                            'titulo'  => $l['titulo'] ?: '—',
+                            'inicio'  => $fmtTime($l['start_time'] ?? null),
+                            'fim'     => $fmtTime($l['end_time'] ?? null),
+                            'horas'   => $this->fmtHoras((float) ($l['horas'] ?? 0)),
+                            'extra'   => $extra,
+                        ];
+                    }
+                    $clientes[] = ['nome' => $cli, 'horas_fmt' => $this->fmtHoras($horasCli), 'linhas' => $linhas];
+                }
+                $grupos[] = ['tipo' => $tipo, 'horas_fmt' => $this->fmtHoras($horasTipo), 'clientes' => $clientes];
+            }
+        }
+
+        // Logo: Bizify quando o consultor é Bizify (espelha o Blade legado), senão ERPSERV.
+        $logoBizify  = public_path('logo-bizify.png');
+        $logoErp     = public_path('logo-erpserv.png');
+        $logoPath    = ($user && $user->is_bizify && is_file($logoBizify)) ? $logoBizify : $logoErp;
+        $logoDataUri = is_file($logoPath) ? 'data:image/png;base64,' . base64_encode(file_get_contents($logoPath)) : '';
+
+        $despesaSaldo = round(collect($despesas)->where('is_paid', false)->sum('valor'), 2);
+        $totalValor   = $temAjustes ? $recebimento : $baseValor;
+
+        return [
+            'consultantName'  => $consultor['nome'] ?? ($user->name ?? ''),
+            'periodo'         => $this->periodoExtenso($yearMonth),
+            'mode'            => $mode,
+            'logoDataUri'     => $logoDataUri,
+            'cards'           => $cards,
+            'grupos'          => $grupos,
+            'despesas'        => $despesas,
+            'temDespesas'     => !empty($despesas) && !$soServico,
+            'despesaSaldoFmt' => $this->brl($despesaSaldo),
+            'temAjustes'      => $temAjustes,
+            'servTotalFmt'    => $this->brl($servTotal),
+            'despTot'         => $despTot,
+            'despTotFmt'      => $this->brl($despTot),
+            'descontoFmt'     => $this->brl($desconto),
+            'descontoDesc'    => $consultor['desconto_desc'] ?? null,
+            'adiantamentoFmt' => $this->brl($adiantamento),
+            'adicionalFmt'    => $this->brl($adicional),
+            'adicionalDesc'   => $consultor['adicional_desc'] ?? null,
+            'baseValorFmt'    => $this->brl($baseValor),
+            'recebimentoFmt'  => $this->brl($recebimento),
+            'totalValorFmt'   => $this->brl($totalValor),
+        ];
+    }
+
+    /** GET /fechamento-consultor/{userId}/{yearMonth}/report-html?mode= — HTML do relatório (mesma fonte do PDF). */
+    public function reportHtml(Request $request, string $userId, string $yearMonth): JsonResponse
+    {
+        $mode = $request->query('mode', 'ambos');
+        $html = view('pdf.fechamento-consultor', $this->buildConsultorReportView((int) $userId, $yearMonth, $mode))->render();
+        return response()->json(['html' => $html]);
+    }
+
     private function generateFechamentoFiles(User $consultant, string $yearMonth, string $mode = 'ambos'): array
     {
         [$from, $to]   = $this->period($yearMonth);
@@ -456,29 +596,9 @@ class FechamentoConsultorController extends Controller
             mkdir($dirFull, 0775, true);
         }
 
-        // ── PDF ──
-        $pdf = Pdf::loadView('pdf.fechamento-consultor', [
-            'consultantName'   => $consultant->name,
-            'periodo'          => $periodo,
-            'mode'             => $mode,
-            'totalHorasFmt'    => $this->fmtHoras((float) $closing['horas_a_pagar']),
-            'taxaLabel'        => $closing['taxa_label'],
-            'taxaFmt'          => $this->brl((float) $closing['taxa_value']),
-            'valorServicoFmt'  => $this->brl($totalServico),
-            'despesas'         => $closing['despesas'],
-            'totalDespesasFmt' => $this->brl($totalDespesas),
-            'temDespesas'      => !empty($closing['despesas']) && !$soServico,
-            'valorTotal'       => $this->brl($totalValue),
-            'grupos'           => $soDespesa ? [] : $this->buildPdfGroups($rows),
-            'temAjustes'       => $temAjustes,
-            'descontoFmt'      => $this->brl($desconto),
-            'descontoDesc'     => $ajuste->desconto_desc ?? null,
-            'adiantamentoFmt'  => $this->brl($adiantamento),
-            'adicionalFmt'     => $this->brl($adicional),
-            'adicionalDesc'    => $ajuste->adicional_desc ?? null,
-            'recebimentoFmt'   => $this->brl($recebimento),
-            'isBizify'         => (bool) $consultant->is_bizify,
-        ])->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
+        // ── PDF ── (MESMA fonte/Blade do relatório da tela → tela = e-mail idênticos)
+        $pdf = Pdf::loadView('pdf.fechamento-consultor', $this->buildConsultorReportView($consultant->id, $yearMonth, $mode))
+            ->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
         file_put_contents($pdfFullPath, $pdf->output());
 
         // ── XLSX ──

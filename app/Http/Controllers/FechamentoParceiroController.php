@@ -302,8 +302,8 @@ class FechamentoParceiroController extends Controller
                 );
             }
 
-            // Parceiro ADM (is_executive) é administrativo: NÃO recebe valor de serviço
-            // (mas as despesas dele continuam entrando no fechamento via despesasData).
+            // Parceiro ADM (is_executive) também fatura as horas dele quando tem
+            // apontamento — pago igual à equipe do parceiro (regra 2026-06-02).
             $isParceiroAdm = (bool) $user->is_executive;
 
             $rows[] = [
@@ -314,7 +314,7 @@ class FechamentoParceiroController extends Controller
                 'valor_hora'           => $valorHora,
                 'pricing_type_parceiro'=> $partner->pricing_type,
                 'is_parceiro_adm'      => $isParceiroAdm,
-                'total'                => $isParceiroAdm ? 0.0 : round($horas * $valorHora, 2),
+                'total'                => round($horas * $valorHora, 2),
             ];
         }
 

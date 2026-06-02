@@ -183,8 +183,7 @@ class FechamentoConsultorController extends Controller
         $hourlyRate    = (float) ($hist['hourly_rate'] ?? 0);
         $rateType      = $hist['rate_type'] ?? 'hourly';
         $effectiveRate = $this->effectiveHourlyRate($hourlyRate, $rateType);
-        $horasTrabExatas  = $totalMinutes / 60;          // exato — não arredondar antes de multiplicar pela taxa
-        $horasTrabalhadas = round($horasTrabExatas, 2);  // só para exibição
+        $horasTrabalhadas = round($totalMinutes / 60, 2);
 
         $hourBankService  = app(HourBankService::class);
         $workingDaysFull  = $hourBankService->calculateWorkingDays($year, $month);
@@ -213,10 +212,10 @@ class FechamentoConsultorController extends Controller
             case 'horista':
                 $guaranteedHours    = (float) ($user->guaranteed_hours ?? 0);
                 $guaranteedProrated = $guaranteedHours > 0 ? round($guaranteedHours * $ratio, 2) : 0;
-                $horasMinimas       = $guaranteedProrated > 0 ? max($horasTrabExatas, $guaranteedProrated) : $horasTrabExatas;
+                $horasMinimas       = $guaranteedProrated > 0 ? max($horasTrabalhadas, $guaranteedProrated) : $horasTrabalhadas;
                 return [
                     'total'             => round($horasMinimas * $effectiveRate + $extrasConsultant, 2),
-                    'horas_a_pagar'     => round($horasMinimas, 2),
+                    'horas_a_pagar'     => $horasMinimas,
                     'horas_trabalhadas' => $horasTrabalhadas,
                     'effective_rate'    => $effectiveRate,
                     'taxa_label'        => 'Valor/Hora',
@@ -258,7 +257,7 @@ class FechamentoConsultorController extends Controller
 
             default:
                 return [
-                    'total'             => round($horasTrabExatas * $effectiveRate + $extrasConsultant, 2),
+                    'total'             => round($horasTrabalhadas * $effectiveRate + $extrasConsultant, 2),
                     'horas_a_pagar'     => $horasTrabalhadas,
                     'horas_trabalhadas' => $horasTrabalhadas,
                     'effective_rate'    => $effectiveRate,
@@ -1260,8 +1259,7 @@ class FechamentoConsultorController extends Controller
             $hourlyRate       = (float) ($hist['hourly_rate'] ?? 0);
             $rateType         = $hist['rate_type'] ?? 'hourly';
             $effectiveRate    = $this->effectiveHourlyRate($hourlyRate, $rateType);
-            $horasTrabExatas  = (int) ($hoursByUser[$user->id] ?? 0) / 60;   // exato
-            $horasTrabalhadas = round($horasTrabExatas, 2);                 // exibição
+            $horasTrabalhadas = round((int) ($hoursByUser[$user->id] ?? 0) / 60, 2);
 
             $extrasConsultant = round(
                 ($extraTimesheetsByUser->get($user->id, collect()))
@@ -1324,8 +1322,8 @@ class FechamentoConsultorController extends Controller
                     $guaranteedHours         = (float) ($user->guaranteed_hours ?? 0);
                     $guaranteedProrated      = $guaranteedHours > 0 ? round($guaranteedHours * $ratio, 2) : 0;
                     $horasMinimas            = $guaranteedProrated > 0
-                        ? max($horasTrabExatas, $guaranteedProrated)
-                        : $horasTrabExatas;
+                        ? max($horasTrabalhadas, $guaranteedProrated)
+                        : $horasTrabalhadas;
                     $horistas[] = array_merge($base, [
                         'guaranteed_hours'   => $guaranteedHours,
                         'guaranteed_prorated'=> $guaranteedProrated,
@@ -1334,7 +1332,7 @@ class FechamentoConsultorController extends Controller
                         'dias_uteis_periodo' => $periodDays,
                         'dias_uteis_cheio'   => $totalWorkingDays,
                         'data_inicio'        => $startDate,
-                        'horas_a_pagar'      => round($horasMinimas, 2),
+                        'horas_a_pagar'      => $horasMinimas,
                         'total_extras'       => $extrasConsultant,
                         'total'              => round($horasMinimas * $effectiveRate + $extrasConsultant, 2),
                     ]);

@@ -777,6 +777,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/consultores',                 [\App\Http\Controllers\FechamentoParceiroController::class, 'consultores']);
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/despesas',                    [\App\Http\Controllers\FechamentoParceiroController::class, 'despesas']);
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/apontamentos',               [\App\Http\Controllers\FechamentoParceiroController::class, 'apontamentos']);
+            Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/report-html',                [\App\Http\Controllers\FechamentoParceiroController::class, 'reportHtml']);
             Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/enviar-email',               [\App\Http\Controllers\FechamentoParceiroController::class, 'enviarEmail']);
             Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/limpar-envio',               [\App\Http\Controllers\FechamentoParceiroController::class, 'limparEnvio']);
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/excel',                       [\App\Http\Controllers\FechamentoParceiroController::class, 'excel']);

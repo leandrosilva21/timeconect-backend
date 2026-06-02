@@ -510,6 +510,51 @@ class FechamentoParceiroController extends Controller
      *   pdf_name:string, xlsx_name:string, total_value:float
      * }
      */
+    /**
+     * View-data ÚNICA do relatório do parceiro — usada PELA TELA (endpoint reportHtml)
+     * E pelo PDF/e-mail (generateParceiroFiles), garantindo que sejam IDÊNTICOS.
+     */
+    private function buildParceiroReportView(Partner $partner, string $yearMonth, string $mode = 'ambos'): array
+    {
+        $periodo    = $this->periodoExtenso($yearMonth);
+        $rows       = $this->parceiroApontamentosRows((string) $partner->id, $yearMonth);
+        $totalAll   = $this->parceiroTotals($partner, $yearMonth);
+        $totalHoras = round(collect($rows)->sum('horas'), 2);
+
+        $soDespesa = $mode === 'despesa';
+        $soServico = $mode === 'servicos';
+
+        $despesasAll     = $this->despesasData((int) $partner->id, $yearMonth);
+        $despesas        = array_values(array_filter($despesasAll, fn ($d) => !$d['is_paid']));
+        $despesasAntecip = array_values(array_filter($despesasAll, fn ($d) => $d['is_paid']));
+        $totalDespesas   = round(collect($despesas)->sum('valor'), 2);
+        $totalServicos   = round($totalAll - $totalDespesas, 2);
+        $totalValue      = $soDespesa ? $totalDespesas : ($soServico ? $totalServicos : $totalAll);
+
+        return [
+            'parceiroName'     => $partner->name,
+            'periodo'          => $periodo,
+            'mode'             => $mode,
+            'totalHorasFmt'    => $this->fmtHoras($totalHoras),
+            'valorTotal'       => $this->brl($totalValue),
+            'grupos'           => $soDespesa ? [] : $this->buildPdfGroups($rows),
+            'despesas'         => $soServico ? [] : $despesas,
+            'despesasAntecip'  => $soServico ? [] : $despesasAntecip,
+            'totalServicosFmt' => $this->brl($totalServicos),
+            'totalDespesasFmt' => $this->brl($totalDespesas),
+            'brl'              => fn ($v) => $this->brl((float) $v),
+        ];
+    }
+
+    /** GET /fechamento-parceiro/{partnerId}/{yearMonth}/report-html?mode= — HTML do relatório (mesma fonte do PDF). */
+    public function reportHtml(Request $request, string $partnerId, string $yearMonth): JsonResponse
+    {
+        $partner = Partner::findOrFail($partnerId);
+        $mode    = $request->query('mode', 'ambos');
+        $html    = view('pdf.fechamento-parceiro', $this->buildParceiroReportView($partner, $yearMonth, $mode))->render();
+        return response()->json(['html' => $html]);
+    }
+
     private function generateParceiroFiles(Partner $partner, string $yearMonth, string $mode = 'ambos'): array
     {
         $periodo    = $this->periodoExtenso($yearMonth);
@@ -544,20 +589,9 @@ class FechamentoParceiroController extends Controller
         $totalServicos     = round($totalAll - $totalDespesas, 2);
         $totalValue        = $soDespesa ? $totalDespesas : ($soServico ? $totalServicos : $totalAll);
 
-        // ── PDF ──
-        $pdf = Pdf::loadView('pdf.fechamento-parceiro', [
-            'parceiroName'     => $partner->name,
-            'periodo'          => $periodo,
-            'mode'             => $mode,
-            'totalHorasFmt'    => $this->fmtHoras($totalHoras),
-            'valorTotal'       => $this->brl($totalValue),
-            'grupos'           => $soDespesa ? [] : $this->buildPdfGroups($rows),
-            'despesas'         => $soServico ? [] : $despesas,
-            'despesasAntecip'  => $soServico ? [] : $despesasAntecip,
-            'totalServicosFmt' => $this->brl($totalServicos),
-            'totalDespesasFmt' => $this->brl($totalDespesas),
-            'brl'              => fn ($v) => $this->brl((float) $v),
-        ])->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
+        // ── PDF ── (MESMA fonte/Blade do relatório da tela → tela = e-mail idênticos)
+        $pdf = Pdf::loadView('pdf.fechamento-parceiro', $this->buildParceiroReportView($partner, $yearMonth, $mode))
+            ->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
         file_put_contents($pdfFullPath, $pdf->output());
 
         // ── XLSX ──

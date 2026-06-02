@@ -465,8 +465,9 @@ class CustomerController extends Controller
             $targetUser = \App\Models\User::find($targetUserId);
         }
 
-        // Apenas admin retorna TODOS os clientes; demais usuários (incluindo coordenador) são limitados à sua alocação
-        if ($targetUser && $targetUser->isAdmin()) {
+        // Admin e Administrativo retornam TODOS os clientes (acesso total / hours.view_all);
+        // demais usuários (incluindo coordenador) são limitados à sua alocação.
+        if ($targetUser && ($targetUser->isAdmin() || $targetUser->isAdministrativo())) {
             $query = Customer::query();
         } elseif ($targetUser && $targetUser->isCoordenador() && $targetUser->coordinator_type === 'sustentacao') {
             // Coordenador de SUSTENTAÇÃO não está no pivô de projetos: vê os clientes com projetos

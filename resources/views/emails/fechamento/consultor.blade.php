@@ -50,12 +50,16 @@
             <td class="pd-header" align="left" bgcolor="#FFFFFF"
               style="padding:36px 40px 28px;background-color:#FFFFFF;border-bottom:1px solid #E5E7EB;">
 
-              {{-- Logo ERPSERV (centralizado, maior, com dark-mode swap) --}}
+              {{-- Logo (ERPSERV ou Bizify conforme o consultor; ERPSERV tem dark-mode swap) --}}
               <div style="text-align:center;">
-                <img src="https://app.minutor.com.br/logo.png" alt="ERPSERV Consultoria" width="200" class="erp-light" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
-                <div class="erp-dark" style="display:none;mso-hide:all;max-height:0;overflow:hidden;">
-                  <img src="https://app.minutor.com.br/logo-white.png" alt="ERPSERV Consultoria" width="200" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
-                </div>
+                @if(($isBizify ?? false))
+                  <img src="https://app.minutor.com.br/logo-bizify.png" alt="Bizify" width="180" style="display:inline-block;width:180px;max-width:58%;height:auto;border:0;" />
+                @else
+                  <img src="https://app.minutor.com.br/logo.png" alt="ERPSERV Consultoria" width="200" class="erp-light" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
+                  <div class="erp-dark" style="display:none;mso-hide:all;max-height:0;overflow:hidden;">
+                    <img src="https://app.minutor.com.br/logo-white.png" alt="ERPSERV Consultoria" width="200" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
+                  </div>
+                @endif
               </div>
 
               {{-- Marca Minutor (secundária, menor, alinhada à esquerda abaixo do logo) --}}

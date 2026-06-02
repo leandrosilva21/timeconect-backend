@@ -41,7 +41,11 @@
 </head>
 <body>
   <div class="header">
-    <div class="brand">ERPSERV Consultoria</div>
+    @if(($isBizify ?? false) && is_file(public_path('logo-bizify.png')))
+      <img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path('logo-bizify.png'))) }}" alt="Bizify" style="height:44px;width:auto;display:block;margin-bottom:6px;" />
+    @else
+      <div class="brand">ERPSERV Consultoria</div>
+    @endif
     <div class="brand-sub">Minutor — Controle de horas e contratos</div>
     <div class="doc-title">Fechamento de Consultor</div>
     <div class="doc-meta">{{ $consultantName }} &nbsp;·&nbsp; Período: {{ $periodo }}@if(($mode ?? 'ambos') !== 'ambos') &nbsp;·&nbsp; {{ ($mode ?? '') === 'despesa' ? 'Despesas' : 'Serviços' }}@endif</div>

@@ -477,6 +477,7 @@ class FechamentoConsultorController extends Controller
             'adicionalFmt'     => $this->brl($adicional),
             'adicionalDesc'    => $ajuste->adicional_desc ?? null,
             'recebimentoFmt'   => $this->brl($recebimento),
+            'isBizify'         => (bool) $consultant->is_bizify,
         ])->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
         file_put_contents($pdfFullPath, $pdf->output());
 
@@ -616,6 +617,7 @@ class FechamentoConsultorController extends Controller
                 fromAddress:    $mc['from_address'],
                 fromName:       $mc['from_name'],
                 mode:           $mode,
+                isBizify:       (bool) $consultant->is_bizify,
             );
 
             // Microsoft Graph (Send As do remetente) quando configurado; senão, SMTP atual.
@@ -756,6 +758,7 @@ class FechamentoConsultorController extends Controller
             'isContinuation'  => false,
             'withAttachments' => true,
             'mensagem'        => $mensagem,
+            'isBizify'        => (bool) $consultant->is_bizify,
         ])->render();
 
         // Prévia só: força o logo claro (escuro-colorido) a aparecer no card branco —
@@ -953,6 +956,7 @@ class FechamentoConsultorController extends Controller
                 withAttachments: $attachFechamento,
                 fromAddress:    $mc['from_address'],
                 fromName:       $mc['from_name'],
+                isBizify:       (bool) $consultant->is_bizify,
             );
 
             // Microsoft Graph (Send As do remetente) quando configurado; senão, SMTP atual.

@@ -60,6 +60,8 @@ class FechamentoConsultorMail extends Mailable
         public ?string $fromAddress = null,
         public ?string $fromName = null,
         public string $mode = 'ambos',
+        // Funcionário Bizify: e-mail sai com o logo Bizify em vez do ERPSERV.
+        public bool $isBizify = false,
     ) {
     }
 
@@ -134,6 +136,7 @@ class FechamentoConsultorMail extends Mailable
                 'withAttachments' => $this->withAttachments,
                 'mensagem'       => $this->mensagem ?? '',
                 'mode'           => $this->mode,
+                'isBizify'       => $this->isBizify,
             ],
         );
     }

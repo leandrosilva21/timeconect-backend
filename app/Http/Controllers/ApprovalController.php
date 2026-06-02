@@ -203,17 +203,18 @@ class ApprovalController extends Controller
                 $arr['ticket_total_minutes'] = ($tk !== '' && preg_match('/^\d{5}$/', $tk) && $ts->customer_id)
                     ? ($ticketTotalsMap[$ts->customer_id . ':' . $tk] ?? null)
                     : null;
-                // Coordenador: override do coordenador > coordenadores do projeto >
-                // (se serviço de sustentação) coordenadores de sustentação.
+                // Coordenador: override do coordenador > (se sustentação) coordenador de
+                // sustentação (Anderson Arantes) > coordenadores do projeto.
                 $proj = $ts->project;
                 $coordLabel = null;
                 if ($proj) {
+                    $isSustentacao = optional($proj->serviceType)->code === 'sustentacao';
                     if ($proj->kanbanOverrideCoordinator) {
                         $coordLabel = $proj->kanbanOverrideCoordinator->name;
+                    } elseif ($isSustentacao && !empty($sustentacaoCoordNames)) {
+                        $coordLabel = implode(', ', $sustentacaoCoordNames);
                     } elseif ($proj->coordinators && $proj->coordinators->count()) {
                         $coordLabel = $proj->coordinators->pluck('name')->implode(', ');
-                    } elseif (optional($proj->serviceType)->code === 'sustentacao' && !empty($sustentacaoCoordNames)) {
-                        $coordLabel = implode(', ', $sustentacaoCoordNames);
                     }
                 }
                 $arr['coordinator_label'] = $coordLabel;

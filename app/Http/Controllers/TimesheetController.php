@@ -580,7 +580,12 @@ class TimesheetController extends Controller
                     }
                 }
 
-                $items = collect($timesheets->items())->map(function ($ts) use ($hideClientPct, $ticketTotalsMap, $conflictCandidatesByKey) {
+                // Coordenador de sustentação (regra: serviço de sustentação => coordenador é
+                // sempre o(s) coordinator_type='sustentacao', ex.: Anderson Arantes).
+                $sustentacaoCoordNames = \App\Models\User::where('coordinator_type', 'sustentacao')
+                    ->where('enabled', true)->pluck('name')->all();
+
+                $items = collect($timesheets->items())->map(function ($ts) use ($hideClientPct, $ticketTotalsMap, $conflictCandidatesByKey, $sustentacaoCoordNames) {
                     if ($hideClientPct) {
                         $ts->makeHidden(['client_extra_pct']);
                     }
@@ -625,6 +630,21 @@ class TimesheetController extends Controller
                     } else {
                         $arr['ticket_total_minutes'] = null;
                     }
+                    // Coordenador exibido: override do coord > (se sustentação) coordenador de
+                    // sustentação (Anderson Arantes) > coordenadores do projeto.
+                    $proj = $ts->project;
+                    $coordLabel = null;
+                    if ($proj) {
+                        $isSustentacao = optional($proj->serviceType)->code === 'sustentacao';
+                        if ($proj->kanbanOverrideCoordinator) {
+                            $coordLabel = $proj->kanbanOverrideCoordinator->name;
+                        } elseif ($isSustentacao && !empty($sustentacaoCoordNames)) {
+                            $coordLabel = implode(', ', $sustentacaoCoordNames);
+                        } elseif ($proj->coordinators && $proj->coordinators->count()) {
+                            $coordLabel = $proj->coordinators->pluck('name')->implode(', ');
+                        }
+                    }
+                    $arr['coordinator_label'] = $coordLabel;
                     return $arr;
                 })->all();
 

@@ -815,6 +815,7 @@ class ProjectController extends Controller
             'expense_responsible_party' => ['nullable', Rule::in(['consultancy', 'client'])],
             'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
             'allow_negative_balance' => 'nullable|boolean',
+            'client_follows_timesheets' => 'nullable|boolean',
             'status' => ['nullable', Rule::in(array_keys(Project::getStatuses()))],
             'consultant_ids' => 'nullable|array',
             'consultant_ids.*' => 'exists:users,id',
@@ -925,6 +926,9 @@ class ProjectController extends Controller
 
         if (!Schema::hasColumn('projects', 'allow_negative_balance')) {
             unset($validated['allow_negative_balance']);
+        }
+        if (!Schema::hasColumn('projects', 'client_follows_timesheets')) {
+            unset($validated['client_follows_timesheets']);
         }
 
         // Gerar ou validar código do projeto
@@ -1232,6 +1236,7 @@ class ProjectController extends Controller
             'expense_responsible_party' => ['nullable', Rule::in(['consultancy', 'client'])],
             'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
             'allow_negative_balance' => 'nullable|boolean',
+            'client_follows_timesheets' => 'nullable|boolean',
             'sold_hours_effective_from' => 'nullable|date',
             'hourly_rate_effective_from' => 'nullable|date',
             'consultant_ids' => 'nullable|array',
@@ -1452,6 +1457,9 @@ class ProjectController extends Controller
         // Remover campos que ainda não existem no banco (migrações pendentes)
         if (!Schema::hasColumn('projects', 'allow_negative_balance')) {
             unset($validated['allow_negative_balance']);
+        }
+        if (!Schema::hasColumn('projects', 'client_follows_timesheets')) {
+            unset($validated['client_follows_timesheets']);
         }
 
         // Override de coordenador para projetos de sustentação:

@@ -194,7 +194,9 @@ class FechamentoConsultorController extends Controller
             && Carbon::parse($startDate)->year  === $year
             && Carbon::parse($startDate)->month === $month;
 
-        if ($startIsInMonth) {
+        if ($startDate && Carbon::parse($startDate)->format('Y-m') > $yearMonth) {
+            $ratio = 0; // começou depois da competência → sem horas garantidas nesse mês
+        } elseif ($startIsInMonth) {
             $workingDaysPeriod = $hourBankService->calculateWorkingDays($year, $month, $startDate);
             $ratio = $totalWorkingDays > 0 ? round($workingDaysPeriod['working_days'] / $totalWorkingDays, 6) : 1;
         } else {
@@ -1187,6 +1189,11 @@ class FechamentoConsultorController extends Controller
         $users = User::where('enabled', true)
             ->whereNotIn('type', ['parceiro_admin', 'cliente'])
             ->whereNotNull('consultant_type')
+            // Exclui quem começou DEPOIS da competência (não pertence a esse mês).
+            ->where(function ($q) use ($to) {
+                $q->whereNull('bank_hours_start_date')
+                  ->orWhereDate('bank_hours_start_date', '<=', $to);
+            })
             ->orderBy('name')
             ->get(['id', 'name', 'email', 'type', 'consultant_type', 'contract_type', 'partner_id', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date', 'guaranteed_hours', 'is_bizify']);
 
@@ -1306,7 +1313,10 @@ class FechamentoConsultorController extends Controller
                 && Carbon::parse($startDate)->year  === $year
                 && Carbon::parse($startDate)->month === $month;
 
-            if ($startIsInMonth) {
+            if ($startDate && Carbon::parse($startDate)->format('Y-m') > $yearMonth) {
+                $periodDays = 0;
+                $ratio      = 0; // começou depois da competência
+            } elseif ($startIsInMonth) {
                 $workingDaysPeriod = $hourBankService->calculateWorkingDays($year, $month, $startDate);
                 $periodDays        = $workingDaysPeriod['working_days'];
                 $ratio             = $totalWorkingDays > 0 ? round($periodDays / $totalWorkingDays, 6) : 1;

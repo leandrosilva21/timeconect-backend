@@ -474,7 +474,7 @@ class FechamentoClienteController extends Controller
         $from = "{$fromMonth}-01";
         $to   = Carbon::parse("{$toMonth}-01")->endOfMonth()->toDateString();
 
-        $tsModels = Timesheet::with(['user:id,name', 'project', 'project.hourlyRateChanges'])
+        $tsModels = Timesheet::with(['user:id,name', 'project', 'project.hourlyRateChanges', 'project.coordinators:id,name', 'project.parentProject.coordinators:id,name'])
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)
                 ->where('is_investimento_comercial', false)
                 ->where($this->rootOnDemandScope()))
@@ -484,9 +484,20 @@ class FechamentoClienteController extends Controller
             ->orderBy('date')
             ->get();
 
+        // Executivo (do cliente) e Coordenador (do projeto, com fallback no PAI) — colunas do modal.
+        $executivo = optional(Customer::with('executive:id,name')->find($customerId))->executive?->name ?? '—';
+        $coordNome = function ($project) {
+            if (!$project) return '—';
+            $coords = $project->coordinators;
+            if ($coords->isEmpty() && $project->parentProject) {
+                $coords = $project->parentProject->coordinators;
+            }
+            return $coords->isNotEmpty() ? $coords->pluck('name')->implode(', ') : '—';
+        };
+
         // Valor pendente do apontamento = horas × valor/hora On Demand × (1 + client_extra_pct).
         $rateCache = [];
-        $timesheets = $tsModels->map(function ($t) use (&$rateCache) {
+        $timesheets = $tsModels->map(function ($t) use (&$rateCache, $executivo, $coordNome) {
             $comp  = $t->date->format('Y-m');
             $key   = $t->project_id . '|' . $comp;
             $rate  = $rateCache[$key] ??= (float) ($t->project?->hourlyRateForCompetencia($comp) ?? 0);
@@ -504,10 +515,12 @@ class FechamentoClienteController extends Controller
                 'status'         => $t->status,
                 'ticket'         => $t->ticket,
                 'observacao'     => $t->observation,
+                'executivo'      => $executivo,
+                'coordenador'    => $coordNome($t->project),
             ];
         });
 
-        $despesas = Expense::with(['user:id,name', 'project:id,name,code', 'category:id,name'])
+        $despesas = Expense::with(['user:id,name', 'project:id,name,code,parent_project_id', 'project.coordinators:id,name', 'project.parentProject.coordinators:id,name', 'category:id,name'])
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)->where('is_investimento_comercial', false))
             ->whereBetween('expense_date', [$from, $to])
             ->whereIn('status', ['pending', 'adjustment_requested'])
@@ -524,6 +537,8 @@ class FechamentoClienteController extends Controller
                 'categoria'      => $e->category?->name ?? '—',
                 'valor'          => (float) $e->amount,
                 'status'         => $e->status,
+                'executivo'      => $executivo,
+                'coordenador'    => $coordNome($e->project),
             ]);
 
         $valorTimesheets = round($timesheets->sum('valor'), 2);

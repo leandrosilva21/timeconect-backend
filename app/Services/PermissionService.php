@@ -138,6 +138,8 @@ class PermissionService
             // Clientes — acesso total
             'customers.view', 'customers.create', 'customers.update', 'customers.delete',
             'customers.manage',
+            // Parceiros — acesso total (filtro + dropdown "Empresa parceira" no cadastro de usuários)
+            'partners.view', 'partners.manage',
             // Usuários — acesso total
             'users.view', 'users.view_all', 'users.create', 'users.update', 'users.delete',
             'users.reset_password', 'users.view_own_profile', 'users.update_own_profile',

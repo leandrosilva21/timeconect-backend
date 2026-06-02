@@ -106,8 +106,11 @@ class FolhaPagamentoController extends Controller
         $cooperados = User::where('contract_type', 'cooperado')->where('enabled', true)
             ->whereNotIn('type', ['cliente'])->orderBy('name')->get();
         foreach ($cooperados as $u) {
-            if ($rahoId && (int) $u->partner_id === $rahoId) {
-                continue; // usuário do Raho entra na seção própria (azul), não como cooperado
+            if ($u->partner_id) {
+                // Usuários de PARCEIRO não entram como cooperado individual:
+                //  • Raho → linha própria (seção azul abaixo);
+                //  • demais parceiros → consolidados numa única linha no admin (seção parceiros).
+                continue;
             }
             $uid = $u->id;
             $c   = $byUser[$uid] ?? []; // dados do fechamento (se for consultor com apontamento)
@@ -268,6 +271,78 @@ class FolhaPagamentoController extends Controller
                     'liquido'            => round($totalRend - $totalDebitos, 2),
                 ];
             }
+        }
+
+        // ── Parceiros (exceto Raho): consolida o parceiro numa ÚNICA linha, no parceiro
+        //    admin (is_executive), com a APURAÇÃO TOTAL do parceiro (soma do fechamento de
+        //    TODOS os membros: horas somadas + valor total). Membros comuns NÃO aparecem.
+        //    Parceiro SEM admin is_executive é ignorado (não entra na folha). ──
+        $partners = \App\Models\Partner::query()
+            ->when($rahoId, fn ($q) => $q->where('id', '!=', $rahoId))
+            ->orderBy('name')->get();
+        foreach ($partners as $partner) {
+            $admin = User::where('partner_id', $partner->id)
+                ->where('is_executive', true)
+                ->orderBy('id')->first();
+            if (!$admin) {
+                continue; // sem parceiro admin (is_executive) → parceiro fora da folha
+            }
+
+            $calc = collect(app(FechamentoParceiroController::class)->consultoresData($partner, $yearMonth));
+            $totalHoras    = round((float) $calc->sum(fn ($r) => (float) ($r['horas'] ?? 0)), 2);
+            $totalApuracao = round((float) $calc->sum(fn ($r) => (float) ($r['total'] ?? 0)), 2);
+
+            $uid = $admin->id;
+            $f   = $folhaByUser[$uid] ?? null;
+
+            // Atual = salvo (editado) quando houver; senão o calculado (prefill).
+            $horas        = ($f && $f->horas_trabalhadas !== null) ? (float) $f->horas_trabalhadas : $totalHoras;
+            $producao     = ($f && $f->producao !== null) ? (float) $f->producao : $totalApuracao;
+            $variavel     = $f ? (float) $f->variavel : 0.0;
+            $reemb        = $f ? (float) $f->reemb : 0.0;
+            $descontos    = $f ? (float) $f->descontos_diversos : 0.0;
+            $adiantamento = $f ? (float) $f->adiantamento : 0.0;
+
+            $totalRend    = round($producao + $variavel + $reemb, 2);
+            $totalDebitos = round($descontos + $adiantamento, 2);
+
+            $rows[] = [
+                'row_key'            => 'u:' . $uid,
+                'is_socio'           => false,
+                'is_raho'            => false,
+                'is_parceiro_total'  => true,
+                'partner_label'      => $partner->name,
+                'inativo'            => !$admin->enabled,
+                'cancelado'          => $f ? (bool) $f->cancelado : false,
+                'user_id'            => $uid,
+                'socio_key'          => null,
+                'cpf'                => $admin->cpf ?? '',
+                'matricula'          => $admin->matricula ?? '',
+                'status'             => $admin->payroll_status ?? '',
+                'nome'               => $admin->full_name ?: $admin->name,
+                'dias'               => $f ? (float) $f->dias_trabalhados : 0.0,
+                'horas'              => $horas,
+                'horas_apontamentos' => $totalHoras,
+                'valor_hora'         => 0.0, // consolidado: sem valor/hora (FE mostra "—")
+                'producao'           => $producao,
+                'horas_calc'         => $totalHoras,
+                'valor_hora_calc'    => 0.0,
+                'producao_calc'      => $totalApuracao,
+                'fech_serv'          => $totalApuracao,
+                'fech_desconto'      => 0.0,
+                'fech_adiantamento'  => 0.0,
+                'fech_adicional'     => 0.0,
+                'fech_desp'          => 0.0,
+                'variavel'           => $variavel,
+                'reemb'              => $reemb,
+                'reemb_auto'         => 0.0,
+                'descontos'          => $descontos,
+                'adiantamento'       => $adiantamento,
+                'horista_mensalista' => $f && $f->horista_mensalista ? $f->horista_mensalista : 'Mensalista',
+                'total_rend'         => $totalRend,
+                'total_debitos'      => $totalDebitos,
+                'liquido'            => round($totalRend - $totalDebitos, 2),
+            ];
         }
 
         // ── Linhas manuais ("Nova linha editável") — inclui os sócios (migrados p/ manual). ──

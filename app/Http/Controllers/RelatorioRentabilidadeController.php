@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Partner;
 use App\Models\Timesheet;
 use App\Models\UserHourlyRateLog;
 use Illuminate\Http\Request;
@@ -23,7 +24,8 @@ class RelatorioRentabilidadeController extends Controller
         $to   = Carbon::create($y, $m, 1)->endOfMonth()->toDateString();
 
         $timesheets = Timesheet::with([
-                'user:id,name,hourly_rate,rate_type',
+                'user:id,name,hourly_rate,rate_type,partner_id',
+                'user.partner:id,pricing_type,hourly_rate',
                 'project:id,name,hourly_rate,customer_id',
                 'project.customer:id,name',
             ])
@@ -34,9 +36,17 @@ class RelatorioRentabilidadeController extends Controller
             ->get();
 
         $costRateCache = [];
-        $costRate = function ($user) use (&$costRateCache, $from) {
+        $costRate = function ($user) use (&$costRateCache, $from, $yearMonth) {
             if (!$user) return 0.0;
             if (isset($costRateCache[$user->id])) return $costRateCache[$user->id];
+
+            // Consultor vinculado a parceiro herda o valor/hora DO PARCEIRO na competência
+            // quando o parceiro é de valor fixo. Se o parceiro for "por consultor"
+            // (pricing_type 'variable'), usa o valor do próprio consultor (regra abaixo).
+            if ($user->partner_id && $user->partner && $user->partner->pricing_type === Partner::PRICING_FIXED) {
+                return $costRateCache[$user->id] = (float) $user->partner->hourlyRateForCompetencia($yearMonth);
+            }
+
             $hist = UserHourlyRateLog::effectiveValuesAt($user->id, $user, $from);
             $rate = (float) ($hist['hourly_rate'] ?? $user->hourly_rate ?? 0);
             $type = $hist['rate_type'] ?? $user->rate_type ?? 'hourly';

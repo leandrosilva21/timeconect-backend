@@ -993,10 +993,17 @@ class TimesheetController extends Controller
             // Projetos de Investimento Interno não têm horas contratadas — pulam validação de saldo
             $isInvestimentoInterno = (bool) $project->is_investimento_comercial;
 
+            // Investimento da própria ERPSERV NÃO exige Projeto Real: é interno, não há
+            // projeto de cliente real por trás. (ERPSERV identificada por nome, igual
+            // storeInternalProject.) A aprovação fica com o coordenador do próprio investimento.
+            $project->loadMissing('customer');
+            $isErpserv = $project->customer && strtoupper(trim($project->customer->name)) === 'ERPSERV';
+
             // Apontamento de investimento exige o "Projeto Real" (referência + define o coordenador
-            // que aprova). O consumo continua no projeto de investimento.
-            $realProjectId = $isInvestimentoInterno ? ((int) $request->input('real_project_id') ?: null) : null;
-            if ($isInvestimentoInterno && !$realProjectId) {
+            // que aprova). O consumo continua no projeto de investimento. Exceto ERPSERV (acima).
+            $requiresRealProject = $isInvestimentoInterno && !$isErpserv;
+            $realProjectId = $requiresRealProject ? ((int) $request->input('real_project_id') ?: null) : null;
+            if ($requiresRealProject && !$realProjectId) {
                 DB::rollBack();
                 return response()->json([
                     'message' => 'Projeto Real é obrigatório para apontamento de investimento.',

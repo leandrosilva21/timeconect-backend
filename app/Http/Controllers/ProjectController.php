@@ -3332,9 +3332,27 @@ class ProjectController extends Controller
             return response()->json($empty);
         }
 
-        // IDs do banco de horas = projeto + filhos.
-        $bankIds = Project::where('parent_project_id', $project->id)->pluck('id')->all();
-        $bankIds[] = $project->id;
+        // Filhos: os que têm horas vendidas (>0) são BLOCOS que saem do banco do
+        // pai — fazem "carve-out" no extrato do pai no mês de início do filho (e seus
+        // apontamentos ficam no extrato do próprio filho, não somam de novo aqui).
+        // Filhos sem horas vendidas (sold=0) são extensões que compartilham o banco —
+        // seus apontamentos continuam somando no consumo do pai.
+        $children       = Project::where('parent_project_id', $project->id)->get(['id', 'sold_hours', 'start_date']);
+        $blockChildren  = $children->where('sold_hours', '>', 0);
+        $sharedChildIds = $children->where('sold_hours', '<=', 0)->pluck('id')->all();
+        $bankIds        = array_merge([$project->id], $sharedChildIds);
+
+        // Carve-out dos filhos-bloco por mês de início (clampado à janela do extrato
+        // pra nunca perder o bloco se o filho começar antes/depois da janela).
+        $firstYm = $startDate->format('Y-m');
+        $lastYm  = $startDate->copy()->addMonths($months - 1)->format('Y-m');
+        $childBlockByYm = [];
+        foreach ($blockChildren as $child) {
+            $cs = $child->start_date ? Carbon::parse($child->start_date)->format('Y-m') : $firstYm;
+            if ($cs < $firstYm) { $cs = $firstYm; }
+            if ($cs > $lastYm)  { $cs = $lastYm; }
+            $childBlockByYm[$cs] = ($childBlockByYm[$cs] ?? 0) + (float) $child->sold_hours;
+        }
 
         // Consumo real (apontamentos) por mês, status approved/pending.
         $realMap = \App\Models\Timesheet::query()
@@ -3398,8 +3416,12 @@ class ProjectController extends Controller
             $consumptionMinutes = $editable
                 ? ($manualMap[$ym] ?? 0)
                 : ($realMap[$ym] ?? 0);
+            // consumption_hours = apontamentos/manual do próprio pai (editável).
+            // child_block_hours = blocos de filhos que iniciam neste mês (carve-out).
+            // O saldo considera os dois; o input editável mexe só no manual.
             $consumptionHours = round($consumptionMinutes / 60, 2);
-            $accumulatedConsumptionHours += $consumptionHours;
+            $childBlock = round($childBlockByYm[$ym] ?? 0, 2);
+            $accumulatedConsumptionHours += $consumptionHours + $childBlock;
 
             $balanceHours = $vendidasHours === null
                 ? null
@@ -3410,6 +3432,7 @@ class ProjectController extends Controller
                 'vendidas_hours' => $vendidasHours,
                 'aporte_hours' => $monthAporte,
                 'consumption_hours' => $consumptionHours,
+                'child_block_hours' => $childBlock,
                 'accumulated_consumption_hours' => round($accumulatedConsumptionHours, 2),
                 'balance_hours' => $balanceHours,
                 'editable' => $editable,

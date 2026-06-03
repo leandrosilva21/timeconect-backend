@@ -550,9 +550,14 @@ class FechamentoParceiroController extends Controller
         $ratesUnis = collect($calc)->pluck('valor_hora')->filter(fn ($v) => (float) $v > 0)->map(fn ($v) => round((float) $v, 4))->unique()->values();
         $taxaHoraFmt = $ratesUnis->count() === 1 ? $this->brl((float) $ratesUnis[0]) : ($ratesUnis->count() > 1 ? 'por consultor' : '—');
 
+        // Logo ERPSERV embutido (base64) — mesmo modelo do relatório de consultor/cliente.
+        $logoFile    = public_path('logo-erpserv.png');
+        $logoDataUri = is_file($logoFile) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($logoFile)) : '';
+
         return [
             'parceiroName'     => $partner->name,
             'periodo'          => $periodo,
+            'logoDataUri'      => $logoDataUri,
             'mode'             => $mode,
             'totalHorasFmt'    => $this->fmtHoras($totalHoras),
             'taxaHoraFmt'      => $taxaHoraFmt,

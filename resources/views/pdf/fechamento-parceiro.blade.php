@@ -39,7 +39,11 @@
 </head>
 <body>
   <div class="header">
-    <div class="brand">ERPSERV Consultoria</div>
+    @if(!empty($logoDataUri))
+      <img src="{{ $logoDataUri }}" alt="ERPSERV Consultoria" style="height:44px;width:auto;display:block;margin-bottom:6px;">
+    @else
+      <div class="brand">ERPSERV Consultoria</div>
+    @endif
     <div class="brand-sub">Minutor — Controle de horas e contratos</div>
     <div class="doc-title">Fechamento de Parceiro</div>
     <div class="doc-meta">{{ $parceiroName }} &nbsp;·&nbsp; Período: {{ $periodo }}</div>

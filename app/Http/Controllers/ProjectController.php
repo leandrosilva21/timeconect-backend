@@ -1255,7 +1255,7 @@ class ProjectController extends Controller
             'architect_id'          => 'nullable|exists:users,id',
             'executivo_conta_id'    => 'nullable|exists:users,id',
             'kanban_coordinator_override_id' => 'nullable|exists:users,id',
-            'categoria_interna' => 'nullable|in:Sustentação,Projeto,Suporte,Comercial',
+            'categoria_interna' => 'nullable|in:Sustentação,Projeto,Suporte,Comercial,Leads',
             'movidesk_integration_enabled' => 'nullable|boolean',
             'confirm_movidesk_swap'        => 'nullable|boolean',
             'migrate_movidesk_timesheets'  => 'nullable|boolean',
@@ -2942,8 +2942,10 @@ class ProjectController extends Controller
         }
 
         $data = $request->validate([
-            'name'      => 'required|string|max:255|min:2',
-            'categoria' => 'required|string|in:Sustentação,Projeto,Suporte,Comercial',
+            'name'        => 'required|string|max:255|min:2',
+            'categoria'   => 'required|string|in:Sustentação,Projeto,Suporte,Comercial,Leads',
+            // Aprovador = coordenador do mini-projeto (quem aprova os apontamentos).
+            'approver_id' => 'nullable|integer|exists:users,id',
         ]);
 
         $erpservName = 'ERPSERV';
@@ -2980,11 +2982,17 @@ class ProjectController extends Controller
             'categoria_interna'         => $data['categoria'],
         ]);
 
+        // Aprovador: vincula como coordenador do projeto (é quem aprova os
+        // apontamentos do mini-projeto — ver Timesheet::canBeApprovedBy).
+        if (!empty($data['approver_id'])) {
+            $project->coordinators()->attach($data['approver_id']);
+        }
+
         $this->invalidateListCache('projects');
 
         return response()->json([
             'message' => 'Projeto interno criado com sucesso.',
-            'project' => $project,
+            'project' => $project->load('coordinators:id,name'),
         ], 201);
     }
 

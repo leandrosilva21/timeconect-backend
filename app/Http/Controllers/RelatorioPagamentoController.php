@@ -57,7 +57,8 @@ class RelatorioPagamentoController extends Controller
                 'vinculo_label'       => '—',
                 'contract_type'       => $p['contract_type'] ?? null,
                 'contract_type_label' => $contratoLabel[$p['contract_type'] ?? ''] ?? '—',
-                'valor'               => round((float) ($p['recebimento'] ?? $p['total_a_pagar'] ?? 0), 2),
+                // Pagamento de parceiro = serviços (mão de obra), SEM despesas (reembolso não entra aqui).
+                'valor'               => round((float) ($p['recebimento_sem_despesas'] ?? $p['recebimento'] ?? $p['total_a_pagar'] ?? 0), 2),
                 'envio_em'            => $p['envio_em'] ?? null,
             ];
         }

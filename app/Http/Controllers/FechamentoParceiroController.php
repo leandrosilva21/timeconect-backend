@@ -129,15 +129,29 @@ class FechamentoParceiroController extends Controller
             $adiantamento = round((float) ($ajuste->adiantamento ?? 0), 2);
             $adicional    = round((float) ($ajuste->adicional ?? 0), 2);
 
+            // Quebra serviços × despesas. O pagamento de SERVIÇOS (mão de obra) é sem despesas —
+            // usado no Relatório de Pagamentos, onde despesas (reembolso) não entram no valor.
+            $servicos = 0.0; $despesasReais = 0.0;
+            if ($yearMonth) {
+                if ($f?->isClosed()) {
+                    $servicos      = round(collect($f->snapshot_consultores ?? [])->sum('total'), 2);
+                    $despesasReais = round((float) ($f->total_despesas ?? 0), 2);
+                } else {
+                    $servicos      = round(collect($this->consultoresData($partner, $yearMonth))->sum('total'), 2);
+                    $despesasReais = round(collect($this->despesasData((int) $partner->id, $yearMonth))->where('is_paid', false)->sum('valor'), 2);
+                }
+            }
+
             // Total a pagar = base (serviços + despesas), SEM ajustes. Recebimento = base − desconto − adiantamento + adicional.
             // No snapshot fechado o total_a_pagar gravado JÁ inclui os ajustes (= recebimento); reconstrói a base p/ exibição.
             if ($f?->isClosed()) {
                 $recebimento = round((float) ($f->total_a_pagar ?? 0), 2);
                 $totalAPagar = round($recebimento + $desconto + $adiantamento - $adicional, 2);
             } else {
-                $totalAPagar = $yearMonth ? $this->parceiroTotals($partner, $yearMonth) : 0.0;
+                $totalAPagar = round($servicos + $despesasReais, 2);
                 $recebimento = round($totalAPagar - $desconto - $adiantamento + $adicional, 2);
             }
+            $recebimentoSemDespesas = round($recebimento - $despesasReais, 2);
 
             return [
                 'partner_id'     => $partner->id,
@@ -151,6 +165,7 @@ class FechamentoParceiroController extends Controller
                 'status'         => $f?->status ?? 'sem_registro',
                 'total_horas'    => (float) ($f?->total_horas ?? 0),
                 'total_despesas' => (float) ($f?->total_despesas ?? 0),
+                'total_servicos' => $servicos,
                 'total_a_pagar'  => round($totalAPagar, 2),
                 'closed_at'      => $f?->closed_at?->toISOString(),
                 'closed_by_name' => $f?->closedByUser?->name,
@@ -163,6 +178,7 @@ class FechamentoParceiroController extends Controller
                 'adicional'      => $adicional,
                 'adicional_desc' => $ajuste->adicional_desc ?? null,
                 'recebimento'    => $recebimento,
+                'recebimento_sem_despesas' => $recebimentoSemDespesas,
             ];
         });
 

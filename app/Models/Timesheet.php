@@ -50,6 +50,7 @@ class Timesheet extends Model
         'user_id',
         'customer_id',
         'project_id',
+        'real_project_id',
         'date',
         'start_time',
         'end_time',
@@ -254,6 +255,15 @@ class Timesheet extends Model
     }
 
     /**
+     * Projeto REAL do apontamento de investimento (referência). O consumo é contabilizado
+     * no project_id (investimento); o real define o coordenador que aprova.
+     */
+    public function realProject(): BelongsTo
+    {
+        return $this->belongsTo(Project::class, 'real_project_id');
+    }
+
+    /**
      * Relacionamento com quem revisou
      */
     public function reviewedBy(): BelongsTo
@@ -367,7 +377,17 @@ class Timesheet extends Model
             return true;
         }
 
-        if (!$user->isCoordenador() || !$this->project) {
+        if (!$this->project) {
+            return false;
+        }
+
+        // Investimento COMERCIAL: o EXECUTIVO do cliente aprova (mesmo sem ser coordenador).
+        if ($this->project->is_investimento_comercial && $this->project->categoria_interna === 'Comercial') {
+            return $this->customer_id && \App\Models\Customer::where('id', $this->customer_id)
+                ->where('executive_id', $user->id)->exists();
+        }
+
+        if (!$user->isCoordenador()) {
             return false;
         }
 
@@ -377,6 +397,13 @@ class Timesheet extends Model
                 \App\Models\ServiceType::where('id', $this->project->service_type_id)
                     ->where('code', 'sustentacao')
                     ->exists();
+        }
+
+        // Apontamento de INVESTIMENTO (Suporte/Projeto): aprova o coordenador do PROJETO REAL.
+        if ($this->project->is_investimento_comercial && $this->real_project_id) {
+            return \App\Models\Project::where('id', $this->real_project_id)
+                ->whereHas('coordinators', fn($q) => $q->where('users.id', $user->id))
+                ->exists();
         }
 
         // Coordenador de projetos aprova projetos onde está vinculado como coordenador

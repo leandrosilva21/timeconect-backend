@@ -169,6 +169,7 @@ class TimesheetController extends Controller
                 'project.serviceType:id,code,name',
                 'project.coordinators:id,name',
                 'project.kanbanOverrideCoordinator:id,name',
+                'realProject:id,name',
                 'reviewedBy:id,name',
             ])
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject', 'movidesk_tickets.solicitante as ticket_solicitante')
@@ -746,6 +747,7 @@ class TimesheetController extends Controller
         $hasTotalHours = !empty($request->total_hours);
         $rules = [
             'project_id' => 'required|exists:projects,id',
+            'real_project_id' => 'nullable|integer|exists:projects,id',
             'date' => 'required|date|before_or_equal:today',
             'start_time' => $hasTotalHours ? 'nullable|date_format:H:i' : 'required|date_format:H:i',
             'end_time'   => $hasTotalHours ? 'nullable|date_format:H:i' : 'required|date_format:H:i|after:start_time',
@@ -991,6 +993,28 @@ class TimesheetController extends Controller
             // Projetos de Investimento Interno não têm horas contratadas — pulam validação de saldo
             $isInvestimentoInterno = (bool) $project->is_investimento_comercial;
 
+            // Apontamento de investimento exige o "Projeto Real" (referência + define o coordenador
+            // que aprova). O consumo continua no projeto de investimento.
+            $realProjectId = $isInvestimentoInterno ? ((int) $request->input('real_project_id') ?: null) : null;
+            if ($isInvestimentoInterno && !$realProjectId) {
+                DB::rollBack();
+                return response()->json([
+                    'message' => 'Projeto Real é obrigatório para apontamento de investimento.',
+                    'errors'  => ['real_project_id' => ['Selecione o projeto real.']],
+                ], 422);
+            }
+            // Investimento SUPORTE: o projeto real precisa ser de SUSTENTAÇÃO.
+            if ($realProjectId && $project->categoria_interna === 'Suporte') {
+                $realProj = Project::with('serviceType')->find($realProjectId);
+                if (optional(optional($realProj)->serviceType)->code !== 'sustentacao') {
+                    DB::rollBack();
+                    return response()->json([
+                        'message' => 'Investimento Suporte: o Projeto Real deve ser de Sustentação.',
+                        'errors'  => ['real_project_id' => ['Selecione um projeto de Sustentação.']],
+                    ], 422);
+                }
+            }
+
             Log::info('Criando apontamento - Antes de validar saldo', [
                 'project_id' => $project->id,
                 'user_id' => $timesheetUserId,
@@ -1033,6 +1057,7 @@ class TimesheetController extends Controller
             $timesheet = new Timesheet($validatedData);
             $timesheet->user_id = $timesheetUserId;
             $timesheet->customer_id = $project->customer_id;
+            $timesheet->real_project_id = $realProjectId; // só preenchido em investimento
             $timesheet->status = $hasConflict ? Timesheet::STATUS_CONFLICTED : Timesheet::STATUS_PENDING;
             $timesheet->origin = 'web'; // Origem: criação manual via webapp
             $timesheet->is_billable_only = $user->isAdmin()

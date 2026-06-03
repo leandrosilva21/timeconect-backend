@@ -203,13 +203,18 @@ class ApprovalController extends Controller
                 $arr['ticket_total_minutes'] = ($tk !== '' && preg_match('/^\d{5}$/', $tk) && $ts->customer_id)
                     ? ($ticketTotalsMap[$ts->customer_id . ':' . $tk] ?? null)
                     : null;
-                // Coordenador: override do coordenador > (se sustentação) coordenador de
-                // sustentação (Anderson Arantes) > coordenadores do projeto.
+                // Aprovador exibido: Investimento Comercial → executivo do cliente; Investimento
+                // (Suporte/Projeto) → coordenador do projeto real; senão override > (sustentação)
+                // coordenador de sustentação (Anderson) > coordenadores do projeto.
                 $proj = $ts->project;
                 $coordLabel = null;
                 if ($proj) {
                     $isSustentacao = optional($proj->serviceType)->code === 'sustentacao';
-                    if ($proj->kanbanOverrideCoordinator) {
+                    if ($proj->is_investimento_comercial && $proj->categoria_interna === 'Comercial') {
+                        $coordLabel = $proj->customer?->executive?->name ?: ($ts->customer?->executive?->name ?: null);
+                    } elseif ($proj->is_investimento_comercial && $ts->realProject && $ts->realProject->coordinators && $ts->realProject->coordinators->count()) {
+                        $coordLabel = $ts->realProject->coordinators->pluck('name')->implode(', ');
+                    } elseif ($proj->kanbanOverrideCoordinator) {
                         $coordLabel = $proj->kanbanOverrideCoordinator->name;
                     } elseif ($isSustentacao && !empty($sustentacaoCoordNames)) {
                         $coordLabel = implode(', ', $sustentacaoCoordNames);
@@ -218,6 +223,7 @@ class ApprovalController extends Controller
                     }
                 }
                 $arr['coordinator_label'] = $coordLabel;
+                $arr['real_project'] = $ts->realProject ? ['id' => $ts->realProject->id, 'name' => $ts->realProject->name] : null;
                 return $arr;
             })->all();
 
@@ -640,12 +646,13 @@ class ApprovalController extends Controller
         $query = Timesheet::with([
             'user:id,name,email',
             'customer:id,name',
-            'project:id,name,customer_id,service_type_id,kanban_coordinator_override_id',
+            'project:id,name,customer_id,service_type_id,kanban_coordinator_override_id,is_investimento_comercial,categoria_interna',
             'project.customer:id,name,executive_id',
             'project.customer.executive:id,name',
             'project.serviceType:id,name,code',
             'project.coordinators:id,name',
             'project.kanbanOverrideCoordinator:id,name',
+            'realProject:id,name',
         ])
         ->where('status', Timesheet::STATUS_PENDING);
 
@@ -667,6 +674,14 @@ class ApprovalController extends Controller
         // `permission.or.admin:timesheets.approve` continua bloqueando perfis sem acesso.
         if (!$user->isAdmin() && $user->isCoordenador() && $user->coordinator_type === 'sustentacao') {
             $query->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
+        }
+
+        // Executivo de conta que NÃO é coordenador/administrativo: o acesso a Aprovações foi
+        // concedido SÓ pra aprovar investimento Comercial dos seus clientes — restringe a isso.
+        if (!$user->isAdmin() && !$user->isCoordenador() && $user->type !== 'administrativo'
+            && \App\Models\Customer::where('executive_id', $user->id)->exists()) {
+            $query->whereHas('project', fn ($pq) => $pq->where('is_investimento_comercial', true)->where('categoria_interna', 'Comercial'))
+                  ->whereHas('customer', fn ($cq) => $cq->where('executive_id', $user->id));
         }
 
         // Aplicar filtros se fornecidos
@@ -725,9 +740,11 @@ class ApprovalController extends Controller
     {
         $query = Expense::with([
             'user:id,name,email',
-            'project:id,name,customer_id,service_type_id',
-            'project.customer:id,name',
+            'project:id,name,customer_id,service_type_id,is_investimento_comercial,categoria_interna',
+            'project.customer:id,name,executive_id',
+            'project.customer.executive:id,name',
             'project.serviceType:id,name',
+            'realProject:id,name',
             'category:id,name,parent_id'
         ])
         ->where('status', Expense::STATUS_PENDING);
@@ -746,6 +763,15 @@ class ApprovalController extends Controller
         // Coord-projetos sem filtro forçado; FE controla via chip "Meus projetos / Todos".
         if (!$user->isAdmin() && $user->isCoordenador() && $user->coordinator_type === 'sustentacao') {
             $query->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
+        }
+
+        // Executivo de conta que NÃO é coordenador/administrativo: só vê despesas de investimento
+        // Comercial dos seus clientes (cliente via projeto).
+        if (!$user->isAdmin() && !$user->isCoordenador() && $user->type !== 'administrativo'
+            && \App\Models\Customer::where('executive_id', $user->id)->exists()) {
+            $query->whereHas('project', fn ($pq) => $pq
+                ->where('is_investimento_comercial', true)->where('categoria_interna', 'Comercial')
+                ->whereHas('customer', fn ($cq) => $cq->where('executive_id', $user->id)));
         }
 
         // Aplicar filtros se fornecidos

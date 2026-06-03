@@ -235,7 +235,7 @@ class ExpenseController extends Controller
         $pageSize = min((int) $request->get('pageSize', 20), 100);
         $page = (int) $request->get('page', 1);
 
-        $query = Expense::with(['user', 'project.customer', 'project.customer.executive:id,name', 'project.contractType', 'project.serviceType', 'project.coordinators:id,name', 'project.kanbanOverrideCoordinator:id,name', 'category', 'reviewedBy']);
+        $query = Expense::with(['user', 'project.customer', 'project.customer.executive:id,name', 'project.contractType', 'project.serviceType', 'project.coordinators:id,name', 'project.kanbanOverrideCoordinator:id,name', 'realProject:id,name', 'category', 'reviewedBy']);
 
         // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
         if ($request->get('scope') === 'sustentacao') {
@@ -466,6 +466,7 @@ class ExpenseController extends Controller
         $validator = Validator::make($request->all(), [
             'user_id' => 'nullable|exists:users,id', // Opcional - apenas para administradores
             'project_id' => 'required|exists:projects,id',
+            'real_project_id' => 'nullable|integer|exists:projects,id',
             'expense_category_id' => 'required|exists:expense_categories,id',
             'expense_date' => 'required|date',
             'description' => 'required|string|max:1000',
@@ -528,7 +529,30 @@ class ExpenseController extends Controller
         );
         if ($limitError) return $limitError;
 
+        // Investimento exige o "Projeto Real" (referência). Consumo segue no projeto de investimento.
+        $isInvestimento = (bool) $project->is_investimento_comercial;
+        $realProjectId = $isInvestimento ? ((int) $request->input('real_project_id') ?: null) : null;
+        if ($isInvestimento && !$realProjectId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Projeto Real é obrigatório para despesa de investimento.',
+                'errors'  => ['real_project_id' => ['Selecione o projeto real.']],
+            ], 422);
+        }
+        // Investimento SUPORTE: o projeto real precisa ser de SUSTENTAÇÃO.
+        if ($realProjectId && $project->categoria_interna === 'Suporte') {
+            $realProj = Project::with('serviceType')->find($realProjectId);
+            if (optional(optional($realProj)->serviceType)->code !== 'sustentacao') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Investimento Suporte: o Projeto Real deve ser de Sustentação.',
+                    'errors'  => ['real_project_id' => ['Selecione um projeto de Sustentação.']],
+                ], 422);
+            }
+        }
+
         $expenseData = $validator->validated();
+        $expenseData['real_project_id'] = $realProjectId; // só preenchido em investimento
 
         // Definir o user_id final baseado nas permissões
         $expenseData['user_id'] = $targetUserId;
@@ -585,7 +609,7 @@ class ExpenseController extends Controller
     {
         $user = Auth::user();
 
-        $expense = Expense::with(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover'])->find($id);
+        $expense = Expense::with(['user', 'project.customer', 'realProject:id,name', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover'])->find($id);
 
         if (!$expense) {
             return $this->notFoundResponse('Despesa não encontrada');

@@ -263,7 +263,7 @@ class FechamentoClienteController extends Controller
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_titulo', 'movidesk_tickets.solicitante as ticket_solicitante')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
             ->whereBetween('timesheets.date', [$from, $to])
-            ->whereNotIn('timesheets.status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
+            ->whereNotIn('timesheets.status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
             ->whereNull('timesheets.deleted_at')
             ->whereHas('project', function ($q) {
                 $q->where('is_investimento_comercial', false)
@@ -334,7 +334,7 @@ class FechamentoClienteController extends Controller
         // $projectId filtra pelo projeto PAI (escolhido no dropdown "Contrato"); inclui
         // os filhos via parent_project_id pra que o relatório/PDF respeite a seleção.
         $projectIds = Timesheet::whereBetween('date', [$from, $to])
-            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
             ->whereNull('deleted_at')
             ->whereHas('project', function ($q) use ($customerId, $contractCode, $projectId) {
                 $q->where('customer_id', $customerId)
@@ -377,7 +377,7 @@ class FechamentoClienteController extends Controller
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_titulo', 'movidesk_tickets.solicitante as ticket_solicitante')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
             ->whereBetween('timesheets.date', [$from, $to])
-            ->whereNotIn('timesheets.status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
+            ->whereNotIn('timesheets.status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
             ->whereNull('timesheets.deleted_at')
             ->whereIn('timesheets.project_id', $projectIds)
             ->orderBy('timesheets.project_id')
@@ -661,7 +661,7 @@ class FechamentoClienteController extends Controller
     {
         [$from, $to] = $this->period($yearMonth);
 
-        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE];
 
         // Fechamento de cliente lista APENAS contratos On Demand do cliente.
         // Base nos PROJETOS On Demand (não em timesheets) para que um contrato
@@ -860,7 +860,7 @@ class FechamentoClienteController extends Controller
         ])
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)->where('is_investimento_comercial', false))
             ->whereBetween('date', [$from, $to])
-            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
             ->whereNull('deleted_at')
             ->get();
 
@@ -1071,7 +1071,7 @@ class FechamentoClienteController extends Controller
     {
         [$from, $to] = $this->period($yearMonth);
 
-        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE];
 
         // Projetos On Demand do cliente (mesma base que apontamentosData usa no fechamento).
         $projectIds = Project::where('customer_id', $customerId)

@@ -40,6 +40,9 @@ class Timesheet extends Model
     public const STATUS_ADJUSTMENT_REQUESTED = 'adjustment_requested';
     public const STATUS_INTERNAL = 'internal';
     public const STATUS_RELEASED = 'released';
+    // Atraso pós-fechamento: apontamento chegou pela integração com data em competência
+    // já fechada. Fica fora de fechamento/consumo/dashboards até ser aprovado na tela de Atrasos.
+    public const STATUS_LATE = 'late';
 
     /**
      * The attributes that are mass assignable.
@@ -67,6 +70,7 @@ class Timesheet extends Model
         'reviewed_by',
         'reviewed_at',
         'manual_project_edit',
+        'date_locked',
     ];
 
     /**
@@ -79,6 +83,7 @@ class Timesheet extends Model
         'is_billable_only'    => 'boolean',
         'is_internal_action'  => 'boolean',
         'manual_project_edit' => 'boolean',
+        'date_locked'         => 'boolean',
         'client_extra_pct'    => 'decimal:2',
         'consultant_extra_pct'=> 'decimal:2',
         'start_time' => 'datetime:H:i',
@@ -130,6 +135,7 @@ class Timesheet extends Model
             self::STATUS_ADJUSTMENT_REQUESTED => 'Ajuste Solicitado',
             self::STATUS_INTERNAL             => 'Ação Interna',
             self::STATUS_RELEASED             => 'Liberado',
+            self::STATUS_LATE                 => 'Atraso (pós-fechamento)',
         ];
     }
 

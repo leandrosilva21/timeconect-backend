@@ -1100,7 +1100,7 @@ class TimesheetController extends Controller
             $newlyConflictedIds = collect();
             if ($hasConflict && isset($overlappingIds) && $overlappingIds->isNotEmpty()) {
                 $newlyConflictedIds = Timesheet::whereIn('id', $overlappingIds)
-                    ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED])
+                    ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_LATE])
                     ->pluck('id');
                 Timesheet::whereIn('id', $newlyConflictedIds)
                     ->update(['status' => Timesheet::STATUS_CONFLICTED]);
@@ -1751,7 +1751,7 @@ class TimesheetController extends Controller
                     $timesheet->status = Timesheet::STATUS_CONFLICTED;
                     $timesheet->save();
                     $newlyConflictedIds = Timesheet::whereIn('id', $overlappingIds)
-                        ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED])
+                        ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_LATE])
                         ->pluck('id');
                     Timesheet::whereIn('id', $newlyConflictedIds)
                         ->update(['status' => Timesheet::STATUS_CONFLICTED]);
@@ -1988,6 +1988,77 @@ class TimesheetController extends Controller
             Timesheet::whereIn('id', $data['ids'])->update($update);
         }
         return response()->json(['success' => true, 'updated' => count($data['ids'])]);
+    }
+
+    /**
+     * Lista os apontamentos em ATRASO (status late): chegaram pela integração com data
+     * em competência fechada e aguardam aprovação (entrar no período ou mudar a data).
+     */
+    public function atrasos(Request $request): JsonResponse
+    {
+        $query = Timesheet::with(['user:id,name', 'customer:id,name', 'project:id,name,code'])
+            ->where('status', Timesheet::STATUS_LATE)
+            ->whereNull('deleted_at')
+            ->orderBy('date');
+
+        if ($request->filled('year_month')) {
+            $query->whereRaw("to_char(date, 'YYYY-MM') = ?", [$request->query('year_month')]);
+        }
+
+        $rows = $query->get()->map(fn ($t) => [
+            'id'             => $t->id,
+            'date'           => $t->date->format('Y-m-d'),
+            'year_month'     => $t->date->format('Y-m'),
+            'colaborador'    => $t->user?->name ?? '—',
+            'cliente'        => $t->customer?->name ?? '—',
+            'projeto'        => $t->project?->name ?? '—',
+            'projeto_codigo' => $t->project?->code ?? '—',
+            'ticket'         => $t->ticket,
+            'horas'          => round($t->effort_minutes / 60, 2),
+            'observacao'     => $t->observation,
+            'date_locked'    => (bool) $t->date_locked,
+        ]);
+
+        return response()->json(['data' => $rows]);
+    }
+
+    /**
+     * Aprova um apontamento em ATRASO (status late):
+     *  • action=keep        → entra no período (status=pending, data original).
+     *  • action=change_date → muda a data de inclusão (escolhida pelo aprovador) e TRAVA a
+     *    data (date_locked) p/ o reprocesso da integração não sobrescrever; status=pending.
+     */
+    public function aprovarAtraso(Request $request, int $id): JsonResponse
+    {
+        $timesheet = Timesheet::find($id);
+        if (!$timesheet) {
+            return response()->json(['success' => false, 'message' => 'Apontamento não encontrado'], 404);
+        }
+        if ($timesheet->status !== Timesheet::STATUS_LATE) {
+            return response()->json(['success' => false, 'message' => 'Apontamento não está em atraso.'], 422);
+        }
+
+        $action = $request->input('action', 'keep');
+        if ($action === 'change_date') {
+            $validated = $request->validate(['date' => 'required|date']);
+            $timesheet->date        = $validated['date'];
+            $timesheet->date_locked = true;
+        }
+
+        $timesheet->status = Timesheet::STATUS_PENDING;
+        $timesheet->save();
+
+        $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
+        $this->invalidateListCache('timesheets');
+        $timesheet->load(['user', 'customer', 'project']);
+
+        return response()->json([
+            'success' => true,
+            'data'    => $timesheet,
+            'message' => $action === 'change_date'
+                ? 'Atraso aprovado com a nova data de inclusão.'
+                : 'Atraso aprovado — entrou no período.',
+        ]);
     }
 
     public function approve(int $id): JsonResponse

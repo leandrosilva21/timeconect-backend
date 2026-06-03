@@ -290,7 +290,9 @@ class MovideskService
                 ];
             }
 
-            if ($newDate) {
+            // date_locked: data travada manualmente na aprovação de atraso → o reprocesso
+            // NÃO sobrescreve a data (o aprovador escolheu o mês de inclusão de propósito).
+            if ($newDate && !$timesheet->date_locked) {
                 $currentDate = $timesheet->date
                     ? (is_string($timesheet->date) ? $timesheet->date : $timesheet->date->format('Y-m-d'))
                     : null;
@@ -1235,6 +1237,25 @@ class MovideskService
         return $matches->count() === 1 ? $matches->first() : null;
     }
 
+    /**
+     * Competência fechada para apontamento da integração? (FechamentoAdministrativo
+     * fechado E sem ProjectOpenPeriod reaberto pro projeto+mês). Quando true, o
+     * apontamento vindo da integração entra como STATUS_LATE (aguarda aprovação).
+     */
+    private function isCompetenciaFechada(string $date, int $projectId): bool
+    {
+        $ym   = \Carbon\Carbon::parse($date)->format('Y-m');
+        $fech = \App\Models\FechamentoAdministrativo::where('year_month', $ym)->first();
+        if (!$fech || !$fech->isClosed()) {
+            return false;
+        }
+        $reaberto = \App\Models\ProjectOpenPeriod::where('project_id', $projectId)
+            ->where('year_month', $ym)
+            ->whereNull('closed_at')
+            ->exists();
+        return !$reaberto;
+    }
+
     private function createTimesheet(array $data): void
     {
         DB::beginTransaction();
@@ -1266,6 +1287,10 @@ class MovideskService
 
             if ($data['is_internal_action'] ?? false) {
                 $timesheet->status = Timesheet::STATUS_INTERNAL;
+            } elseif ($this->isCompetenciaFechada($data['date'], (int) $data['project_id'])) {
+                // Atraso pós-fechamento: chegou pela integração com data em competência
+                // já fechada. NÃO entra no período — aguarda aprovação na tela de Atrasos.
+                $timesheet->status = Timesheet::STATUS_LATE;
             } else {
                 $timesheet->status = $conflict
                     ? Timesheet::STATUS_CONFLICTED

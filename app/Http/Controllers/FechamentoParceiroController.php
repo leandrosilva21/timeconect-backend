@@ -286,7 +286,7 @@ class FechamentoParceiroController extends Controller
         foreach ($users as $user) {
             $minutos = Timesheet::where('user_id', $user->id)
                 ->whereBetween('date', [$from, $to])
-                ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
+                ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
                 ->whereNull('deleted_at')
                 ->where('is_internal_action', false)
                 ->sum('effort_minutes');
@@ -388,7 +388,7 @@ class FechamentoParceiroController extends Controller
             return [];
         }
 
-        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE];
 
         return Timesheet::with([
             'user:id,name',

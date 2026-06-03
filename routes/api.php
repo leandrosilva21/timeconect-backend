@@ -464,6 +464,7 @@ Route::prefix('v1')->group(function () {
         Route::put('/timesheets/bulk-update-project-customer', [TimesheetController::class, 'bulkUpdateProjectCustomer'])->name('timesheets.bulk-update-project-customer');
         Route::post('/timesheets/reprocess-movidesk', [TimesheetController::class, 'reprocessMovidesk'])->name('timesheets.reprocess-movidesk');
         Route::get('/timesheets/summary-by-ticket', [TimesheetController::class, 'summaryByTicket'])->name('timesheets.summary-by-ticket');
+        Route::get('/timesheets/atrasos', [TimesheetController::class, 'atrasos'])->name('timesheets.atrasos');
 
         // Saldo inicial de ticket (admin/coord) — soma no histórico do ticket
         Route::get   ('/ticket-initial-balances/lookup', [\App\Http\Controllers\TicketInitialBalanceController::class, 'lookup'])->name('ticket-initial-balances.lookup');
@@ -492,6 +493,7 @@ Route::prefix('v1')->group(function () {
         // Aprovação, liberação e rejeição
         Route::middleware('permission.or.admin:hours.approve')->group(function () {
             Route::post('/timesheets/{timesheet}/approve', [TimesheetController::class, 'approve'])->name('timesheets.approve');
+            Route::post('/timesheets/{timesheet}/aprovar-atraso', [TimesheetController::class, 'aprovarAtraso'])->name('timesheets.aprovar-atraso');
             Route::post('/timesheets/{timesheet}/release', [TimesheetController::class, 'release'])->name('timesheets.release');
             Route::post('/timesheets/{timesheet}/reverse-release', [TimesheetController::class, 'reverseRelease'])->name('timesheets.reverse-release');
         });

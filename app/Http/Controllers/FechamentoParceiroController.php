@@ -493,16 +493,22 @@ class FechamentoParceiroController extends Controller
                 ];
             }
             // Taxa/hora e total do consultor (do consultoresData) — exibidos no cabeçalho do grupo.
+            // Strings montadas em PHP (sem @if no Blade) — evita erro de parse na view.
             $uid       = $items[0]['user_id'] ?? null;
             $calc      = ($uid !== null && isset($calcByUser[$uid])) ? $calcByUser[$uid] : null;
             $valorHora = $calc ? (float) ($calc['valor_hora'] ?? 0) : 0.0;
             $totalCons = $calc ? (float) ($calc['total'] ?? 0) : round($horas * $valorHora, 2);
+            $horasFmt  = $this->fmtHoras($horas);
+            $vhFmt     = $valorHora > 0 ? $this->brl($valorHora) : null;
+            $totFmt    = $this->brl($totalCons);
             $grupos[] = [
                 'consultor'      => $consultor,
                 'linhas'         => $linhas,
-                'horas_fmt'      => $this->fmtHoras($horas),
-                'valor_hora_fmt' => $valorHora > 0 ? $this->brl($valorHora) : null,
-                'total_fmt'      => $this->brl($totalCons),
+                'horas_fmt'      => $horasFmt,
+                'valor_hora_fmt' => $vhFmt,
+                'total_fmt'      => $totFmt,
+                'header_line'    => $consultor . ' — ' . $horasFmt . ($vhFmt ? ' · Taxa ' . $vhFmt . '/h' : '') . ' · ' . $totFmt,
+                'subtotal_line'  => 'Subtotal ' . $consultor . ': ' . $horasFmt . ($vhFmt ? ' × ' . $vhFmt : '') . ' = ' . $totFmt,
             ];
         }
 

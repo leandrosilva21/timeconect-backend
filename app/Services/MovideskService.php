@@ -1285,11 +1285,19 @@ class MovideskService
             $timesheet->is_internal_action      = $data['is_internal_action'] ?? false;
             $timesheet->origin                  = $data['origin'] ?? 'webhook';
 
+            // SÓ apontamento GENUINAMENTE NOVO vira atraso. Se já existiu um apontamento
+            // (mesmo soft-deletado) pra este movidesk_appointment_id, é RECRIAÇÃO do
+            // reprocesso — NÃO vira late (senão o reprocesso derrubaria horas já fechadas).
+            $jaExistiu = !empty($data['movidesk_appointment_id'])
+                && Timesheet::withTrashed()
+                    ->where('movidesk_appointment_id', $data['movidesk_appointment_id'])
+                    ->exists();
+
             if ($data['is_internal_action'] ?? false) {
                 $timesheet->status = Timesheet::STATUS_INTERNAL;
-            } elseif ($this->isCompetenciaFechada($data['date'], (int) $data['project_id'])) {
-                // Atraso pós-fechamento: chegou pela integração com data em competência
-                // já fechada. NÃO entra no período — aguarda aprovação na tela de Atrasos.
+            } elseif (!$jaExistiu && $this->isCompetenciaFechada($data['date'], (int) $data['project_id'])) {
+                // Atraso pós-fechamento: apontamento NOVO chegou pela integração com data em
+                // competência já fechada. NÃO entra no período — aguarda aprovação na tela de Atrasos.
                 $timesheet->status = Timesheet::STATUS_LATE;
             } else {
                 $timesheet->status = $conflict

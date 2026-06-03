@@ -446,7 +446,6 @@ Route::prefix('v1')->group(function () {
             Route::post('/projects/{project}/hour-contributions', [HourContributionController::class, 'store'])->name('hour-contributions.store');
             Route::put('/projects/{project}/hour-contributions/{contribution}', [HourContributionController::class, 'update'])->name('hour-contributions.update');
             Route::delete('/projects/{project}/hour-contributions/{contribution}', [HourContributionController::class, 'destroy'])->name('hour-contributions.destroy');
-            Route::patch('/projects/{project}/hour-contributions/{contribution}/move', [HourContributionController::class, 'moveKanban'])->name('hour-contributions.move');
         });
 
         // Mover aporte no Kanban (transição comercial novo_contrato ↔ aporte) — admin,

@@ -248,9 +248,18 @@ class MovideskService
         // (cliente/projeto/data/horários/effort/observação), o reprocess NÃO
         // sobrescreve mais. Edições do Minutor têm prioridade sobre o sync.
         if (!$timesheet->manual_project_edit) {
-            // Corrige cliente
-            $newCustomerId = $this->extractCustomerId($ticket);
-            if ($newCustomerId && $newCustomerId !== $timesheet->customer_id) {
+            // Corrige cliente — mas NUNCA rebaixa um cliente real para o fallback
+            // (default). Quando a organização do ticket não resolve (não está em
+            // movidesk_organizations), extractCustomerId devolve o cliente default;
+            // se o timesheet já tem cliente real, preserva. Evita o flip-flop que
+            // jogava apontamentos (ex.: DICAST) pro ERPSERV/PROJETO PADRÃO e os
+            // "perdia". Mesma filosofia da blindagem do extractProjectId(forRemap).
+            $newCustomerId      = $this->extractCustomerId($ticket);
+            $defaultCustomerId  = $this->getDefaultCustomerId();
+            $downgradeToDefault = $newCustomerId === $defaultCustomerId
+                && $timesheet->customer_id
+                && $timesheet->customer_id !== $defaultCustomerId;
+            if ($newCustomerId && $newCustomerId !== $timesheet->customer_id && !$downgradeToDefault) {
                 $changes['customer_id'] = ['from' => $timesheet->customer_id, 'to' => $newCustomerId];
                 $timesheet->customer_id = $newCustomerId;
             }

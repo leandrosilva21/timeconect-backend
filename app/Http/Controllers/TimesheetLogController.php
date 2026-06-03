@@ -83,6 +83,20 @@ class TimesheetLogController extends Controller
         if ($request->filled('end_date')) {
             $q->whereDate('created_at', '<=', $request->date('end_date'));
         }
+        // Data de inclusão = quando o apontamento foi criado (timesheet.created_at).
+        if ($request->filled('incl_start')) {
+            $q->whereHas('timesheet', fn ($s) => $s->whereDate('created_at', '>=', $request->date('incl_start')));
+        }
+        if ($request->filled('incl_end')) {
+            $q->whereHas('timesheet', fn ($s) => $s->whereDate('created_at', '<=', $request->date('incl_end')));
+        }
+        // Data de serviço = a data do apontamento (timesheet.date).
+        if ($request->filled('service_start')) {
+            $q->whereHas('timesheet', fn ($s) => $s->whereDate('date', '>=', $request->date('service_start')));
+        }
+        if ($request->filled('service_end')) {
+            $q->whereHas('timesheet', fn ($s) => $s->whereDate('date', '<=', $request->date('service_end')));
+        }
 
         // Filtro pré-paginação (Postgres JSONB): exclui entradas 'updated' cujos
         // únicos campos mudados são de aprovação. Filtrar pós-paginação fazia

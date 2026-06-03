@@ -321,7 +321,7 @@ class FechamentoParceiroController extends Controller
         return $rows;
     }
 
-    private function despesasData(int $partnerId, string $yearMonth): array
+    public function despesasData(int $partnerId, string $yearMonth): array
     {
         [$from, $to] = $this->period($yearMonth);
 

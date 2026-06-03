@@ -288,9 +288,14 @@ class FolhaPagamentoController extends Controller
                 continue; // sem parceiro admin (is_executive) → parceiro fora da folha
             }
 
-            $calc = collect(app(FechamentoParceiroController::class)->consultoresData($partner, $yearMonth));
+            $parceiroCtrl  = app(FechamentoParceiroController::class);
+            $calc = collect($parceiroCtrl->consultoresData($partner, $yearMonth));
             $totalHoras    = round((float) $calc->sum(fn ($r) => (float) ($r['horas'] ?? 0)), 2);
-            $totalApuracao = round((float) $calc->sum(fn ($r) => (float) ($r['total'] ?? 0)), 2);
+            $totalServicos = round((float) $calc->sum(fn ($r) => (float) ($r['total'] ?? 0)), 2);
+            // Despesas a reembolsar no fechamento (não-pagas) entram na PRODUÇÃO — igual cooperado.
+            $totalDespesas = round((float) collect($parceiroCtrl->despesasData((int) $partner->id, $yearMonth))
+                ->where('is_paid', false)->sum('valor'), 2);
+            $totalApuracao = round($totalServicos + $totalDespesas, 2); // recebimento = serviços + despesas
 
             $uid = $admin->id;
             $f   = $folhaByUser[$uid] ?? null;
@@ -328,11 +333,11 @@ class FolhaPagamentoController extends Controller
                 'horas_calc'         => $totalHoras,
                 'valor_hora_calc'    => 0.0,
                 'producao_calc'      => $totalApuracao,
-                'fech_serv'          => $totalApuracao,
+                'fech_serv'          => $totalServicos,
                 'fech_desconto'      => 0.0,
                 'fech_adiantamento'  => 0.0,
                 'fech_adicional'     => 0.0,
-                'fech_desp'          => 0.0,
+                'fech_desp'          => $totalDespesas,
                 'variavel'           => $variavel,
                 'reemb'              => $reemb,
                 'reemb_auto'         => 0.0,

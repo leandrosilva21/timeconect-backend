@@ -2946,6 +2946,9 @@ class ProjectController extends Controller
             'categoria'   => 'required|string|in:Sustentação,Projeto,Suporte,Comercial,Leads',
             // Aprovador = coordenador do mini-projeto (quem aprova os apontamentos).
             'approver_id' => 'nullable|integer|exists:users,id',
+            // Investimento pai: aninha o mini-projeto abaixo de outro investimento
+            // interno (ex.: leads abaixo do "Investimento Leads").
+            'parent_project_id' => 'nullable|integer|exists:projects,id',
         ]);
 
         $erpservName = 'ERPSERV';
@@ -2980,6 +2983,7 @@ class ProjectController extends Controller
             'is_investimento_comercial' => true,
             'is_manual_code'            => true,
             'categoria_interna'         => $data['categoria'],
+            'parent_project_id'         => $data['parent_project_id'] ?? null,
         ]);
 
         // Aprovador: vincula como coordenador do projeto (é quem aprova os

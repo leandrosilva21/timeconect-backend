@@ -791,6 +791,9 @@ Route::prefix('v1')->group(function () {
 
         // 👤 FECHAMENTO CONSULTOR
         Route::middleware('auth:sanctum')->group(function () {
+            // 💰 Relatórios novos (pagamentos consultores+parceiros; rentabilidade consultor×projeto)
+            Route::get('/relatorios/pagamentos/{yearMonth}',                             [\App\Http\Controllers\RelatorioPagamentoController::class, 'pagamentos']);
+            Route::get('/relatorios/rentabilidade/{yearMonth}',                          [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'rentabilidade']);
             Route::get('/fechamento-consultor/{yearMonth}',                              [\App\Http\Controllers\FechamentoConsultorController::class, 'index']);
             Route::get('/fechamento-consultor/{yearMonth}/export-excel',                 [\App\Http\Controllers\FechamentoConsultorController::class, 'exportExcel']);
 

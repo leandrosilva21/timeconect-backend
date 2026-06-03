@@ -165,7 +165,8 @@ class RelatorioRentabilidadeController extends Controller
             $byCustomer[$cid]['custo']   += $horas * $costRate($ts->user);
         }
 
-        $keruak = app(\App\Services\KeruakRentabilidadeService::class)->recebido();
+        // ?refresh=1 (botão "Atualizar Keruak"): ignora o cache de 3h e busca ao vivo.
+        $keruak = app(\App\Services\KeruakRentabilidadeService::class)->recebido($request->boolean('refresh'));
 
         $rows = [];
         $usados = [];

@@ -256,7 +256,9 @@ class MovideskService
             }
 
             // Corrige projeto usando o cliente atualizado
-            $newProjectId = $this->extractProjectId($timesheet->customer_id);
+            // forRemap=true: só re-mapeia se houver projeto DESIGNADO (chave/org).
+            // Sem isso, NÃO troca o projeto — evita o flip-flop com a chave desativada.
+            $newProjectId = $this->extractProjectId($timesheet->customer_id, true);
             if ($newProjectId && $newProjectId !== $timesheet->project_id) {
                 $changes['project_id'] = ['from' => $timesheet->project_id, 'to' => $newProjectId];
                 $timesheet->project_id = $newProjectId;
@@ -903,7 +905,7 @@ class MovideskService
         );
     }
 
-    private function extractProjectId(?int $customerId): ?int
+    private function extractProjectId(?int $customerId, bool $forRemap = false): ?int
     {
         if ($customerId) {
             // 1. Prioridade absoluta: projeto com flag movidesk_integration_enabled.
@@ -948,6 +950,14 @@ class MovideskService
                 ]);
             }
 
+            // BLINDAGEM: no RE-MAPEAMENTO (reprocesso), sem projeto DESIGNADO (chave ou
+            // vínculo de org), NÃO adivinha via fallback/padrão — retorna null pra o
+            // reprocesso DEIXAR o apontamento onde está. Evita o flip-flop de projeto
+            // quando a chave movidesk_integration_enabled está desativada.
+            if ($forRemap) {
+                return null;
+            }
+
             // 2. Fallback: busca projeto de sustentação do cliente
             $project = Project::where('customer_id', $customerId)
                 ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
@@ -972,7 +982,8 @@ class MovideskService
             }
         }
 
-        return $this->resolveDefaultProject();
+        // Sem cliente: no re-mapeamento não força projeto padrão (deixa onde está).
+        return $forRemap ? null : $this->resolveDefaultProject();
     }
 
     private function resolveDefaultProject(): ?int

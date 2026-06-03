@@ -406,7 +406,9 @@ class FechamentoClienteController extends Controller
                 }
                 $solicitante = is_array($solicitanteRaw) ? ($solicitanteRaw['name'] ?? null) : null;
 
-                $horas      = $t->effort_minutes / 60;
+                // Horas DECIMAIS arredondadas a 2 casas na origem, p/ o valor a pagar bater com
+                // as horas exibidas no documento de cobrança (49,42h × R$148 = R$7.314,16, não 7.313,67).
+                $horas      = round($t->effort_minutes / 60, 2);
                 // Valoriza cada apontamento pela taxa vigente NO MÊS do apontamento — legado intacto.
                 $hourlyRate = (float) ($project?->hourlyRateForCompetencia($t->date->format('Y-m')) ?? 0);
                 $mult       = 1 + (((float) ($t->client_extra_pct ?? 0)) / 100);

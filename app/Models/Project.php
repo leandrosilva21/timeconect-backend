@@ -1275,7 +1275,7 @@ class Project extends Model
      *
      * @return int Total de horas disponíveis
      */
-    public function getTotalAvailableHours(): int
+    public function getTotalAvailableHours(): float
     {
         // Usa a relação já carregada em memória (evita N+1).
         // Se não estiver carregada (chamada isolada), faz a query normalmente.
@@ -1283,14 +1283,15 @@ class Project extends Model
             ? $this->hourContributions
             : $this->hourContributions()->get();
 
-        $newContributions = $contributions->sum('contributed_hours');
+        // Aporte é decimal (ex.: 8,5h) — NUNCA truncar para int (bug: 8,5 virava 8).
+        $newContributions = (float) $contributions->sum('contributed_hours');
 
         if ($newContributions > 0) {
-            return ($this->sold_hours ?? 0) + (int) $newContributions;
+            return (float) ($this->sold_hours ?? 0) + $newContributions;
         }
 
         // Fallback: usar aporte legado (para projetos antigos)
-        return ($this->sold_hours ?? 0) + ($this->hour_contribution ?? 0);
+        return (float) ($this->sold_hours ?? 0) + (float) ($this->hour_contribution ?? 0);
     }
 
     /**

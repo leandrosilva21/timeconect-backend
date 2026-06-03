@@ -52,6 +52,10 @@
         <div class="summary-value">{{ $totalHorasFmt }}</div>
       </td>
       <td>
+        <div class="summary-label">Taxa / Hora</div>
+        <div class="summary-value">{{ $taxaHoraFmt ?? '—' }}</div>
+      </td>
+      <td>
         <div class="summary-label">Total a Pagar</div>
         <div class="summary-value" style="color:#7c3aed;">{{ $valorTotal }}</div>
       </td>
@@ -63,7 +67,7 @@
     <div class="empty">Nenhum apontamento considerado no período.</div>
   @else
     @foreach($grupos as $grupo)
-      <div class="group-title">{{ $grupo['consultor'] }} — {{ $grupo['horas_fmt'] }}</div>
+      <div class="group-title">{{ $grupo['consultor'] }} — {{ $grupo['horas_fmt'] }}@if(!empty($grupo['valor_hora_fmt'])) &nbsp;·&nbsp; Taxa {{ $grupo['valor_hora_fmt'] }}/h@endif &nbsp;·&nbsp; {{ $grupo['total_fmt'] }}</div>
       <table class="rows">
         <thead>
           <tr>
@@ -84,7 +88,7 @@
           @endforeach
         </tbody>
       </table>
-      <div class="section-total">Subtotal {{ $grupo['consultor'] }}: {{ $grupo['horas_fmt'] }}</div>
+      <div class="section-total">Subtotal {{ $grupo['consultor'] }}: {{ $grupo['horas_fmt'] }}@if(!empty($grupo['valor_hora_fmt'])) × {{ $grupo['valor_hora_fmt'] }}@endif = {{ $grupo['total_fmt'] }}</div>
     @endforeach
   @endif
   @endif

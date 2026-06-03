@@ -472,7 +472,7 @@ class FechamentoParceiroController extends Controller
     }
 
     /** Agrupa as linhas de apontamento por consultor, para o PDF. */
-    private function buildPdfGroups(array $rows): array
+    private function buildPdfGroups(array $rows, array $calcByUser = []): array
     {
         $byConsultor = [];
         foreach ($rows as $r) {
@@ -492,10 +492,17 @@ class FechamentoParceiroController extends Controller
                     'horas_fmt' => $this->fmtHoras((float) ($l['horas'] ?? 0)),
                 ];
             }
+            // Taxa/hora e total do consultor (do consultoresData) — exibidos no cabeçalho do grupo.
+            $uid       = $items[0]['user_id'] ?? null;
+            $calc      = ($uid !== null && isset($calcByUser[$uid])) ? $calcByUser[$uid] : null;
+            $valorHora = $calc ? (float) ($calc['valor_hora'] ?? 0) : 0.0;
+            $totalCons = $calc ? (float) ($calc['total'] ?? 0) : round($horas * $valorHora, 2);
             $grupos[] = [
-                'consultor' => $consultor,
-                'linhas'    => $linhas,
-                'horas_fmt' => $this->fmtHoras($horas),
+                'consultor'      => $consultor,
+                'linhas'         => $linhas,
+                'horas_fmt'      => $this->fmtHoras($horas),
+                'valor_hora_fmt' => $valorHora > 0 ? $this->brl($valorHora) : null,
+                'total_fmt'      => $this->brl($totalCons),
             ];
         }
 
@@ -531,13 +538,20 @@ class FechamentoParceiroController extends Controller
         $totalServicos   = round($totalAll - $totalDespesas, 2);
         $totalValue      = $soDespesa ? $totalDespesas : ($soServico ? $totalServicos : $totalAll);
 
+        // Taxa/hora por consultor (consultoresData) — alimenta o cabeçalho de cada grupo
+        // e o card "Taxa/Hora" do resumo (quando o parceiro tem uma única taxa).
+        $calc      = collect($this->consultoresData($partner, $yearMonth))->keyBy('user_id')->all();
+        $ratesUnis = collect($calc)->pluck('valor_hora')->filter(fn ($v) => (float) $v > 0)->map(fn ($v) => round((float) $v, 4))->unique()->values();
+        $taxaHoraFmt = $ratesUnis->count() === 1 ? $this->brl((float) $ratesUnis[0]) : ($ratesUnis->count() > 1 ? 'por consultor' : '—');
+
         return [
             'parceiroName'     => $partner->name,
             'periodo'          => $periodo,
             'mode'             => $mode,
             'totalHorasFmt'    => $this->fmtHoras($totalHoras),
+            'taxaHoraFmt'      => $taxaHoraFmt,
             'valorTotal'       => $this->brl($totalValue),
-            'grupos'           => $soDespesa ? [] : $this->buildPdfGroups($rows),
+            'grupos'           => $soDespesa ? [] : $this->buildPdfGroups($rows, $calc),
             'despesas'         => $soServico ? [] : $despesas,
             'despesasAntecip'  => $soServico ? [] : $despesasAntecip,
             'totalServicosFmt' => $this->brl($totalServicos),

@@ -30,7 +30,9 @@ class RelatorioRentabilidadeController extends Controller
                 'project.customer:id,name',
             ])
             ->whereBetween('date', [$from, $to])
-            ->whereIn('status', ['approved', 'pending'])
+            // Mesma regra do faturamento (fechamento cliente): tudo que é cobrado,
+            // exceto ajuste/rejeitado/conflito/interno/atraso (inclui 'liberado').
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
             ->where('is_billable_only', false)
             ->where('is_internal_action', false)
             ->get();
@@ -114,7 +116,9 @@ class RelatorioRentabilidadeController extends Controller
                 'project.customer:id,name,cgc,secondary_cgcs',
             ])
             ->whereBetween('date', [$from, $to])
-            ->whereIn('status', ['approved', 'pending'])
+            // Mesma regra do faturamento (fechamento cliente): tudo que é cobrado,
+            // exceto ajuste/rejeitado/conflito/interno/atraso (inclui 'liberado').
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
             ->where('is_billable_only', false)
             ->where('is_internal_action', false)
             ->get();

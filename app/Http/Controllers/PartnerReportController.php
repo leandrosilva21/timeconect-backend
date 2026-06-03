@@ -14,17 +14,23 @@ class PartnerReportController extends Controller
     {
         $auth = $request->user();
 
-        if ($auth->type !== 'parceiro_admin') {
+        $isPartnerAdmin = $auth->type === 'parceiro_admin';
+        $isAdmin = $auth->isAdmin() || $auth->isAdministrativo();
+        if (!$isPartnerAdmin && !$isAdmin) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
-        $partner = Partner::find($auth->partner_id);
+        // parceiro_admin vê o próprio parceiro; admin (Visão Externa) escolhe via ?partner_id.
+        $partnerId = $isPartnerAdmin ? $auth->partner_id : ($request->integer('partner_id') ?: null);
+        $partner = $partnerId ? Partner::find($partnerId) : null;
         if (!$partner) {
             return response()->json([
                 'partner'     => null,
                 'kpis'        => ['total_hours' => 0, 'total_amount' => 0, 'consultants_count' => 0, 'active_consultants' => 0, 'avg_ticket' => 0],
                 'consultants' => [],
-                'error'       => 'Usuário não vinculado a nenhum parceiro. Configure o partner_id no perfil do usuário.',
+                'error'       => $isPartnerAdmin
+                    ? 'Usuário não vinculado a nenhum parceiro. Configure o partner_id no perfil do usuário.'
+                    : 'Selecione um parceiro.',
             ], 200);
         }
 

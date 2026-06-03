@@ -26,6 +26,7 @@ class Customer extends Model
         'code_prefix',
         'fechamento_email',
         'emails_administrativos',
+        'secondary_cgcs',
     ];
 
     /**
@@ -36,6 +37,7 @@ class Customer extends Model
     protected $casts = [
         'active' => 'boolean',
         'emails_administrativos' => 'array',
+        'secondary_cgcs' => 'array',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime',

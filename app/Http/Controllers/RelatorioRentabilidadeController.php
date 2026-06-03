@@ -111,7 +111,7 @@ class RelatorioRentabilidadeController extends Controller
                 'user:id,name,hourly_rate,rate_type,partner_id',
                 'user.partner:id,pricing_type,hourly_rate',
                 'project:id,name,hourly_rate,customer_id',
-                'project.customer:id,name,cgc',
+                'project.customer:id,name,cgc,secondary_cgcs',
             ])
             ->whereBetween('date', [$from, $to])
             ->whereIn('status', ['approved', 'pending'])
@@ -139,10 +139,17 @@ class RelatorioRentabilidadeController extends Controller
             if (!$ts->project || !$ts->project->customer) continue;
             $cid = $ts->project->customer_id;
             if (!isset($byCustomer[$cid])) {
+                // Todos os CNPJs do cliente (principal + secundários) p/ UNIR o
+                // recebimento do Keruak de clientes faturados em mais de um CNPJ.
+                $cnpjs = collect([$ts->project->customer->cgc])
+                    ->merge((array) ($ts->project->customer->secondary_cgcs ?? []))
+                    ->map(fn ($c) => preg_replace('/\D/', '', (string) $c))
+                    ->filter()->unique()->values()->all();
                 $byCustomer[$cid] = [
                     'customer_id' => $cid,
                     'cliente'     => $ts->project->customer->name ?? '—',
                     'cnpj'        => preg_replace('/\D/', '', (string) ($ts->project->customer->cgc ?? '')),
+                    'cnpjs'       => $cnpjs,
                     'horas'       => 0.0,
                     'receita'     => 0.0,
                     'custo'       => 0.0,
@@ -160,8 +167,12 @@ class RelatorioRentabilidadeController extends Controller
         $usados = [];
         foreach ($byCustomer as $g) {
             $cnpj = $g['cnpj'];
-            $recebido = ($cnpj && isset($keruak[$cnpj]['receb'][$recebMonth])) ? (float) $keruak[$cnpj]['receb'][$recebMonth] : 0.0;
-            if ($cnpj) $usados[$cnpj] = true;
+            // Soma o recebido de TODOS os CNPJs do cliente (principal + secundários).
+            $recebido = 0.0;
+            foreach ($g['cnpjs'] as $cc) {
+                $usados[$cc] = true;
+                $recebido += (float) ($keruak[$cc]['receb'][$recebMonth] ?? 0);
+            }
 
             $horas = round($g['horas'], 2);
             $receita = round($g['receita'], 2);

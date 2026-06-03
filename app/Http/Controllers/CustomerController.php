@@ -202,6 +202,8 @@ class CustomerController extends Controller
             'code_prefix' => 'nullable|string|size:3|alpha|unique:customers,code_prefix',
             'emails_administrativos' => 'nullable|array',
             'emails_administrativos.*' => 'email',
+            'secondary_cgcs' => 'nullable|array',
+            'secondary_cgcs.*' => 'string',
         ], [
             'code_prefix.size' => 'O prefixo de código deve ter exatamente 3 letras',
             'code_prefix.alpha' => 'O prefixo de código deve conter apenas letras',
@@ -212,6 +214,7 @@ class CustomerController extends Controller
 
         // Remove caracteres especiais do CGC
         $validated['cgc'] = preg_replace('/[^0-9]/', '', $validated['cgc']);
+        $validated['secondary_cgcs'] = $this->normalizeSecondaryCgcs($validated['secondary_cgcs'] ?? null);
 
         // Valida se é CPF ou CNPJ (tamanho)
         if (!in_array(strlen($validated['cgc']), [11, 14])) {
@@ -253,6 +256,22 @@ class CustomerController extends Controller
 
         // Resposta PO-UI
         return response()->json($customer->load('executive'), 201);
+    }
+
+    /**
+     * Normaliza a lista de CNPJs secundários: só dígitos, 11 ou 14, sem
+     * duplicados e sem repetir o CGC principal. Retorna null se vazio.
+     */
+    private function normalizeSecondaryCgcs($value): ?array
+    {
+        if (!is_array($value)) return null;
+        $list = collect($value)
+            ->map(fn ($c) => preg_replace('/\D/', '', (string) $c))
+            ->filter(fn ($c) => in_array(strlen($c), [11, 14]))
+            ->unique()
+            ->values()
+            ->all();
+        return empty($list) ? null : $list;
     }
 
     /**
@@ -331,11 +350,17 @@ class CustomerController extends Controller
             'code_prefix' => 'nullable|string|size:3|alpha|unique:customers,code_prefix,' . $customer->id,
             'emails_administrativos' => 'nullable|array',
             'emails_administrativos.*' => 'email',
+            'secondary_cgcs' => 'nullable|array',
+            'secondary_cgcs.*' => 'string',
         ], [
             'code_prefix.size' => 'O prefixo de código deve ter exatamente 3 letras',
             'code_prefix.alpha' => 'O prefixo de código deve conter apenas letras',
             'code_prefix.unique' => 'Este prefixo já está sendo usado por outro cliente',
         ]);
+
+        if ($request->has('secondary_cgcs')) {
+            $validated['secondary_cgcs'] = $this->normalizeSecondaryCgcs($validated['secondary_cgcs'] ?? null);
+        }
 
         if (isset($validated['cgc'])) {
             // Remove caracteres especiais do CGC

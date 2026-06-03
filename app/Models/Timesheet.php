@@ -3,18 +3,32 @@
 namespace App\Models;
 
 use App\Observers\TimesheetObserver;
+use App\Notifications\TimesheetStatusNotification;
+use App\Services\TimesheetN8nNotifier;
 use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
 #[ObservedBy([TimesheetObserver::class])]
 class Timesheet extends Model
 {
     use HasFactory, SoftDeletes;
+    use \App\Attachments\Concerns\HasGlobalAttachments;
+
+    // FASE 11 — chave do registry global de anexos.
+    public static function attachmentEntityType(): string { return 'TIMESHEET'; }
+
+    /**
+     * Source explícito pra o TimesheetObserver registrar no log de auditoria.
+     * Propriedade pública (não atributo Eloquent) — não vai pro UPDATE SQL.
+     * Setar antes do save() quando origem != contexto padrão (ex: sync Movidesk).
+     */
+    public ?string $_logSource = null;
 
     /**
      * Status constants
@@ -26,6 +40,9 @@ class Timesheet extends Model
     public const STATUS_ADJUSTMENT_REQUESTED = 'adjustment_requested';
     public const STATUS_INTERNAL = 'internal';
     public const STATUS_RELEASED = 'released';
+    // Atraso pós-fechamento: apontamento chegou pela integração com data em competência
+    // já fechada. Fica fora de fechamento/consumo/dashboards até ser aprovado na tela de Atrasos.
+    public const STATUS_LATE = 'late';
 
     /**
      * The attributes that are mass assignable.
@@ -36,6 +53,7 @@ class Timesheet extends Model
         'user_id',
         'customer_id',
         'project_id',
+        'real_project_id',
         'date',
         'start_time',
         'end_time',
@@ -51,9 +69,8 @@ class Timesheet extends Model
         'rejection_reason',
         'reviewed_by',
         'reviewed_at',
-        'attachment_path',
-        'attachment_original_name',
         'manual_project_edit',
+        'date_locked',
     ];
 
     /**
@@ -66,6 +83,7 @@ class Timesheet extends Model
         'is_billable_only'    => 'boolean',
         'is_internal_action'  => 'boolean',
         'manual_project_edit' => 'boolean',
+        'date_locked'         => 'boolean',
         'client_extra_pct'    => 'decimal:2',
         'consultant_extra_pct'=> 'decimal:2',
         'start_time' => 'datetime:H:i',
@@ -117,6 +135,7 @@ class Timesheet extends Model
             self::STATUS_ADJUSTMENT_REQUESTED => 'Ajuste Solicitado',
             self::STATUS_INTERNAL             => 'Ação Interna',
             self::STATUS_RELEASED             => 'Liberado',
+            self::STATUS_LATE                 => 'Atraso (pós-fechamento)',
         ];
     }
 
@@ -145,14 +164,42 @@ class Timesheet extends Model
     }
 
     /**
-     * Converte total_hours (formato HH:MM) para effort_minutes
+     * Converte uma string `total_hours` em minutos (int) ou null se inválido.
+     * Aceita 3 formatos:
+     *   - HH:MM     ("4:30"   → 270)
+     *   - Decimal   ("4.5", "4,5" → 270; "4.25" → 255; "4.75" → 285)
+     *   - Inteiro   ("4"      → 240)
+     *
+     * Centralizado aqui pra que TimesheetController (store + update) e setTotalHours
+     * usem a mesma regra. Fração com mais de 2 casas é arredondada.
+     */
+    public static function parseTotalHoursToMinutes(?string $totalHours): ?int
+    {
+        if ($totalHours === null || $totalHours === '') {
+            return null;
+        }
+        // HH:MM (minutos 00-59)
+        if (preg_match('/^(\d+):([0-5][0-9])$/', $totalHours, $m)) {
+            return ((int) $m[1]) * 60 + ((int) $m[2]);
+        }
+        // Decimal (ponto ou vírgula) ou inteiro puro
+        if (preg_match('/^(\d+)(?:[.,](\d{1,2}))?$/', $totalHours, $m)) {
+            $hours    = (int) $m[1];
+            $fracStr  = $m[2] ?? '';
+            $fraction = $fracStr === '' ? 0.0 : (float) ('0.' . $fracStr);
+            return $hours * 60 + (int) round($fraction * 60);
+        }
+        return null;
+    }
+
+    /**
+     * Converte total_hours (HH:MM ou decimal) para effort_minutes do model.
      */
     public function setTotalHours(string $totalHours): void
     {
-        if (preg_match('/^(\d+):([0-5][0-9])$/', $totalHours, $matches)) {
-            $hours = intval($matches[1]);
-            $minutes = intval($matches[2]);
-            $this->effort_minutes = ($hours * 60) + $minutes;
+        $minutes = self::parseTotalHoursToMinutes($totalHours);
+        if ($minutes !== null) {
+            $this->effort_minutes = $minutes;
         }
     }
 
@@ -172,15 +219,13 @@ class Timesheet extends Model
     }
 
     /**
-     * Accessor para URL do anexo
+     * Accessor para URL do anexo — 100% via nova camada (FASE 11.7).
      */
     public function getAttachmentUrlAttribute(): ?string
     {
-        if (!$this->attachment_path) {
-            return null;
-        }
-        $backendUrl = rtrim(config('app.url'), '/');
-        return $backendUrl . '/api/v1/timesheets/' . $this->id . '/attachment';
+        $newUrl = $this->attachmentUrl('attachment');
+        if ($newUrl === null) return null;
+        return rtrim(config('app.url'), '/') . $newUrl;
     }
 
     /**
@@ -213,6 +258,15 @@ class Timesheet extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    /**
+     * Projeto REAL do apontamento de investimento (referência). O consumo é contabilizado
+     * no project_id (investimento); o real define o coordenador que aprova.
+     */
+    public function realProject(): BelongsTo
+    {
+        return $this->belongsTo(Project::class, 'real_project_id');
     }
 
     /**
@@ -329,7 +383,17 @@ class Timesheet extends Model
             return true;
         }
 
-        if (!$user->isCoordenador() || !$this->project) {
+        if (!$this->project) {
+            return false;
+        }
+
+        // Investimento COMERCIAL: o EXECUTIVO do cliente aprova (mesmo sem ser coordenador).
+        if ($this->project->is_investimento_comercial && $this->project->categoria_interna === 'Comercial') {
+            return $this->customer_id && \App\Models\Customer::where('id', $this->customer_id)
+                ->where('executive_id', $user->id)->exists();
+        }
+
+        if (!$user->isCoordenador()) {
             return false;
         }
 
@@ -339,6 +403,13 @@ class Timesheet extends Model
                 \App\Models\ServiceType::where('id', $this->project->service_type_id)
                     ->where('code', 'sustentacao')
                     ->exists();
+        }
+
+        // Apontamento de INVESTIMENTO (Suporte/Projeto): aprova o coordenador do PROJETO REAL.
+        if ($this->project->is_investimento_comercial && $this->real_project_id) {
+            return \App\Models\Project::where('id', $this->real_project_id)
+                ->whereHas('coordinators', fn($q) => $q->where('users.id', $user->id))
+                ->exists();
         }
 
         // Coordenador de projetos aprova projetos onde está vinculado como coordenador
@@ -376,7 +447,17 @@ class Timesheet extends Model
         $this->reviewed_at = now();
         $this->rejection_reason = $reason;
 
-        return $this->save();
+        $saved = $this->save();
+
+        if ($saved) {
+            $timesheet = $this;
+            DB::afterCommit(function () use ($timesheet, $reason) {
+                app(TimesheetN8nNotifier::class)->notify($timesheet, 'REJEITADO', $reason);
+                $timesheet->notifyOwnerOfStatus('REJEITADO', $reason);
+            });
+        }
+
+        return $saved;
     }
 
     /**
@@ -425,7 +506,40 @@ class Timesheet extends Model
         $this->reviewed_at = now();
         $this->rejection_reason = $reason;
 
-        return $this->save();
+        $saved = $this->save();
+
+        if ($saved) {
+            $timesheet = $this;
+            DB::afterCommit(function () use ($timesheet, $reason) {
+                app(TimesheetN8nNotifier::class)->notify($timesheet, 'AJUSTE', $reason);
+                $timesheet->notifyOwnerOfStatus('AJUSTE', $reason);
+            });
+        }
+
+        return $saved;
+    }
+
+    /**
+     * Envia e-mail para o dono do apontamento avisando da mudança de status.
+     * Funciona em paralelo ao webhook n8n (caso de redundância); o destino é
+     * sempre o user.email do timesheet — fix da reclamação onde o n8n estava
+     * caindo no admin em vez do dono.
+     */
+    public function notifyOwnerOfStatus(string $statusKey, ?string $reason = null): void
+    {
+        $owner = $this->user;
+        if (!$owner || !$owner->email) {
+            return;
+        }
+        try {
+            $owner->notify(new TimesheetStatusNotification($this, $statusKey, $reason));
+        } catch (\Throwable $e) {
+            \Log::warning('notifyOwnerOfStatus: falha ao enviar', [
+                'timesheet_id' => $this->id,
+                'status'       => $statusKey,
+                'error'        => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -533,9 +647,19 @@ class Timesheet extends Model
     }
 
     /**
-     * Reavalia todos os timesheets conflitados do usuário na data informada.
-     * Conflito só vale entre apontamentos do mesmo cliente — se não houver
-     * mais sobreposição com outro do mesmo cliente, volta para pending.
+     * Reavalia timesheets conflitados do usuário na data informada.
+     *
+     * Regra: um apontamento só permanece em `conflicted` enquanto houver
+     * OUTRO apontamento do MESMO cliente/data sobreposto que AINDA NÃO
+     * TENHA SIDO TRATADO MANUALMENTE pelo admin/coord.
+     *
+     * "Tratado manualmente" = qualquer status diferente de pending/conflicted
+     * (approved, rejected, adjustment_requested, internal, released). Esses
+     * já passaram por decisão humana — não fazem mais sentido travar o par
+     * como conflicted indefinidamente.
+     *
+     * Se o overlap restante já foi tratado (ou sumiu), volta pra `pending`
+     * pra que o ciclo de aprovação continue.
      */
     public static function resolveStaleConflicts(int $userId, string $date): void
     {
@@ -550,7 +674,10 @@ class Timesheet extends Model
                     ->where('customer_id', $ts->customer_id)
                     ->where('date', $ts->date)
                     ->where('id', '!=', $ts->id)
-                    ->whereNotIn('status', [self::STATUS_REJECTED])
+                    // Considera "em disputa" SOMENTE outro pending ou conflicted.
+                    // Approved/rejected/adjustment_requested/internal/released =
+                    // decisão humana tomada, libera o par.
+                    ->whereIn('status', [self::STATUS_PENDING, self::STATUS_CONFLICTED])
                     ->whereNotNull('start_time')
                     ->whereNotNull('end_time')
                     ->where('start_time', '<', $ts->end_time)

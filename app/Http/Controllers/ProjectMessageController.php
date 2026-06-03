@@ -2,9 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Attachment;
 use App\Models\Project;
 use App\Models\ProjectMessage;
-use App\Models\ProjectMessageAttachment;
 use App\Models\ProjectMessageMention;
 use App\Models\ProjectMessageRead;
 use App\Models\User;
@@ -15,12 +15,22 @@ use Illuminate\Support\Facades\Storage;
 
 class ProjectMessageController extends Controller
 {
+
     public function index(Request $request, Project $project): JsonResponse
     {
         $user = $request->user();
 
         if (!$user->isAdmin() && !$this->userCanAccessProject($user, $project)) {
             return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        // Cliente: vê apenas mensagens criadas até req_decided_at da contract_request
+        // que originou o projeto. Após virar projeto, novas trocas internas/visíveis
+        // não chegam mais a ele.
+        $clientCutoff = null;
+        if ($user->isCliente() && $project->contract_request_id) {
+            $cr = \App\Models\ContractRequest::find($project->contract_request_id);
+            $clientCutoff = $cr?->req_decided_at;
         }
 
         $messages = ProjectMessage::where('project_id', $project->id)
@@ -32,6 +42,7 @@ class ProjectMessageController extends Controller
             ->withExists(['mentions as is_mentioned' => fn($q) => $q->where('mentioned_user_id', $user->id)])
             // Clientes só veem mensagens marcadas como visíveis
             ->when($user->isCliente(), fn($q) => $q->where('visibility', 'client'))
+            ->when($clientCutoff, fn($q) => $q->where('created_at', '<=', $clientCutoff))
             ->latest()
             ->paginate(50);
 
@@ -79,16 +90,18 @@ class ProjectMessageController extends Controller
             ]);
         }
 
-        // Upload de anexos
+        // FASE 11.7 (PR 7b) — Upload de anexos 100% via camada Attachment.
         if ($request->hasFile('files')) {
+            $service = app(\App\Attachments\AttachmentService::class);
             foreach ($request->file('files') as $file) {
                 $path = $file->store('message-attachments', 'public');
-                ProjectMessageAttachment::create([
-                    'message_id'    => $msg->id,
+                $service->registerExisting($user, [
+                    'entity_type'   => 'PROJECT_MESSAGE',
+                    'entity_id'     => $msg->id,
+                    'category'      => 'attachment',
+                    'storage_path'  => $path,
                     'original_name' => $file->getClientOriginalName(),
-                    'file_path'     => $path,
-                    'file_size'     => $file->getSize(),
-                    'mime_type'     => $file->getMimeType(),
+                    'mime_type'     => $file->getMimeType() ?: 'application/octet-stream',
                 ]);
             }
         }
@@ -99,7 +112,7 @@ class ProjectMessageController extends Controller
         return response()->json($msg, 201);
     }
 
-    public function downloadAttachment(Request $request, ProjectMessage $message, ProjectMessageAttachment $attachment): mixed
+    public function downloadAttachment(Request $request, ProjectMessage $message, Attachment $attachment): mixed
     {
         $user = $request->user();
 
@@ -111,7 +124,12 @@ class ProjectMessageController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        return Storage::disk('public')->download($attachment->file_path, $attachment->original_name);
+        // FASE 11.7 (PR 7b) — valida vínculo polimórfico.
+        if ($attachment->entity_type !== 'PROJECT_MESSAGE' || (int) $attachment->entity_id !== (int) $message->id) {
+            return response()->json(['message' => 'Anexo não encontrado'], 404);
+        }
+
+        return Storage::disk('public')->download($attachment->storage_path, $attachment->original_name);
     }
 
     public function markRead(Request $request, Project $project): JsonResponse

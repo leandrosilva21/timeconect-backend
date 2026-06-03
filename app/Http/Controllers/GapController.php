@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\CandidateProfile;
 use App\Models\ConsultantSkill;
 use App\Models\CriticalSkill;
 use App\Models\Project;
@@ -237,10 +238,67 @@ class GapController extends Controller
         // Exclui consultores já alocados ao projeto
         $allocated = DB::table('project_consultants')->where('project_id', $projectId)->pluck('user_id');
 
+        // Carrega user_ids de candidatos aprovados ou pendentes (new/screening)
+        $approvedCandidateIds = CandidateProfile::where('status', 'approved')->pluck('user_id');
+        $pendingCandidateIds  = CandidateProfile::whereIn('status', ['new', 'screening'])->pluck('user_id');
+        $candidateProfilesByUser = CandidateProfile::whereIn('user_id', $pendingCandidateIds->merge($approvedCandidateIds))
+            ->get()->keyBy('user_id');
+
         $eligible = User::whereIn('type', ['consultor', 'parceiro_admin'])
             ->whereNotIn('id', $allocated)
-            ->select('id', 'name', 'type', 'consultant_type', 'enabled', 'capacity_hours', 'allocated_hours')
+            ->where(function ($q) use ($approvedCandidateIds, $pendingCandidateIds) {
+                // Não-candidatos passam direto; candidatos só se aprovados OU pendentes (filtraremos por triage_score depois)
+                $q->where('consultant_type', '!=', 'candidate')
+                  ->orWhereNull('consultant_type')
+                  ->orWhereIn('id', $approvedCandidateIds)
+                  ->orWhereIn('id', $pendingCandidateIds);
+            })
+            ->select('id', 'name', 'type', 'consultant_type', 'enabled', 'capacity_hours', 'allocated_hours', 'created_at')
             ->get();
+
+        // Pré-carrega critical_skills pra calcular triage de pending candidates
+        $critical_recs = \App\Models\CriticalSkill::with('minLevel:id,weight')->get();
+        $totalCritical_recs = $critical_recs->count();
+        $criticalReqByWeight_recs = $critical_recs->mapWithKeys(fn($cs) => [
+            $cs->skill_id => $cs->minLevel?->weight ?? 0,
+        ]);
+        $userCriticalSkills_recs = $totalCritical_recs > 0
+            ? ConsultantSkill::with('level:id,weight')
+                ->whereIn('consultant_id', $eligible->pluck('id'))
+                ->whereIn('skill_id', $criticalReqByWeight_recs->keys())
+                ->get()->groupBy('consultant_id')
+            : collect();
+        $today_recs = now();
+
+        $computeTriageRec = function ($u) use ($candidateProfilesByUser, $criticalReqByWeight_recs, $userCriticalSkills_recs, $totalCritical_recs, $today_recs) {
+            $p = $candidateProfilesByUser->get($u->id);
+            $cap = (int) ($u->capacity_hours ?? 160);
+            $alc = (int) ($u->allocated_hours ?? 0);
+            $avail = $cap > 0 ? max(0.0, min(1.0, ($cap - $alc) / $cap)) : 1.0;
+            if ($u->created_at) {
+                $days = max(0, $u->created_at->diffInDays($today_recs, false));
+                $recency = max(0.0, min(1.0, 1.0 - ($days / 30.0)));
+            } else { $recency = 0.0; }
+            if ($totalCritical_recs === 0) { $fit = 1.0; }
+            else {
+                $us = $userCriticalSkills_recs->get($u->id, collect())->keyBy('skill_id');
+                $cov = 0;
+                foreach ($criticalReqByWeight_recs as $sid => $w) {
+                    $cs = $us->get($sid);
+                    if ($cs && $cs->level && $cs->level->weight >= $w) $cov++;
+                }
+                $fit = $cov / $totalCritical_recs;
+            }
+            $sn = min(1.0, max(0.0, (float) ($p->score_initial ?? 0)));
+            return ($sn * 50.0) + ($avail * 20.0) + ($recency * 15.0) + ($fit * 15.0);
+        };
+
+        // Filtra: candidatos pending só passam se triage_score >= 80
+        $pendingIdSet = $pendingCandidateIds->flip();
+        $eligible = $eligible->filter(function ($u) use ($pendingIdSet, $computeTriageRec) {
+            if (!$pendingIdSet->has($u->id)) return true; // não é pending → mantém
+            return $computeTriageRec($u) >= 80;
+        })->values();
 
         // Pré-carrega skills relevantes de todos os elegíveis
         $skillsByUser = ConsultantSkill::with('level:id,name,weight')
@@ -305,6 +363,8 @@ class GapController extends Controller
             $coverage = $finalScore >= 0.9 ? 'Completo'
                       : ($finalScore >= 0.7 ? 'Parcial' : 'Insuficiente');
 
+            $isPending = $u->consultant_type === 'candidate' && $pendingIdSet->has($u->id);
+
             return [
                 'consultant_id'  => (int) $u->id,
                 'name'           => $u->name,
@@ -318,6 +378,7 @@ class GapController extends Controller
                 'skills_match'   => $matched,
                 'skills_total'   => $reqByGroup->count(),
                 'type'           => $type,
+                'pending'        => $isPending,
                 'gaps'           => $gaps,
             ];
         });
@@ -389,6 +450,15 @@ class GapController extends Controller
             'updated_at'             => now(),
         ]);
 
+        // Se for candidato, move pra coluna "Alocado" do Kanban
+        $u = User::find($data['consultant_id']);
+        if ($u && $u->consultant_type === 'candidate') {
+            CandidateProfile::updateOrCreate(
+                ['user_id' => $u->id],
+                ['status'  => 'allocated']
+            );
+        }
+
         return response()->json([
             'allocated'   => true,
             'risk_flag'   => $riskFlag,
@@ -428,9 +498,15 @@ class GapController extends Controller
         $skillIds  = $required->keys();
         $allocated = DB::table('project_consultants')->where('project_id', $projectId)->pluck('user_id');
 
-        // Candidatos elegíveis (com availability >= 0.2)
+        // Candidatos elegíveis (com availability >= 0.2 e, se candidato, status=approved)
+        $approvedCandidateIds = CandidateProfile::where('status', 'approved')->pluck('user_id');
         $candidates = User::whereIn('type', ['consultor', 'parceiro_admin'])
             ->whereNotIn('id', $allocated)
+            ->where(function ($q) use ($approvedCandidateIds) {
+                $q->where('consultant_type', '!=', 'candidate')
+                  ->orWhereNull('consultant_type')
+                  ->orWhereIn('id', $approvedCandidateIds);
+            })
             ->select('id', 'name', 'type', 'consultant_type', 'capacity_hours', 'allocated_hours')
             ->get()
             ->map(function ($u) {
@@ -608,6 +684,16 @@ class GapController extends Controller
 
         if (!empty($rows)) {
             DB::table('project_consultants')->insert($rows);
+        }
+
+        // Atualiza status pra 'allocated' pra todo candidato no time
+        if (!empty($toInsert)) {
+            $candidateIds = User::whereIn('id', $toInsert)
+                ->where('consultant_type', 'candidate')
+                ->pluck('id');
+            foreach ($candidateIds as $cid) {
+                CandidateProfile::updateOrCreate(['user_id' => $cid], ['status' => 'allocated']);
+            }
         }
 
         return response()->json([

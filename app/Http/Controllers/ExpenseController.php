@@ -235,7 +235,17 @@ class ExpenseController extends Controller
         $pageSize = min((int) $request->get('pageSize', 20), 100);
         $page = (int) $request->get('page', 1);
 
-        $query = Expense::with(['user', 'project.customer', 'project.contractType', 'project.serviceType', 'category', 'reviewedBy']);
+        $query = Expense::with(['user', 'project.customer', 'project.customer.executive:id,name', 'project.contractType', 'project.serviceType', 'project.coordinators:id,name', 'project.kanbanOverrideCoordinator:id,name', 'realProject:id,name', 'category', 'reviewedBy']);
+
+        // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
+        if ($request->get('scope') === 'sustentacao') {
+            $scopedIds = app(\App\Services\SustentacaoScopeService::class)->projectIds();
+            if (empty($scopedIds)) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('expenses.project_id', $scopedIds);
+            }
+        }
 
         // Controle de visibilidade por perfil
         if ($user->isCliente()) {
@@ -249,12 +259,11 @@ class ExpenseController extends Controller
         } elseif (!$user->isAdmin() && !$user->hasAccess('expenses.view_all')) {
             $query->where('user_id', $user->id);
         } elseif ($user->isCoordenador()) {
-            $coordinatorProjectIds = $user->coordinatorProjects()->pluck('projects.id');
+            // Sustentação: apenas despesas de projetos sustentacao/cloud (escopo do perfil).
+            // Projetos (default): vê TODAS as despesas — filtro client-side via chip
+            // "Meus projetos / Todos" no FE manda coordinator_id[]=user.id.
             if ($user->coordinator_type === 'sustentacao') {
-                // Sustentação: apenas despesas de projetos com tipo sustentacao ou cloud
                 $query->whereHas('project.serviceType', fn($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
-            } else {
-                $query->whereIn('expenses.project_id', $coordinatorProjectIds);
             }
         }
 
@@ -309,8 +318,25 @@ class ExpenseController extends Controller
             $query->whereIn('user_id', $filterUserIds);
         }
 
+        // Filtro por coordenador (despesas de projetos coordenados pelo usuário escolhido).
+        if ($request->filled('coordinator_id')) {
+            $query->whereHas('project.coordinators', fn ($q) => $q->where('users.id', $request->coordinator_id));
+        }
+
+        // has_partner=1 → só usuários de parceiro ("No Fechamento"); =0 → só não-parceiro
+        // ("A pagar" avulso); ausente → todos.
+        if ($request->has('has_partner') && $request->input('has_partner') !== '') {
+            $request->boolean('has_partner')
+                ? $query->whereHas('user', fn ($q) => $q->whereNotNull('partner_id'))
+                : $query->whereHas('user', fn ($q) => $q->whereNull('partner_id'));
+        }
+
         if ($request->filled('status')) {
-            $query->where('status', $request->status);
+            // Aceita status único (?status=pending) ou múltiplos (?status[]=pending&status[]=rejected).
+            $statusVal = $request->status;
+            is_array($statusVal)
+                ? $query->whereIn('status', $statusVal)
+                : $query->where('status', $statusVal);
         }
 
         if ($request->filled('expense_type')) {
@@ -364,9 +390,30 @@ class ExpenseController extends Controller
         try {
             $result = $this->cachedList($request, 'expenses', function () use ($query, $pageSize, $page) {
                 $expenses = $query->paginate($pageSize, ['*'], 'page', $page);
+                // Coordenador exibido (tooltip): override > (sustentação) coord de sustentação
+                // (Anderson Arantes) > coordenadores do projeto. Mesma regra dos apontamentos.
+                $sustentacaoCoordNames = \App\Models\User::where('coordinator_type', 'sustentacao')
+                    ->where('enabled', true)->pluck('name')->all();
+                $items = collect($expenses->items())->map(function ($exp) use ($sustentacaoCoordNames) {
+                    $arr = $exp->toArray();
+                    $proj = $exp->project;
+                    $coordLabel = null;
+                    if ($proj) {
+                        $isSustentacao = optional($proj->serviceType)->code === 'sustentacao';
+                        if ($proj->kanbanOverrideCoordinator) {
+                            $coordLabel = $proj->kanbanOverrideCoordinator->name;
+                        } elseif ($isSustentacao && !empty($sustentacaoCoordNames)) {
+                            $coordLabel = implode(', ', $sustentacaoCoordNames);
+                        } elseif ($proj->coordinators && $proj->coordinators->count()) {
+                            $coordLabel = $proj->coordinators->pluck('name')->implode(', ');
+                        }
+                    }
+                    $arr['coordinator_label'] = $coordLabel;
+                    return $arr;
+                })->all();
                 return [
                     'hasNext' => $expenses->hasMorePages(),
-                    'items'   => $expenses->items(),
+                    'items'   => $items,
                 ];
             });
             return response()->json($result);
@@ -419,6 +466,7 @@ class ExpenseController extends Controller
         $validator = Validator::make($request->all(), [
             'user_id' => 'nullable|exists:users,id', // Opcional - apenas para administradores
             'project_id' => 'required|exists:projects,id',
+            'real_project_id' => 'nullable|integer|exists:projects,id',
             'expense_category_id' => 'required|exists:expense_categories,id',
             'expense_date' => 'required|date',
             'description' => 'required|string|max:1000',
@@ -449,7 +497,8 @@ class ExpenseController extends Controller
         }
 
         // Determinar o usuário alvo da despesa
-        $canActAsUser  = $user->isAdmin() || $user->isCoordenador();
+        // Administrativo: back-office que aponta despesas pela equipe (igual admin/coordenador).
+        $canActAsUser  = $user->isAdmin() || $user->isCoordenador() || $user->isAdministrativo();
         $isParceiroAdm = $user->isParceiroAdmin() && $user->partner_id;
 
         if (!empty($request->user_id) && ($canActAsUser || $isParceiroAdm)) {
@@ -480,7 +529,30 @@ class ExpenseController extends Controller
         );
         if ($limitError) return $limitError;
 
+        // Investimento exige o "Projeto Real" (referência). Consumo segue no projeto de investimento.
+        $isInvestimento = (bool) $project->is_investimento_comercial;
+        $realProjectId = $isInvestimento ? ((int) $request->input('real_project_id') ?: null) : null;
+        if ($isInvestimento && !$realProjectId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Projeto Real é obrigatório para despesa de investimento.',
+                'errors'  => ['real_project_id' => ['Selecione o projeto real.']],
+            ], 422);
+        }
+        // Investimento SUPORTE: o projeto real precisa ser de SUSTENTAÇÃO.
+        if ($realProjectId && $project->categoria_interna === 'Suporte') {
+            $realProj = Project::with('serviceType')->find($realProjectId);
+            if (optional(optional($realProj)->serviceType)->code !== 'sustentacao') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Investimento Suporte: o Projeto Real deve ser de Sustentação.',
+                    'errors'  => ['real_project_id' => ['Selecione um projeto de Sustentação.']],
+                ], 422);
+            }
+        }
+
         $expenseData = $validator->validated();
+        $expenseData['real_project_id'] = $realProjectId; // só preenchido em investimento
 
         // Definir o user_id final baseado nas permissões
         $expenseData['user_id'] = $targetUserId;
@@ -488,19 +560,25 @@ class ExpenseController extends Controller
         $expenseData['expense_type']   = $expenseData['expense_type']   ?? 'reimbursement';
         $expenseData['payment_method'] = $expenseData['payment_method'] ?? 'pix';
 
-        // Upload do comprovante se fornecido
+        // Upload do comprovante se fornecido — guardado pra registrar APÓS o create
+        // (precisamos do expense->id pra entity_id da camada Attachment).
+        $newReceiptInfo = null;
         if ($request->hasFile('receipt')) {
             $file = $request->file('receipt');
             $filename = time() . '_' . $file->getClientOriginalName();
             $path = $file->storeAs('receipts/' . date('Y/m'), $filename, 'public');
-
-            $expenseData['receipt_path'] = $path;
-            $expenseData['receipt_original_name'] = $file->getClientOriginalName();
+            $newReceiptInfo = ['path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType(), 'file' => $file];
         }
 
         $expense = Expense::create($expenseData);
         $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
         $this->invalidateListCache('expenses');
+
+        // FASE 11.7 — Receipt persiste 100% na camada Attachment.
+        if ($newReceiptInfo !== null) {
+            $this->registerReceiptAttachment($expense, $newReceiptInfo);
+            $expense->refresh();
+        }
 
         return response()->json($expense, 201);
     }
@@ -531,7 +609,7 @@ class ExpenseController extends Controller
     {
         $user = Auth::user();
 
-        $expense = Expense::with(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover'])->find($id);
+        $expense = Expense::with(['user', 'project.customer', 'realProject:id,name', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover'])->find($id);
 
         if (!$expense) {
             return $this->notFoundResponse('Despesa não encontrada');
@@ -670,18 +748,15 @@ class ExpenseController extends Controller
         }
 
         // Upload de novo comprovante se fornecido
+        $newReceiptInfo = null;
         if ($request->hasFile('receipt')) {
-            // Deletar arquivo anterior se existir
-            if ($expense->receipt_path) {
-                Storage::disk('public')->delete($expense->receipt_path);
-            }
+            // Soft-delete dos attachment(s) atuais (FASE 11.7: única fonte).
+            $this->softDeleteReceiptAttachments($expense);
 
             $file = $request->file('receipt');
             $filename = time() . '_' . $file->getClientOriginalName();
             $path = $file->storeAs('receipts/' . date('Y/m'), $filename, 'public');
-
-            $updateData['receipt_path'] = $path;
-            $updateData['receipt_original_name'] = $file->getClientOriginalName();
+            $newReceiptInfo = ['path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType(), 'file' => $file];
         }
 
         // Resetar status para pendente se houve alterações após solicitação de ajuste ou rejeição
@@ -695,6 +770,12 @@ class ExpenseController extends Controller
         $expense->update($updateData);
         $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
         $this->invalidateListCache('expenses');
+
+        // FASE 11.7 — Receipt persiste 100% na camada Attachment.
+        if ($newReceiptInfo !== null) {
+            $this->registerReceiptAttachment($expense->fresh(), $newReceiptInfo);
+            $expense->refresh();
+        }
 
         return response()->json($expense);
     }
@@ -743,10 +824,8 @@ class ExpenseController extends Controller
             );
         }
 
-        // Deletar arquivo de comprovante se existir
-        if ($expense->receipt_path) {
-            Storage::disk('public')->delete($expense->receipt_path);
-        }
+        // FASE 11.7 — soft-delete dos receipts; arquivo físico mantido pra recovery.
+        $this->softDeleteReceiptAttachments($expense);
 
         $expense->delete();
         $this->invalidateListCache('expenses');
@@ -795,6 +874,14 @@ class ExpenseController extends Controller
 
         if (!$expense) {
             return $this->notFoundResponse('Despesa não encontrada');
+        }
+
+        // Ninguém aprova a própria despesa que lançou — nem administrador.
+        if ((int) $expense->user_id === (int) $user->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Você não pode aprovar uma despesa que você mesmo lançou.'
+            ], 403);
         }
 
         // Administradores podem aprovar qualquer despesa
@@ -1099,29 +1186,35 @@ class ExpenseController extends Controller
             }
         }
 
-        if (!$expense->receipt_path) {
+        // FASE 11.7 — Receipt vem 100% da camada Attachment.
+        $att = \App\Models\Attachment::query()
+            ->forEntity('EXPENSE', $expense->id)
+            ->ofCategory('receipt')
+            ->visible()
+            ->latest('id')
+            ->first();
+
+        if (!$att) {
             return response()->json(['message' => 'Comprovante não encontrado'], 404);
         }
 
         try {
-            $disk = \Storage::disk('public');
+            $service = app(\App\Attachments\AttachmentService::class);
+            $stream  = $service->downloadStream($user, $att->id);
 
-            if (!$disk->exists($expense->receipt_path)) {
-                return response()->json(['message' => 'Arquivo não encontrado no servidor. O comprovante pode ter sido perdido após uma atualização do servidor.'], 404);
-            }
-
-            $mime = $disk->mimeType($expense->receipt_path) ?: 'application/octet-stream';
-            $name = $expense->receipt_original_name ?? basename($expense->receipt_path);
-
-            return response($disk->get($expense->receipt_path), 200, [
-                'Content-Type'        => $mime,
-                'Content-Disposition' => 'inline; filename="' . addslashes($name) . '"',
+            return response()->stream(function () use ($stream) {
+                while (!feof($stream)) { echo fread($stream, 8192); }
+                fclose($stream);
+            }, 200, [
+                'Content-Type'        => $att->mime_type ?: 'application/octet-stream',
+                'Content-Disposition' => 'inline; filename="' . addslashes($att->original_name ?: basename($att->storage_path)) . '"',
                 'Cache-Control'       => 'no-cache',
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             \Log::error('Erro ao servir comprovante de despesa', [
                 'expense_id'   => $id,
-                'receipt_path' => $expense->receipt_path,
+                'attachment_id'=> $att->id,
+                'storage_path' => $att->storage_path,
                 'error'        => $e->getMessage(),
             ]);
             return response()->json(['message' => 'Erro ao acessar o comprovante. O arquivo pode não estar disponível neste servidor.'], 503);
@@ -1146,18 +1239,17 @@ class ExpenseController extends Controller
             'receipt' => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120',
         ]);
 
-        // Deletar arquivo anterior se existir
-        if ($expense->receipt_path) {
-            \Storage::disk('public')->delete($expense->receipt_path);
-        }
+        // FASE 11.7 — Receipt persiste 100% na camada Attachment.
+        $this->softDeleteReceiptAttachments($expense);
 
         $file = $request->file('receipt');
         $filename = time() . '_' . $file->getClientOriginalName();
         $path = $file->storeAs('receipts/' . date('Y/m'), $filename, 'public');
 
-        $expense->receipt_path = $path;
-        $expense->receipt_original_name = $file->getClientOriginalName();
-        $expense->save();
+        $this->registerReceiptAttachment($expense, [
+            'path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType(), 'file' => $file,
+        ]);
+        $expense->refresh();
         $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
 
         return response()->json($expense);
@@ -1276,6 +1368,43 @@ class ExpenseController extends Controller
         ]);
     }
 
+    // ─── Pagar no fechamento ───────────────────────────────────────────────────
+
+    /** Marca/desmarca a despesa para ser quitada no fechamento do consultor (qualquer tipo). */
+    public function setFechamento(Request $request, int $id): JsonResponse
+    {
+        $user = Auth::user();
+
+        if (!$user->isAdmin() && !$user->isAdministrativo() && !$user->hasAccess('expenses.pay')) {
+            return $this->accessDeniedResponse('Sem permissão para encaminhar despesas ao fechamento.');
+        }
+
+        $expense = Expense::find($id);
+        if (!$expense) {
+            return $this->notFoundResponse('Despesa não encontrada');
+        }
+
+        $flag = $request->boolean('pagar_no_fechamento', true);
+
+        if ($flag && $expense->status !== Expense::STATUS_APPROVED) {
+            return response()->json(['message' => 'Apenas despesas aprovadas podem ir para o fechamento.'], 422);
+        }
+
+        // Ir para o fechamento e estar paga avulso são mutuamente exclusivos.
+        $expense->update([
+            'pagar_no_fechamento' => $flag,
+            'is_paid'             => $flag ? false : $expense->is_paid,
+            'paid_by'             => $flag ? null : $expense->paid_by,
+            'paid_at'             => $flag ? null : $expense->paid_at,
+        ]);
+
+        return response()->json([
+            'success'             => true,
+            'message'             => $flag ? 'Despesa encaminhada ao fechamento do consultor.' : 'Despesa removida do fechamento.',
+            'pagar_no_fechamento' => $expense->pagar_no_fechamento,
+        ]);
+    }
+
     /**
      * @OA\Get(
      *     path="/api/v1/expenses/export",
@@ -1371,5 +1500,45 @@ class ExpenseController extends Controller
         $filename = 'despesas_' . date('Y-m-d_H-i-s') . '.xlsx';
 
         return Excel::download(new ExpensesExport($request, $user), $filename);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // FASE 11.7 — Helpers da camada Attachment (fonte única).
+    //
+    // Disco físico é local 'public' (legacy storage paths preservados).
+    // softDelete não remove o arquivo; só a row em attachments — restore
+    // possível dentro do retention.
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private function registerReceiptAttachment(Expense $expense, array $info): void
+    {
+        $actor = Auth::user() ?? \App\Models\User::find($expense->user_id);
+        if (!$actor) {
+            throw new \RuntimeException("Não há ator pra registrar receipt do expense {$expense->id}");
+        }
+        app(\App\Attachments\AttachmentService::class)->registerExisting($actor, [
+            'entity_type'   => 'EXPENSE',
+            'entity_id'     => $expense->id,
+            'category'      => 'receipt',
+            'storage_path'  => $info['path'],
+            'original_name' => $info['original'] ?? basename($info['path']),
+            'mime_type'     => $info['mime'] ?? 'application/octet-stream',
+        ]);
+    }
+
+    private function softDeleteReceiptAttachments(Expense $expense): void
+    {
+        try {
+            \App\Models\Attachment::query()
+                ->forEntity('EXPENSE', $expense->id)
+                ->ofCategory('receipt')
+                ->whereNull('deleted_at')
+                ->get()
+                ->each(fn ($att) => $att->delete());
+        } catch (\Throwable $e) {
+            \Log::warning('EXPENSE.receipt soft-delete falhou', [
+                'expense_id' => $expense->id, 'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

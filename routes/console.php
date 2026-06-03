@@ -43,12 +43,30 @@ Schedule::command('projects:ensure-monthly-update')
   ->name('ensure-monthly-accumulated-hours-update')
   ->description('Verifica se accumulated_sold_hours foi atualizado no mês atual');
 
+// Rede de segurança pro reset de conflitos órfãos (observer já cobre saves/deletes
+// via Eloquent; este sweep cobre mudanças via SQL bruto e legado pré-observer).
+Schedule::command('timesheets:resolve-stale-conflicts')
+  ->cron('*/10 * * * *')
+  ->name('timesheets-resolve-stale-conflicts')
+  ->description('Reverte apontamentos conflicted sem sobreposição para pending')
+  ->withoutOverlapping(10)
+  ->runInBackground();
+
 // Sync de apontamentos Movidesk (fallback do webhook — garante que nenhum apontamento seja perdido)
 Schedule::command('movidesk:sync')
   ->cron('*/5 * * * *')
   ->name('movidesk-sync')
   ->description('Sincroniza apontamentos do Movidesk via API')
   ->withoutOverlapping(10)
+  ->runInBackground();
+
+// Slow-lane: tickets que falharam no sync principal (timeout 5s) são reprocessados
+// aqui de hora em hora via fetchTicketLight (timeout 30s, $expand mínimo).
+Schedule::command('movidesk:retry-problem-tickets')
+  ->hourly()
+  ->name('movidesk-retry-problem-tickets')
+  ->description('Reprocessa tickets do Movidesk que falharam na sync principal')
+  ->withoutOverlapping(120)
   ->runInBackground();
 
 // Sync do Portal de Sustentação (tickets dos últimos 90 dias com campos SLA)
@@ -117,4 +135,22 @@ Schedule::command('ai:scan-customers-at-risk --days=7 --max=20 --sync')
   ->name('operational-feed-ai-insights')
   ->description('IA: gera diagnóstico para customers com eventos recentes de risco no Operational Feed')
   ->withoutOverlapping(60)
+  ->runInBackground();
+
+// Alerta de reajustes vencidos ao Financeiro — roda todo dia às 08:00, mas o comando
+// só envia de fato no 1º DIA ÚTIL do mês (pula fim de semana). Não aplica reajuste.
+Schedule::command('reajustes:alerta-vencidos')
+  ->dailyAt('08:00')
+  ->name('alerta-reajustes-vencidos')
+  ->description('Avisa o Financeiro sobre contratos com reajuste vencido (1º dia útil do mês)')
+  ->withoutOverlapping();
+
+// FASE 11.1 — Integrity sweep diário dos anexos (verifica entidade-dona, arquivo
+// físico, checksum e provider). Default incremental (últimos 7 dias) pra não
+// pesar; varredura completa pode ser disparada manualmente com --all.
+Schedule::command('attachments:integrity-check')
+  ->dailyAt('03:00')
+  ->name('attachments-integrity-check')
+  ->description('FASE 11: verifica integridade dos anexos (entidade-dona, arquivo, checksum)')
+  ->withoutOverlapping()
   ->runInBackground();

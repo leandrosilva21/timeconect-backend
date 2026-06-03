@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\MovideskProblemTicket;
 use App\Models\SystemSetting;
 use App\Services\MovideskService;
 use Carbon\Carbon;
@@ -46,32 +47,50 @@ class MovideskSyncCommand extends Command
         }
 
         $totalCreated = 0;
+        $totalFailed  = 0;
 
         foreach ($tickets as $ticketData) {
             $ticketId = $ticketData['id'] ?? '?';
 
-            // Listing retorna só id+lastUpdate ($select obrigatório no Movidesk).
-            // Busca ticket completo individualmente para ter clients, owner e timeAppointments.
-            $ticketData = $service->fetchTicket((int) $ticketId);
-            if (!$ticketData) {
-                $this->warn("  ⚠️  Ticket #{$ticketId}: falhou ao buscar detalhes");
-                continue;
-            }
+            try {
+                // Listing retorna só id+lastUpdate ($select obrigatório no Movidesk).
+                // Busca ticket completo individualmente para ter clients, owner e timeAppointments.
+                $ticketData = $service->fetchTicket((int) $ticketId);
+                if (!$ticketData) {
+                    $this->warn("  ⚠️  Ticket #{$ticketId}: falhou ao buscar detalhes");
+                    $totalFailed++;
+                    $this->recordProblem((string) $ticketId, 'fetchTicket retornou null (timeout ou status != 200)');
+                    continue;
+                }
 
-            $created       = $service->processTicket($ticketData);
-            $totalCreated += $created;
+                $created       = $service->processTicket($ticketData);
+                $totalCreated += $created;
 
-            if ($created > 0) {
-                $this->line("  ✅ Ticket #{$ticketId}: {$created} apontamento(s) importado(s)");
+                if ($created > 0) {
+                    $this->line("  ✅ Ticket #{$ticketId}: {$created} apontamento(s) importado(s)");
+                }
+
+                // Sucesso: se o ticket estava na fila de problemas, sai dela.
+                MovideskProblemTicket::where('ticket_id', (string) $ticketId)->delete();
+            } catch (\Throwable $e) {
+                // Isolamento por ticket: um erro não pode abortar o batch inteiro.
+                $totalFailed++;
+                $this->warn("  ⚠️  Ticket #{$ticketId}: erro ao processar — {$e->getMessage()}");
+                Log::error('📦 [MOVIDESK SYNC] Erro processando ticket', [
+                    'ticket_id' => $ticketId,
+                    'error'     => $e->getMessage(),
+                ]);
+                $this->recordProblem((string) $ticketId, $e->getMessage());
             }
         }
 
         $this->updateLastSync();
 
-        $this->info("✅ Sync concluído. Timesheets criados: {$totalCreated}");
+        $this->info("✅ Sync concluído. Timesheets criados: {$totalCreated}" . ($totalFailed > 0 ? " (tickets com falha: {$totalFailed})" : ''));
         Log::info('✅ [MOVIDESK SYNC] Concluído', [
             'tickets'    => $count,
             'created'    => $totalCreated,
+            'failed'     => $totalFailed,
         ]);
 
         return Command::SUCCESS;
@@ -101,5 +120,19 @@ class MovideskSyncCommand extends Command
     private function updateLastSync(): void
     {
         SystemSetting::set('movidesk_last_sync', now()->toIso8601String(), 'string', 'movidesk');
+    }
+
+    /**
+     * Upsert na fila de problemas. Atende a slow-lane (movidesk:retry-problem-tickets)
+     * pega esses tickets de hora em hora com fetchTicketLight (timeout 30s) e tenta
+     * de novo. Após MAX_ATTEMPTS, o ticket vira blacklisted (admin precisa intervir).
+     */
+    private function recordProblem(string $ticketId, string $error): void
+    {
+        $row = MovideskProblemTicket::firstOrNew(['ticket_id' => $ticketId]);
+        $row->attempts        = ($row->attempts ?? 0) + 1;
+        $row->last_error      = mb_substr($error, 0, 1000);
+        $row->last_attempt_at = now();
+        $row->save();
     }
 }

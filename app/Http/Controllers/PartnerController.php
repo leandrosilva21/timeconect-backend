@@ -3,8 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Models\Partner;
+use App\Models\PartnerHourlyRateLog;
+use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Auth;
 
 class PartnerController extends Controller
 {
@@ -54,9 +58,15 @@ class PartnerController extends Controller
             'active'       => 'boolean',
             'pricing_type' => 'required|in:fixed,variable',
             'hourly_rate'  => 'nullable|numeric|min:0|max:999999.99',
+            'contract_type' => 'nullable|in:cooperado,clt,pj',
         ]);
 
         $partner = Partner::create($data);
+
+        // Tipo de vínculo do parceiro é a fonte de verdade: propaga p/ todos os usuários dele.
+        if (array_key_exists('contract_type', $data)) {
+            User::where('partner_id', $partner->id)->update(['contract_type' => $partner->contract_type]);
+        }
 
         return response()->json($partner, 201);
     }
@@ -72,9 +82,55 @@ class PartnerController extends Controller
             'active'       => 'boolean',
             'pricing_type' => 'sometimes|required|in:fixed,variable',
             'hourly_rate'  => 'nullable|numeric|min:0|max:999999.99',
+            'hourly_rate_effective_from' => 'nullable|date',
+            'contract_type' => 'nullable|in:cooperado,clt,pj',
         ]);
 
+        $effectiveFrom = $data['hourly_rate_effective_from'] ?? null;
+        unset($data['hourly_rate_effective_from']);
+
+        $oldRate = $partner->hourly_rate;
         $partner->update($data);
+
+        // Tipo de vínculo do parceiro é a fonte de verdade: propaga p/ todos os usuários dele
+        // (igual ao racional dos valores — o vínculo trava em todos os consultores do parceiro).
+        if (array_key_exists('contract_type', $data)) {
+            User::where('partner_id', $partner->id)->update(['contract_type' => $partner->contract_type]);
+        }
+
+        // Registra a vigência do novo valor hora (a partir do mês escolhido). Legado intacto.
+        if (array_key_exists('hourly_rate', $data) && (float) $partner->hourly_rate !== (float) $oldRate) {
+            $newEffectiveFrom = $effectiveFrom
+                ? Carbon::parse($effectiveFrom)->startOfMonth()->toDateString()
+                : null;
+
+            // Dedup mesmo-dia: se já existe um log para este parceiro criado HOJE,
+            // atualiza-o com o valor mais recente (mantendo old_hourly_rate do início do dia).
+            $todayLog = PartnerHourlyRateLog::where('partner_id', $partner->id)
+                ->whereDate('created_at', now()->toDateString())
+                ->orderByDesc('id')
+                ->first();
+
+            if ($todayLog) {
+                $todayLog->new_hourly_rate = $partner->hourly_rate;
+                $todayLog->changed_by      = Auth::id();
+                $todayLog->reason          = $request->input('rate_change_reason');
+                // effective_from não-destrutivo: só sobrescreve se uma nova data foi enviada
+                if ($newEffectiveFrom !== null) {
+                    $todayLog->effective_from = $newEffectiveFrom;
+                }
+                $todayLog->save();
+            } else {
+                PartnerHourlyRateLog::create([
+                    'partner_id'      => $partner->id,
+                    'changed_by'      => Auth::id(),
+                    'old_hourly_rate' => $oldRate,
+                    'new_hourly_rate' => $partner->hourly_rate,
+                    'effective_from'  => $newEffectiveFrom,
+                    'reason'          => $request->input('rate_change_reason'),
+                ]);
+            }
+        }
 
         return response()->json($partner);
     }
@@ -85,5 +141,23 @@ class PartnerController extends Controller
         $partner->delete();
 
         return response()->json(null, 204);
+    }
+
+    /** GET /partners/{partner}/hourly-rate-history — histórico de alterações do valor hora. */
+    public function getHourlyRateHistory(Request $request, Partner $partner): JsonResponse
+    {
+        $pageSize = min((int) $request->get('pageSize', 50), 200);
+        $logs = $partner->hourlyRateLogs()->with('changedBy:id,name,email')->paginate($pageSize);
+
+        $items = collect($logs->items())->map(function ($l) {
+            $l->changed_by_user = $l->changedBy;
+            unset($l->changedBy);
+            return $l;
+        });
+
+        return response()->json([
+            'hasNext' => $logs->hasMorePages(),
+            'items'   => $items,
+        ]);
     }
 }

@@ -59,6 +59,29 @@ return [
             ],
         ],
 
+        // Conta NF-e — usada SOMENTE no fechamento do cliente (nfe@erpserv.com.br).
+        // Espelha o mailer 'smtp' (mesmo local_domain/EHLO + ssl) trocando só as credenciais.
+        'nfe' => [
+            'transport' => 'smtp',
+            'scheme' => env('MAIL_SCHEME'),
+            'host' => env('MAIL_NFE_HOST', env('MAIL_HOST', 'smtp.office365.com')),
+            'port' => env('MAIL_NFE_PORT', env('MAIL_PORT', 587)),
+            'username' => env('MAIL_NFE_USERNAME', 'nfe@erpserv.com.br'),
+            'password' => env('MAIL_NFE_PASSWORD'),
+            'timeout' => env('MAIL_TIMEOUT', 60),
+            'local_domain' => env('MAIL_EHLO_DOMAIN', parse_url((string) env('APP_URL', 'http://localhost'), PHP_URL_HOST)),
+            'encryption' => env('MAIL_NFE_ENCRYPTION', env('MAIL_ENCRYPTION', 'tls')),
+            'verify_peer' => true,
+            'allow_self_signed' => false,
+            'stream_context_options' => [
+                'ssl' => [
+                    'verify_peer' => true,
+                    'verify_peer_name' => true,
+                    'allow_self_signed' => false,
+                ]
+            ],
+        ],
+
         'ses' => [
             'transport' => 'ses',
         ],
@@ -124,5 +147,49 @@ return [
         'address' => env('MAIL_FROM_ADDRESS', 'hello@example.com'),
         'name' => env('MAIL_FROM_NAME', 'Example'),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Cópia do financeiro (fechamentos)
+    |--------------------------------------------------------------------------
+    | Endereço que recebe cópia (CC) dos e-mails de fechamento enviados pela
+    | rotina de fechamento de consultores. Vazio desativa o CC.
+    */
+    'financeiro_cc' => env('MAIL_FINANCEIRO_CC', 'financeiro@erpserv.com.br'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reply-To dos fechamentos (caixa de resposta)
+    |--------------------------------------------------------------------------
+    | Endereço pra onde a resposta do consultor vai (Reply-To) e que o Minutor
+    | LÊ via Graph (Fase 2). Separado do From: o From pode ser o noreply (que
+    | costuma ter regra descartando e-mail externo), mas a resposta precisa cair
+    | numa caixa que ACEITE externo. Default = o próprio From.
+    | Mantenha igual ao GRAPH_MAILBOX (a caixa lida).
+    */
+    'fechamento_reply_to' => env('MAIL_FECHAMENTO_REPLY_TO', env('MAIL_FROM_ADDRESS')),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Nome de exibição do remetente (From) dos fechamentos
+    |--------------------------------------------------------------------------
+    | Identidade fixa do remetente nas rotinas de fechamento (consultor, parceiro,
+    | cliente). NÃO é o nome de quem enviou — esse continua no Reply-To e na
+    | assinatura do corpo. Fixo evita ainda o filtro anti-impersonation (nome de
+    | executivo no From de e-mail externo).
+    */
+    'fechamento_from_name' => env('MAIL_FECHAMENTO_FROM_NAME', 'Fechamento ERPSERV'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Fechamento de CLIENTE — conta/remetente próprios (NF-e)
+    |--------------------------------------------------------------------------
+    | Só o fechamento do cliente envia pela conta nfe@erpserv.com.br (mailer 'nfe'),
+    | com From = nfe@erpserv.com.br e nome "NF-e ERPSERV". Consultor/parceiro seguem
+    | no remetente padrão. From = a própria conta autenticada (O365 não permite Send As).
+    */
+    'fechamento_cliente_mailer'    => env('MAIL_FECHAMENTO_CLIENTE_MAILER', 'nfe'),
+    'fechamento_cliente_from'      => env('MAIL_FECHAMENTO_CLIENTE_FROM', 'nfe@erpserv.com.br'),
+    'fechamento_cliente_from_name' => env('MAIL_FECHAMENTO_CLIENTE_FROM_NAME', 'NF-e ERPSERV'),
 
 ];

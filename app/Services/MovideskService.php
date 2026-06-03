@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Customer;
+use App\Models\MovideskAgent;
 use App\Models\MovideskOrganization;
 use App\Models\MovideskTicket;
 use App\Models\Project;
@@ -13,11 +14,26 @@ use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class MovideskService
 {
+    /**
+     * Identificadores fixos das entidades de fallback. Eliminam a
+     * dependência de cadastrar manualmente em /settings — se a config
+     * estiver vazia ou apontar pra entidade ausente, o firstOrCreate
+     * resolve criando/retornando uma entidade marcada como fallback.
+     */
+    private const FALLBACK_USER_EMAIL    = 'movidesk-fallback@minutor.local';
+    private const FALLBACK_CUSTOMER_CGC  = '00000000000000';
+    private const FALLBACK_PROJECT_CODE  = 'MOVIDESK-FALLBACK';
+    private const FALLBACK_NAME          = 'Padrão Movidesk (Fallback)';
+
+    private bool $lastUserIdWasFallback = false;
+
     private function token(): ?string
     {
         return config('services.movidesk.token') ?: null;
@@ -35,10 +51,12 @@ class MovideskService
     public function fetchTicket(int $ticketId): ?array
     {
         try {
-            $response = Http::timeout(15)->get("{$this->baseUrl()}/tickets", [
+            // Timeout curto: tickets travados não devem bloquear o lote inteiro
+            // (job roda a cada 5min e processa dezenas de tickets em sequência).
+            $response = Http::timeout(5)->get("{$this->baseUrl()}/tickets", [
                 'token'   => $this->token(),
                 'id'      => $ticketId,
-                '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments;$select=id,type,isPublic,htmlDescription,createdBy,timeAppointments)',
+                '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
             ]);
 
             if ($response->successful()) {
@@ -57,6 +75,27 @@ class MovideskService
         }
 
         return null;
+    }
+
+    /**
+     * Variante leve do fetchTicket — usa $expand mínimo (só actions/timeAppointments,
+     * sem clients/owner) e timeout maior. Pensada para slow-lane que reprocessa
+     * tickets que travaram no fetchTicket normal. Lança exception em qualquer falha
+     * (status != 200 ou exceção HTTP) — o caller registra o erro.
+     */
+    public function fetchTicketLight(int $ticketId): array
+    {
+        $response = Http::timeout(30)->get("{$this->baseUrl()}/tickets", [
+            'token'   => $this->token(),
+            'id'      => $ticketId,
+            '$expand' => 'actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
+        ]);
+
+        if (!$response->successful()) {
+            throw new \RuntimeException("Movidesk HTTP {$response->status()}");
+        }
+
+        return $response->json();
     }
 
     /**
@@ -175,30 +214,39 @@ class MovideskService
             ];
         }
 
-        $defaultUserId = $this->getDefaultUserId();
-        $changes       = [];
+        $changes = [];
 
-        // Tenta resolver o usuário pelo e-mail do createdBy da ação.
-        // Se não encontrar no Minutor (equipe externa/cliente), usa o owner do ticket como fallback.
-        $resolvedEmail = strtolower(trim($targetAction['createdBy']['email'] ?? ''));
-        $resolvedUser  = $resolvedEmail
-            ? User::where('email', $resolvedEmail)->where('enabled', true)->first()
-            : null;
+        // Resolve user usando a MESMA cascata do extractUserId: email da action,
+        // depois nome exato, depois Usuário Padrão. NUNCA cai no owner do ticket
+        // — owner é o responsável administrativo, não o autor do apontamento.
+        // Caso real (Anderson Promax ticket 48186) onde o owner-fallback atribuía
+        // indevidamente ao consultor responsável (William Campana).
+        $resolvedUserId = $this->extractUserId($targetAction);
+        $cameFromFallback = $this->lastUserIdWasFallback;
 
-        if (!$resolvedUser) {
-            $ownerEmail   = strtolower(trim($ticket['owner']['email'] ?? ''));
-            $resolvedUser = $ownerEmail
-                ? User::where('email', $ownerEmail)->where('enabled', true)->first()
-                : null;
+        if ($resolvedUserId && $resolvedUserId !== $timesheet->user_id) {
+            // Não sobrescreve um user real anterior caindo no Usuário Padrão —
+            // se a resolução nova é fallback E o timesheet atual já tem user
+            // diferente do padrão (provavelmente reatribuição manual prévia),
+            // preserva. Evita anular triagens feitas via UI.
+            $defaultUserId = $this->getDefaultUserId();
+            $alreadyManuallyAssigned = $cameFromFallback
+                && $timesheet->user_id !== null
+                && $timesheet->user_id !== $defaultUserId;
+
+            if (!$alreadyManuallyAssigned) {
+                $changes['user_id'] = ['from' => $timesheet->user_id, 'to' => $resolvedUserId];
+                $timesheet->user_id = $resolvedUserId;
+                if ($cameFromFallback && $timesheet->origin !== 'movidesk_fallback') {
+                    $changes['origin'] = ['from' => $timesheet->origin, 'to' => 'movidesk_fallback'];
+                    $timesheet->origin = 'movidesk_fallback';
+                }
+            }
         }
 
-        if ($resolvedUser && $resolvedUser->id !== $timesheet->user_id) {
-            $changes['user_id'] = ['from' => $timesheet->user_id, 'to' => $resolvedUser->id];
-            $timesheet->user_id = $resolvedUser->id;
-        }
-
-        // Trava manual: se o usuário editou projeto/cliente via UI,
-        // o reprocess NÃO sobrescreve mais esses campos.
+        // Trava manual: se o usuário editou qualquer campo de conteúdo via UI
+        // (cliente/projeto/data/horários/effort/observação), o reprocess NÃO
+        // sobrescreve mais. Edições do Minutor têm prioridade sobre o sync.
         if (!$timesheet->manual_project_edit) {
             // Corrige cliente
             $newCustomerId = $this->extractCustomerId($ticket);
@@ -208,44 +256,85 @@ class MovideskService
             }
 
             // Corrige projeto usando o cliente atualizado
-            $newProjectId = $this->extractProjectId($timesheet->customer_id);
+            // forRemap=true: só re-mapeia se houver projeto DESIGNADO (chave/org).
+            // Sem isso, NÃO troca o projeto — evita o flip-flop com a chave desativada.
+            $newProjectId = $this->extractProjectId($timesheet->customer_id, true);
             if ($newProjectId && $newProjectId !== $timesheet->project_id) {
                 $changes['project_id'] = ['from' => $timesheet->project_id, 'to' => $newProjectId];
                 $timesheet->project_id = $newProjectId;
             }
-        }
 
-        // Atualizar horários do Movidesk se divergirem (sempre — não bloqueado pela trava manual).
-        $newStartTime = $this->extractTime($targetAppointment, 'periodStart');
-        $newEndTime   = $this->extractTime($targetAppointment, 'periodEnd');
-        $newEffortHours   = $this->extractEffortHours($targetAppointment);
-        $newEffortMinutes = $newEffortHours ? $this->calculateEffortMinutes($newEffortHours) : null;
+            // Atualizar data/horários/descrição/effort do Movidesk se divergirem
+            $newDate          = $this->extractDate($targetAppointment);
+            $newStartTime     = $this->extractTime($targetAppointment, 'periodStart');
+            $newEndTime       = $this->extractTime($targetAppointment, 'periodEnd');
+            $newEffortHours   = $this->extractEffortHours($targetAppointment);
+            $newEffortMinutes = $newEffortHours ? $this->calculateEffortMinutes($newEffortHours) : null;
+            $newObservation   = $this->buildObservation($ticket, $targetAction);
 
-        if ($newStartTime) {
-            $currentStart = $timesheet->start_time
-                ? (is_string($timesheet->start_time) ? substr($timesheet->start_time, 0, 5) : $timesheet->start_time->format('H:i'))
-                : null;
-            if ($currentStart !== $newStartTime) {
-                $changes['start_time'] = ['from' => $currentStart, 'to' => $newStartTime];
-                $timesheet->start_time = $newStartTime;
+            // Regra global: apontamentos do Movidesk com duração < 5 min não devem
+            // existir no Minutor. Se o reprocess detecta que o Movidesk agora
+            // reporta < 5 min, soft-deleta o timesheet em vez de atualizar pra
+            // um valor proibido (mesma política aplicada na criação em processAppointment).
+            if ($newEffortMinutes !== null && $newEffortMinutes < 5) {
+                $timesheet->_logSource = 'movidesk_sync';
+                $timesheet->delete();
+                Log::info('🗑️ [MOVIDESK] Timesheet soft-deletado no reprocess (duração < 5 min no Movidesk)', [
+                    'timesheet_id'            => $timesheet->id,
+                    'ticket'                  => $timesheet->ticket,
+                    'movidesk_appointment_id' => $timesheet->movidesk_appointment_id,
+                    'previous_effort_minutes' => (int) $timesheet->effort_minutes,
+                    'new_effort_minutes'      => $newEffortMinutes,
+                ]);
+                return [
+                    'updated' => true,
+                    'changes' => ['soft_deleted' => 'movidesk_effort_below_5min'],
+                ];
             }
-        }
-        if ($newEndTime) {
-            $currentEnd = $timesheet->end_time
-                ? (is_string($timesheet->end_time) ? substr($timesheet->end_time, 0, 5) : $timesheet->end_time->format('H:i'))
-                : null;
-            if ($currentEnd !== $newEndTime) {
-                $changes['end_time'] = ['from' => $currentEnd, 'to' => $newEndTime];
-                $timesheet->end_time = $newEndTime;
+
+            // date_locked: data travada manualmente na aprovação de atraso → o reprocesso
+            // NÃO sobrescreve a data (o aprovador escolheu o mês de inclusão de propósito).
+            if ($newDate && !$timesheet->date_locked) {
+                $currentDate = $timesheet->date
+                    ? (is_string($timesheet->date) ? $timesheet->date : $timesheet->date->format('Y-m-d'))
+                    : null;
+                if ($currentDate !== $newDate) {
+                    $changes['date'] = ['from' => $currentDate, 'to' => $newDate];
+                    $timesheet->date = $newDate;
+                }
             }
-        }
-        if ($newEffortMinutes !== null && (int) $newEffortMinutes !== (int) $timesheet->effort_minutes) {
-            $changes['effort_minutes'] = ['from' => $timesheet->effort_minutes, 'to' => (int) $newEffortMinutes];
-            $timesheet->effort_minutes = (int) $newEffortMinutes;
+            if ($newStartTime) {
+                $currentStart = $timesheet->start_time
+                    ? (is_string($timesheet->start_time) ? substr($timesheet->start_time, 0, 5) : $timesheet->start_time->format('H:i'))
+                    : null;
+                if ($currentStart !== $newStartTime) {
+                    $changes['start_time'] = ['from' => $currentStart, 'to' => $newStartTime];
+                    $timesheet->start_time = $newStartTime;
+                }
+            }
+            if ($newEndTime) {
+                $currentEnd = $timesheet->end_time
+                    ? (is_string($timesheet->end_time) ? substr($timesheet->end_time, 0, 5) : $timesheet->end_time->format('H:i'))
+                    : null;
+                if ($currentEnd !== $newEndTime) {
+                    $changes['end_time'] = ['from' => $currentEnd, 'to' => $newEndTime];
+                    $timesheet->end_time = $newEndTime;
+                }
+            }
+            if ($newEffortMinutes !== null && (int) $newEffortMinutes !== (int) $timesheet->effort_minutes) {
+                $changes['effort_minutes'] = ['from' => $timesheet->effort_minutes, 'to' => (int) $newEffortMinutes];
+                $timesheet->effort_minutes = (int) $newEffortMinutes;
+            }
+            if ($newObservation !== null && $newObservation !== $timesheet->observation) {
+                $changes['observation'] = ['from' => $timesheet->observation, 'to' => $newObservation];
+                $timesheet->observation = $newObservation;
+            }
         }
 
         if (!empty($changes)) {
-            $timesheet->saveQuietly(); // sem disparar observers desnecessários
+            // Dispara observer pra gerar log de auditoria com source=movidesk_sync
+            $timesheet->_logSource = 'movidesk_sync';
+            $timesheet->save();
             return ['updated' => true, 'changes' => $changes];
         }
 
@@ -254,20 +343,58 @@ class MovideskService
 
     /**
      * Processa TODAS as ações do ticket (modo sync/cron).
+     * Além de criar/atualizar appointments, detecta os timesheets órfãos
+     * (existiam no DB mas o appointment correspondente sumiu do Movidesk)
+     * e faz soft-delete.
      * Retorna número de timesheets criados.
      */
     public function processTicket(array $ticketDetails): int
     {
         $this->saveTicketData($ticketDetails);
 
-        $actions = $ticketDetails['actions'] ?? [];
-        $created = 0;
+        $ticketId = $ticketDetails['id'] ?? null;
+        $actions  = $ticketDetails['actions'] ?? [];
+        $created  = 0;
+
+        // Coleta IDs que vieram do Movidesk neste sync — usados depois pra
+        // detectar órfãos no DB.
+        $movideskAppointmentIds = [];
 
         foreach ($actions as $action) {
             foreach ($action['timeAppointments'] ?? [] as $appointment) {
+                if (!empty($appointment['id'])) {
+                    $movideskAppointmentIds[] = $appointment['id'];
+                }
                 if ($this->processAppointment($ticketDetails, $action, $appointment)) {
                     $created++;
                 }
+            }
+        }
+
+        // Apontamentos órfãos: estão no DB com este ticket, mas sumiram do
+        // Movidesk (deletado ou recriado com novo id após edição). Soft-delete
+        // pra não ficar fantasma em dashboards/fechamentos.
+        if ($ticketId) {
+            $orphans = Timesheet::where('ticket', $ticketId)
+                ->whereNotNull('movidesk_appointment_id')
+                ->when(!empty($movideskAppointmentIds), fn($q) => $q->whereNotIn('movidesk_appointment_id', $movideskAppointmentIds))
+                ->get();
+
+            foreach ($orphans as $orphan) {
+                Log::info('🗑️ [MOVIDESK SYNC] Apontamento órfão soft-deletado', [
+                    'timesheet_id'            => $orphan->id,
+                    'ticket'                  => $ticketId,
+                    'movidesk_appointment_id' => $orphan->movidesk_appointment_id,
+                ]);
+                $orphan->_logSource = 'movidesk_sync';
+                $orphanUserId = $orphan->user_id;
+                $orphanDate   = $orphan->date instanceof \Carbon\Carbon
+                    ? $orphan->date->format('Y-m-d')
+                    : (string) $orphan->date;
+                $orphan->delete(); // SoftDeletes — dispara observer pra gerar log
+                // Após soft-delete, re-avaliar timesheets CONFLICTED do mesmo
+                // user/data: os que conflitavam só com esse órfão voltam a pending.
+                Timesheet::resolveStaleConflicts($orphanUserId, $orphanDate);
             }
         }
 
@@ -322,26 +449,90 @@ class MovideskService
             return false;
         }
 
-        // Deduplicação por movidesk_appointment_id
-        if ($appointmentId && Timesheet::where('movidesk_appointment_id', $appointmentId)->exists()) {
-            Log::info('⏭️ [MOVIDESK] Apontamento já importado', [
+        // Filtro PRINCIPAL: pela EQUIPE QUE APONTOU (quem lançou ESTE tempo). Promax também
+        // é CLIENTE — quando a NOSSA equipe aponta num ticket de cliente Promax, DEVE importar.
+        // Por isso não se olha o dono/equipe do ticket, e sim quem lançou o apontamento. O
+        // timeAppointment traz `createdByTeam` (nome da equipe) + `createdBy` (agente) de forma
+        // confiável no payload — sinal certo, diferente de /persons (que não traz team). Caso
+        // real: ticket 48072 com tempo lançado por Anderson @promax (equipe "Promax Bardahl")
+        // virou apontamento VEDAMOTORS porque esse filtro não existia (só checava o autor da
+        // AÇÃO, que pode ser ≠ de quem lançou o tempo).
+        $apptTeam  = $appointment['createdByTeam']['name'] ?? null;
+        $apptEmail = $appointment['createdBy']['email'] ?? null;
+        if (($apptTeam && stripos($apptTeam, 'promax') !== false)
+            || $this->isPromaxAgent($apptEmail, $apptTeam)) {
+            Log::info('⛔ [MOVIDESK] Apontamento descartado — quem lançou o tempo é Promax', [
+                'appt_team'               => $apptTeam,
+                'appt_email'              => $apptEmail,
+                'ticket_id'               => $ticket['id'] ?? null,
                 'movidesk_appointment_id' => $appointmentId,
             ]);
             return false;
         }
 
-        try {
-            $effortHours   = $this->extractEffortHours($appointment);
-            $effortMinutes = $effortHours ? $this->calculateEffortMinutes($effortHours) : 0;
+        // Regra global de < 5 min APLICADA ANTES da lógica de dedup/edit. Sem isso,
+        // um apontamento <5min pode "roubar" o appointment_id de um timesheet
+        // recém-criado no MESMO loop processTicket via findEditedCandidate Nível 2
+        // (ticket+user+date sem start_time): o sync criava o legítimo de 45min,
+        // depois processava o de 1min, findEditedCandidate retornava o de 45min
+        // como candidato, reprocessTimesheet aplicava o guard <5min e soft-deletava.
+        // Resultado: nenhum timesheet sobrevivia. (Caso William Campana ticket 48125)
+        $effortHours   = $this->extractEffortHours($appointment);
+        $effortMinutes = $effortHours ? $this->calculateEffortMinutes($effortHours) : 0;
+        if ($effortMinutes < 5) {
+            Log::info('⏭️ [MOVIDESK] Apontamento ignorado (duração < 5 min)', [
+                'effort_minutes'          => $effortMinutes,
+                'movidesk_appointment_id' => $appointmentId,
+            ]);
+            return false;
+        }
 
-            if ($effortMinutes < 5) {
-                Log::info('⏭️ [MOVIDESK] Apontamento ignorado (duração < 5 min)', [
-                    'effort_minutes'          => $effortMinutes,
-                    'movidesk_appointment_id' => $appointmentId,
-                ]);
-                return false;
+        // Apontamento já existe → reprocess pra refletir edições no Movidesk
+        // (data, descrição, horários, effort). Trava manual de projeto/cliente
+        // permanece ativa via $timesheet->manual_project_edit.
+        if ($appointmentId) {
+            $existing = Timesheet::where('movidesk_appointment_id', $appointmentId)->first();
+            if ($existing) {
+                $result = $this->reprocessTimesheet($existing);
+                if ($result['updated'] ?? false) {
+                    Log::info('🔄 [MOVIDESK] Apontamento atualizado via sync', [
+                        'timesheet_id'            => $existing->id,
+                        'movidesk_appointment_id' => $appointmentId,
+                        'changes'                 => array_keys($result['changes'] ?? []),
+                    ]);
+                }
+                return false; // não conta como criado, mas foi atualizado
             }
 
+            // Detecção de EDIÇÃO COM NOVO appointment.id: o Movidesk, ao editar um
+            // apontamento, às vezes descarta o id antigo e gera um novo. Sem essa
+            // detecção, o sync criaria um novo timesheet e marcaria o original como
+            // órfão (soft-delete), quebrando a auditoria (vira "deletado + criado"
+            // em vez de "atualizado"). Aqui buscamos um candidato no DB com a mesma
+            // chave natural (ticket + user + ação Movidesk) cujo movidesk_appointment_id
+            // ESTEJA fora da lista atual do Movidesk — assinatura clássica de edição.
+            $editCandidate = $this->findEditedCandidate($ticket, $action, $appointment, $appointmentId);
+            if ($editCandidate) {
+                $oldAppointmentId = $editCandidate->movidesk_appointment_id;
+                // Aponta pro novo id no Movidesk; salvamos primeiro pra garantir
+                // persistência mesmo se reprocessTimesheet não detectar outras mudanças.
+                // O observer gera log de auditoria automaticamente (source=movidesk_sync).
+                $editCandidate->movidesk_appointment_id = $appointmentId;
+                $editCandidate->_logSource = 'movidesk_sync';
+                $editCandidate->save();
+
+                $result = $this->reprocessTimesheet($editCandidate->fresh());
+                Log::info('🔄 [MOVIDESK] Apontamento ALTERADO no Movidesk reconhecido como edição (novo appointment.id)', [
+                    'timesheet_id'                 => $editCandidate->id,
+                    'old_movidesk_appointment_id'  => $oldAppointmentId,
+                    'new_movidesk_appointment_id'  => $appointmentId,
+                    'changes'                      => array_keys($result['changes'] ?? []),
+                ]);
+                return false; // não cria duplicata; foi update
+            }
+        }
+
+        try {
             // Filtro por data mínima de apontamento (configurável no admin)
             $importStartDate = SystemSetting::get('movidesk_import_start_date');
             if ($importStartDate) {
@@ -356,8 +547,9 @@ class MovideskService
                 }
             }
 
-            $userId = $this->extractUserId($action);
+            $userId     = $this->extractUserId($action);
             if (!$userId) return false;
+            $isFallback = $this->lastUserIdWasFallback;
 
             $customerId = $this->extractCustomerId($ticket);
             if (!$customerId) return false;
@@ -387,6 +579,7 @@ class MovideskService
                 'movidesk_appointment_id' => $appointmentId,
                 'is_internal_action'      => $isInternal,
                 'status'                  => $isInternal ? 'internal' : 'pending',
+                'origin'                  => $isFallback ? 'movidesk_fallback' : 'webhook',
             ]);
 
             return true;
@@ -406,28 +599,132 @@ class MovideskService
 
     private function extractUserId(array $action): ?int
     {
-        $email = $action['createdBy']['email'] ?? null;
-        if ($email) $email = strtolower(trim($email));
+        $this->lastUserIdWasFallback = false;
 
-        if ($email) {
-            $user = User::where('email', $email)->where('enabled', true)->first();
-            if ($user) return $user->id;
-            Log::warning('⚠️ [MOVIDESK] Usuário não encontrado ou inativo — usando usuário padrão', ['email' => $email]);
-        } else {
-            Log::warning('⚠️ [MOVIDESK] Email ausente na ação — usando usuário padrão', ['action_id' => $action['id'] ?? null]);
+        $createdBy   = $action['createdBy'] ?? [];
+        $movideskId  = isset($createdBy['id']) && $createdBy['id'] !== '' ? (string) $createdBy['id'] : null;
+        $email       = $createdBy['email'] ?? null;
+        if ($email) $email = strtolower(trim($email));
+        $name        = isset($createdBy['businessName']) ? trim($createdBy['businessName']) : null;
+        $name        = $name ?: (isset($createdBy['name']) ? trim($createdBy['name']) : null);
+
+        // Resolve agente cacheado (id tem prioridade, email é fallback). Usado pra
+        // descobrir o email real do agente quando o payload omite (Movidesk às
+        // vezes não inclui email no createdBy mesmo pedindo via $expand).
+        $cachedAgent = null;
+        if ($movideskId) {
+            $cachedAgent = MovideskAgent::where('movidesk_id', $movideskId)->first();
+        }
+        if (!$cachedAgent && $email) {
+            $cachedAgent = MovideskAgent::where('email', $email)->first();
+        }
+        $effectiveEmail = $email ?: ($cachedAgent ? strtolower((string) $cachedAgent->email) : null);
+
+        // Promax check via DOMÍNIO do email (Movidesk não devolve o campo `team`
+        // pela API /persons, então team em movidesk_agents fica vazio — domínio
+        // é o sinal único confiável: @promax.bardahl.com.br, @promax.com.br, etc).
+        // Também olha team como cinto-e-suspensório caso algum cadastro venha
+        // preenchido manualmente no futuro.
+        if ($this->isPromaxAgent($effectiveEmail, $cachedAgent->team ?? null)) {
+            Log::info('⏭️ [MOVIDESK] Apontamento descartado — agente Promax', [
+                'movidesk_id' => $movideskId,
+                'email'       => $effectiveEmail,
+                'team'        => $cachedAgent->team ?? null,
+                'action_id'   => $action['id'] ?? null,
+            ]);
+            return null;
         }
 
-        return $this->getDefaultUserId();
+        // 1. Match via agente cacheado linkado a User
+        if ($cachedAgent && $cachedAgent->user_id) {
+            $user = User::where('id', $cachedAgent->user_id)->where('enabled', true)->first();
+            if ($user) return $user->id;
+        }
+
+        // 2. Match por email direto (payload ou cache)
+        if ($effectiveEmail) {
+            $user = User::where('email', $effectiveEmail)->where('enabled', true)->first();
+            if ($user) return $user->id;
+        }
+
+        // 3. Match por nome — último recurso. Só atribui se for inequívoco
+        //    (exatamente 1 User enabled com o nome exato, case-insensitive).
+        if ($name) {
+            $matches = User::whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+                ->where('enabled', true)
+                ->limit(2)
+                ->get();
+            if ($matches->count() === 1) {
+                Log::info('ℹ️ [MOVIDESK] Usuário resolvido por nome', [
+                    'name'      => $name,
+                    'user_id'   => $matches->first()->id,
+                    'action_id' => $action['id'] ?? null,
+                ]);
+                return $matches->first()->id;
+            }
+            if ($matches->count() > 1) {
+                Log::warning('⚠️ [MOVIDESK] Nome ambíguo — Usuário Padrão pra triagem manual', [
+                    'name'      => $name,
+                    'matches'   => $matches->pluck('id')->all(),
+                    'action_id' => $action['id'] ?? null,
+                ]);
+            }
+        }
+
+        Log::warning('⚠️ [MOVIDESK] Usuário não encontrado — caindo no Usuário Padrão pra triagem', [
+            'movidesk_id' => $movideskId,
+            'email'       => $email,
+            'name'        => $name,
+            'action_id'   => $action['id'] ?? null,
+        ]);
+
+        $defaultId = $this->getDefaultUserId();
+        if ($defaultId) $this->lastUserIdWasFallback = true;
+        return $defaultId;
+    }
+
+    /**
+     * Detecta se o agente é da Promax (não deve gerar timesheet local).
+     * Critério principal: domínio do email (@promax.*). Critério secundário:
+     * `team` em movidesk_agents contém "promax" — não confiável hoje porque o
+     * Movidesk omite team na API /persons, mas mantemos pro caso de cadastro
+     * manual no futuro.
+     */
+    private function isPromaxAgent(?string $email, ?string $team): bool
+    {
+        if ($email && stripos($email, '@promax.') !== false) return true;
+        if ($team && stripos($team, 'promax') !== false) return true;
+        return false;
     }
 
     private function getDefaultUserId(): ?int
     {
-        $id = SystemSetting::get('movidesk_default_user_id');
-        if (!$id) {
-            Log::error('🚨 [MOVIDESK] movidesk_default_user_id não configurado — apontamento descartado');
-            return null;
+        // 1. Config explícita em /settings tem precedência (mantém compat).
+        $configured = SystemSetting::get('movidesk_default_user_id');
+        if ($configured && User::where('id', $configured)->where('enabled', true)->exists()) {
+            return (int) $configured;
         }
-        return (int) $id;
+
+        // 2. Auto-provisionamento por email reservado — não exige cadastro manual.
+        return $this->ensureDefaultUser()->id;
+    }
+
+    /**
+     * Cria (ou recupera) o User reservado para o fallback do Movidesk.
+     * Senha aleatória torna o login impossível — entidade serve apenas
+     * como destino de triagem.
+     */
+    private function ensureDefaultUser(): User
+    {
+        return User::firstOrCreate(
+            ['email' => self::FALLBACK_USER_EMAIL],
+            [
+                'name'     => self::FALLBACK_NAME,
+                'password' => Hash::make(Str::random(64)),
+                'enabled'  => true,
+                'type'     => 'consultor',
+            ]
+        );
     }
 
     private function extractCustomerId(array $ticket): ?int
@@ -451,75 +748,93 @@ class MovideskService
 
         $target = $target ?? $clients[0];
 
-        $org         = $target['organization'] ?? null;
-        $orgName     = is_array($org) ? ($org['businessName'] ?? null) : null;
-        $orgName     = $orgName ?? ($target['businessName'] ?? null);
-        $orgPersonType = is_array($org) ? ($org['personType'] ?? null) : null;
-        $orgId       = is_array($org) ? ($org['id'] ?? null) : null;
-
         // Movidesk personType: 1=pessoa, 2=empresa, 4=departamento.
-        // Quando solicitante pertence a um departamento (ex: PROMAX » Fiscal),
-        // a API entrega só o nome do departamento. Resolvemos a empresa-mãe
-        // via /persons/{id}.relationships, que aponta pra organização raiz.
+        // O client do ticket pode ser:
+        //   - personType=2 (empresa) → o próprio client.id É o id da organização;
+        //     organization vem null nesse caso (ticket aberto pela empresa direto).
+        //   - personType=1 (pessoa) ou 4 (departamento) → tem organization aninhada
+        //     com o id da empresa (caso GRUPO EUREKA tinha pessoa + org aninhada).
+        $clientPersonType = $target['personType'] ?? null;
+        $org              = $target['organization'] ?? null;
+        $orgName          = is_array($org) ? ($org['businessName'] ?? null) : null;
+        $orgName          = $orgName ?? ($target['businessName'] ?? null);
+
+        if ($clientPersonType === 2) {
+            // Client é uma empresa
+            $orgId         = $target['id'] ?? null;
+            $orgPersonType = 2;
+        } else {
+            // Client é pessoa/departamento — pega org aninhada
+            $orgId         = is_array($org) ? ($org['id'] ?? null) : null;
+            $orgPersonType = is_array($org) ? ($org['personType'] ?? null) : null;
+        }
+
+        // Departamento → resolve empresa-mãe via /persons/{id}.relationships.
         if ($orgPersonType === 4 && $orgId) {
             $parentMovideskId = $this->resolveDepartmentParentMovideskId((string) $orgId);
             if ($parentMovideskId) {
-                $parentOrg = MovideskOrganization::where('movidesk_id', (string) $parentMovideskId)
-                    ->whereNotNull('customer_id')
-                    ->first();
-                if ($parentOrg) {
-                    Log::info('✅ [MOVIDESK] Cliente resolvido via parent do departamento', [
-                        'department'        => $orgName,
-                        'department_id'     => $orgId,
-                        'parent_movidesk_id'=> $parentMovideskId,
-                        'customer_id'       => $parentOrg->customer_id,
-                    ]);
-                    return $parentOrg->customer_id;
-                }
+                $orgId = $parentMovideskId;
             }
         }
 
-        if (!$orgName) {
-            Log::warning('⚠️ [MOVIDESK] businessName não encontrado', ['client' => $target]);
+        // Chave única OBRIGATÓRIA: CNPJ.
+        // sync-orgs vincula movidesk_organizations.cnpj <-> customers.cgc (dígitos);
+        // aqui resolvemos cliente a partir do movidesk_id (ID estável da org no
+        // Movidesk). Nome do solicitante/empresa NÃO é usado pra rotear — o
+        // payload do Movidesk varia (trailing space, accents, casing) e isso já
+        // causou ticket da EUREKA cair em ERPSERV (default).
+        if (!$orgId) {
+            Log::warning('⚠️ [MOVIDESK] Organization id ausente no ticket — usando default', [
+                'business_name'   => $orgName,
+                'org_person_type' => $orgPersonType,
+                'ticket_id'       => $ticket['id'] ?? null,
+            ]);
             return $this->getDefaultCustomerId();
         }
 
-        // 1. Busca via movidesk_organizations (vinculada por CNPJ pelo sync-orgs)
-        $orgRecord = MovideskOrganization::where('name', $orgName)
-            ->whereNotNull('customer_id')
-            ->first();
+        $orgRecord = MovideskOrganization::where('movidesk_id', (string) $orgId)->first();
 
-        if ($orgRecord) {
+        if ($orgRecord && $orgRecord->customer_id) {
             Log::info('✅ [MOVIDESK] Cliente resolvido via movidesk_organizations (CNPJ)', [
-                'organization' => $orgName,
-                'customer_id'  => $orgRecord->customer_id,
+                'movidesk_org_id' => $orgId,
+                'cnpj'            => $orgRecord->cnpj,
+                'customer_id'     => $orgRecord->customer_id,
             ]);
             return $orgRecord->customer_id;
         }
 
-        // 2. Fallback: busca direta por nome no customers (case-insensitive)
-        $nameLower = strtolower(trim($orgName));
-        $customer  = Customer::where('active', true)
-            ->where(function ($q) use ($nameLower) {
-                $q->whereRaw('LOWER(TRIM(name)) = ?', [$nameLower])
-                  ->orWhereRaw('LOWER(TRIM(company_name)) = ?', [$nameLower]);
-            })->first();
-
-        if (!$customer) {
-            Log::warning('⚠️ [MOVIDESK] Cliente não encontrado no sistema', [
-                'organization'    => $orgName,
-                'org_person_type' => $orgPersonType,
-                'org_id'          => $orgId,
-            ]);
-            return $this->getDefaultCustomerId();
+        // Fallback: org cacheada mas sem link, tenta match direto por CGC do
+        // customers (mesma normalização do sync-orgs: só dígitos).
+        if ($orgRecord && $orgRecord->cnpj) {
+            $cgcDigits = preg_replace('/\D/', '', $orgRecord->cnpj);
+            if ($cgcDigits) {
+                $customer = Customer::where('active', true)
+                    ->whereRaw("regexp_replace(coalesce(cgc, ''), '\\D', '', 'g') = ?", [$cgcDigits])
+                    ->first();
+                if ($customer) {
+                    Log::info('✅ [MOVIDESK] Cliente resolvido via CGC (movidesk_org sem customer_id linkado)', [
+                        'movidesk_org_id' => $orgId,
+                        'cnpj'            => $orgRecord->cnpj,
+                        'customer_id'     => $customer->id,
+                    ]);
+                    return $customer->id;
+                }
+            }
         }
 
-        Log::info('✅ [MOVIDESK] Cliente resolvido via nome direto', [
-            'organization' => $orgName,
-            'customer_id'  => $customer->id,
-        ]);
-
-        return $customer->id;
+        // Throttle: org sem CNPJ cadastrado é estado conhecido — não vale logar a
+        // cada sync (a cada 5min). Loga no máximo 1x a cada 6h por org.
+        $throttleKey = "movidesk:warn:unresolved-cnpj:{$orgId}";
+        if (!Cache::has($throttleKey)) {
+            Cache::put($throttleKey, 1, now()->addHours(6));
+            Log::warning('⚠️ [MOVIDESK] Cliente não resolvido por CNPJ — rode movidesk:sync-orgs ou cadastre o CGC do cliente', [
+                'movidesk_org_id' => $orgId,
+                'business_name'   => $orgName,
+                'org_person_type' => $orgPersonType,
+                'cnpj_cached'     => $orgRecord?->cnpj,
+            ]);
+        }
+        return $this->getDefaultCustomerId();
     }
 
     /**
@@ -566,20 +881,55 @@ class MovideskService
 
     private function getDefaultCustomerId(): ?int
     {
-        $id = SystemSetting::get('movidesk_default_customer_id');
-
-        if (!$id) {
-            Log::error('🚨 [MOVIDESK] movidesk_default_customer_id não configurado');
-            return null;
+        $configured = SystemSetting::get('movidesk_default_customer_id');
+        if ($configured && Customer::where('id', $configured)->where('active', true)->exists()) {
+            return (int) $configured;
         }
-
-        return (int) $id;
+        return $this->ensureDefaultCustomer()->id;
     }
 
-    private function extractProjectId(?int $customerId): ?int
+    /**
+     * Cria (ou recupera) o Customer reservado para fallback do Movidesk.
+     * CGC 14×0 é um identificador placeholder unique que não colide com
+     * CNPJs reais.
+     */
+    private function ensureDefaultCustomer(): Customer
+    {
+        return Customer::firstOrCreate(
+            ['cgc' => self::FALLBACK_CUSTOMER_CGC],
+            [
+                'name'         => self::FALLBACK_NAME,
+                'company_name' => self::FALLBACK_NAME,
+                'active'       => true,
+            ]
+        );
+    }
+
+    private function extractProjectId(?int $customerId, bool $forRemap = false): ?int
     {
         if ($customerId) {
-            // 1. Prioridade: projeto configurado manualmente na org Movidesk
+            // 1. Prioridade absoluta: projeto com flag movidesk_integration_enabled.
+            // Garante no máximo 1 por cliente (regra aplicada em ProjectController).
+            $flagged = Project::where('customer_id', $customerId)
+                ->where('movidesk_integration_enabled', true)
+                ->first();
+            if ($flagged) {
+                if ($flagged->isActive()) {
+                    Log::info('✅ [MOVIDESK] Projeto resolvido via movidesk_integration_enabled', [
+                        'customer_id' => $customerId,
+                        'project_id'  => $flagged->id,
+                        'project_name'=> $flagged->name,
+                    ]);
+                    return $flagged->id;
+                }
+                Log::warning('⚠️ [MOVIDESK] Projeto flagged inativo — caindo nos próximos fallbacks', [
+                    'customer_id' => $customerId,
+                    'project_id'  => $flagged->id,
+                    'status'      => $flagged->status,
+                ]);
+            }
+
+            // 2. Legado: projeto configurado manualmente na org Movidesk
             $org = MovideskOrganization::where('customer_id', $customerId)
                 ->whereNotNull('project_id')
                 ->first();
@@ -598,6 +948,14 @@ class MovideskService
                     'customer_id' => $customerId,
                     'project_id'  => $org->project_id,
                 ]);
+            }
+
+            // BLINDAGEM: no RE-MAPEAMENTO (reprocesso), sem projeto DESIGNADO (chave ou
+            // vínculo de org), NÃO adivinha via fallback/padrão — retorna null pra o
+            // reprocesso DEIXAR o apontamento onde está. Evita o flip-flop de projeto
+            // quando a chave movidesk_integration_enabled está desativada.
+            if ($forRemap) {
+                return null;
             }
 
             // 2. Fallback: busca projeto de sustentação do cliente
@@ -624,32 +982,65 @@ class MovideskService
             }
         }
 
-        return $this->resolveDefaultProject();
+        // Sem cliente: no re-mapeamento não força projeto padrão (deixa onde está).
+        return $forRemap ? null : $this->resolveDefaultProject();
     }
 
     private function resolveDefaultProject(): ?int
     {
-        $defaultId = SystemSetting::get('movidesk_default_project_id');
+        $configured = SystemSetting::get('movidesk_default_project_id');
+        if ($configured) {
+            $project = Project::find($configured);
+            if ($project) {
+                Log::info('ℹ️ [MOVIDESK] Usando projeto padrão configurado', [
+                    'project_id'   => $project->id,
+                    'project_name' => $project->name,
+                    'status'       => $project->status,
+                ]);
+                return $project->id;
+            }
+            Log::warning('⚠️ [MOVIDESK] movidesk_default_project_id aponta pra projeto inexistente — caindo no auto-provisionado', ['id' => $configured]);
+        }
 
-        if (!$defaultId) {
-            Log::error('🚨 [MOVIDESK] movidesk_default_project_id não configurado — apontamento descartado');
+        $project = $this->ensureDefaultProject();
+        return $project?->id;
+    }
+
+    /**
+     * Cria (ou recupera) o Project reservado para fallback. Linkado ao
+     * Customer fallback. Service type: prefere "sustentacao" se existir,
+     * senão o primeiro disponível.
+     */
+    private function ensureDefaultProject(): ?Project
+    {
+        $serviceTypeId = ServiceType::query()
+            ->orderByRaw("CASE WHEN code = 'sustentacao' THEN 0 ELSE 1 END")
+            ->orderBy('id')
+            ->value('id');
+
+        $contractTypeId = \App\Models\ContractType::query()
+            ->orderByRaw("CASE WHEN code = 'on_demand' THEN 0 ELSE 1 END")
+            ->orderBy('id')
+            ->value('id');
+
+        if (!$serviceTypeId || !$contractTypeId) {
+            Log::error('🚨 [MOVIDESK] Faltam ServiceType/ContractType cadastrados — impossível criar projeto fallback', [
+                'service_type_id'  => $serviceTypeId,
+                'contract_type_id' => $contractTypeId,
+            ]);
             return null;
         }
 
-        $project = Project::find($defaultId);
-
-        if (!$project) {
-            Log::error('🚨 [MOVIDESK] Projeto padrão não encontrado', ['id' => $defaultId]);
-            return null;
-        }
-
-        Log::info('ℹ️ [MOVIDESK] Usando projeto padrão', [
-            'project_id'   => $project->id,
-            'project_name' => $project->name,
-            'status'       => $project->status,
-        ]);
-
-        return $project->id;
+        return Project::firstOrCreate(
+            ['code' => self::FALLBACK_PROJECT_CODE],
+            [
+                'name'             => self::FALLBACK_NAME,
+                'customer_id'      => $this->ensureDefaultCustomer()->id,
+                'service_type_id'  => $serviceTypeId,
+                'contract_type_id' => $contractTypeId,
+                'status'           => Project::STATUS_STARTED,
+            ]
+        );
     }
 
     private function extractDate(array $appointment): ?string
@@ -704,21 +1095,177 @@ class MovideskService
     {
         $subject = $ticket['subject'] ?? '';
         $html    = $action['htmlDescription'] ?? '';
-        $plain = trim(html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
-        $plain = preg_replace('/\s+/', ' ', $plain);
+
+        // Preserva HTML rico (tabelas, parágrafos, listas, headers). Frontend
+        // sanitiza via DOMPurify antes de renderizar com dangerouslySetInnerHTML.
+        // O subject prefix do Movidesk aparece como primeiro parágrafo — remove
+        // só ele, sem destruir o resto da formatação.
+        $clean = trim($html);
 
         if ($subject) {
             $escaped = preg_quote(trim($subject), '/');
-            $plain   = preg_replace('/^' . $escaped . '\s*/iu', '', $plain);
-            $plain   = trim($plain);
+            // Remove subject quando vem como texto no início do HTML
+            $clean = preg_replace('/^\s*' . $escaped . '\s*(<br\s*\/?>)?/iu', '', $clean);
+            // Remove subject quando vem dentro do primeiro <p>
+            $clean = preg_replace('/^\s*<p[^>]*>\s*' . $escaped . '\s*<\/p>/iu', '', $clean);
+            $clean = trim($clean);
         }
 
-        return $plain;
+        // Quando a interação não tem texto e veio só com anexo de imagem,
+        // tenta OCR para preencher a observation com o conteúdo da imagem.
+        $isEmpty     = $this->isHtmlEffectivelyEmpty($clean);
+        $attachments = $action['attachments'] ?? [];
+        $inlineUrls  = [];
+
+        // Plano B: Movidesk frequentemente NÃO devolve attachments[] mesmo com
+        // $expand=attachments. As imagens vão inline no htmlDescription como
+        // <img src="https://s3.amazonaws.com/movidesk-files-*">. Quando o
+        // attachments[] vier vazio mas houver imgs inline, sintetiza um array
+        // de "pseudo-attachments" só com a URL pra alimentar o OCR.
+        if (empty($attachments)) {
+            $inlineUrls = $this->extractMovideskImageUrls($html);
+            if (!empty($inlineUrls)) {
+                $attachments = array_map(function ($url) {
+                    return [
+                        'url'      => $url,
+                        'fileName' => basename(parse_url($url, PHP_URL_PATH) ?: 'image'),
+                        'mimeType' => 'image/jpeg',  // OcrService re-valida via Content-Type da resposta
+                    ];
+                }, $inlineUrls);
+            }
+        }
+
+        Log::info('📦 [MOVIDESK] buildObservation diagnóstico', [
+            'action_id'            => $action['id'] ?? null,
+            'html_len'             => strlen($clean),
+            'is_effectively_empty' => $isEmpty,
+            'attachments_count'    => count($attachments),
+            'inline_urls_count'    => count($inlineUrls),
+            'first_att_keys'       => !empty($attachments) ? array_keys($attachments[0] ?? []) : [],
+        ]);
+        if ($isEmpty && !empty($attachments)) {
+            $ocrText = app(OcrService::class)->extractTextFromAttachments($attachments);
+            if ($ocrText !== null) {
+                $clean = '<p><em>[texto extraído da imagem via OCR]</em></p>'
+                    . '<p>' . nl2br(e($ocrText), false) . '</p>';
+            }
+        }
+
+        return $clean;
+    }
+
+    /**
+     * Extrai URLs S3 Movidesk de <img src="..."> no HTML. Filtro:
+     * só URLs em domínio s3*.amazonaws.com com "movidesk" no path,
+     * evita logos/data URIs/imagens externas. Dedup + cap em 10.
+     */
+    private function extractMovideskImageUrls(string $html): array
+    {
+        if ($html === '' || !preg_match_all('/<img[^>]+src=["\']([^"\']+)["\']/i', $html, $m)) {
+            return [];
+        }
+        $urls = array_unique(array_map("html_entity_decode", $m[1]));
+        $movidesk = [];
+        foreach ($urls as $url) {
+            if (preg_match('~^https?://[^/]*s3[.-][^/]*amazonaws\.com/[^?]*movidesk~i', $url)) {
+                $movidesk[] = $url;
+                if (count($movidesk) >= 10) break;
+            }
+        }
+        return $movidesk;
+    }
+
+    private function isHtmlEffectivelyEmpty(string $html): bool
+    {
+        $stripped = trim(strip_tags($html));
+        return $stripped === '';
     }
 
     // ─────────────────────────────────────────────────────────────
     // Persistência
     // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Procura um timesheet EXISTENTE que provavelmente corresponde a este appointment
+     * mas com `movidesk_appointment_id` antigo — caso típico de edição no Movidesk
+     * que recria o id do apontamento.
+     *
+     * Estratégia (em ordem de especificidade — só consolida se encontrar ÚNICO match):
+     *   1. ticket + user + date + start_time (chave natural mais forte)
+     *   2. ticket + user + date (cobre quando o start_time também foi editado)
+     *
+     * Excluímos timesheets já com o NOVO id e os já soft-deletados. Em qualquer caso
+     * de ambiguidade (mais de 1 candidato) cai pro fluxo de criação normal — melhor
+     * uma duplicata visível do que sobrescrever silenciosamente o timesheet errado.
+     */
+    private function findEditedCandidate(array $ticket, array $action, array $appointment, $newAppointmentId): ?\App\Models\Timesheet
+    {
+        $ticketId = $ticket['id'] ?? null;
+        if (!$ticketId) return null;
+
+        // Pra identificar o user, usamos a MESMA lógica do extractUserId. Se não
+        // conseguirmos resolver o user, sem chave natural confiável — desiste.
+        $userId = $this->extractUserId($action);
+        if (!$userId) return null;
+
+        $date = $this->extractDate($appointment);
+        if (!$date) return null;
+
+        $startTime = $this->extractTime($appointment, 'periodStart');
+
+        // Lista TODOS os appointment.id atuais do ticket no Movidesk. Qualquer
+        // timesheet cujo movidesk_appointment_id apareça nessa lista NÃO é um
+        // candidato de edição — é um apontamento legítimo do próprio ciclo
+        // (ou já existente vinculado a outro appt do mesmo ticket). Sem essa
+        // exclusão, o Nível 2 sequestra o timesheet recém-criado do appt
+        // anterior quando o ticket tem múltiplos apontamentos do mesmo
+        // ticket+user+date (caso William ticket 47852 dia 13/05).
+        $currentApptIds = [];
+        foreach ($ticket['actions'] ?? [] as $a) {
+            foreach ($a['timeAppointments'] ?? [] as $appt) {
+                if (isset($appt['id'])) $currentApptIds[] = $appt['id'];
+            }
+        }
+
+        $baseQuery = fn() => Timesheet::query()
+            ->where('ticket', (string) $ticketId)
+            ->where('user_id', $userId)
+            ->where('date', $date)
+            ->where(function ($q) use ($newAppointmentId) {
+                $q->where('movidesk_appointment_id', '!=', $newAppointmentId)
+                  ->orWhereNull('movidesk_appointment_id');
+            })
+            ->when(!empty($currentApptIds), fn ($q) => $q->whereNotIn('movidesk_appointment_id', $currentApptIds));
+
+        // Nível 1: bate com start_time idêntico — assinatura forte de edição
+        if ($startTime) {
+            $matches = $baseQuery()->where('start_time', $startTime)->limit(2)->get();
+            if ($matches->count() === 1) return $matches->first();
+        }
+
+        // Nível 2: sem start_time, só ticket+user+date (start/end pode ter mudado)
+        $matches = $baseQuery()->limit(2)->get();
+        return $matches->count() === 1 ? $matches->first() : null;
+    }
+
+    /**
+     * Competência fechada para apontamento da integração? (FechamentoAdministrativo
+     * fechado E sem ProjectOpenPeriod reaberto pro projeto+mês). Quando true, o
+     * apontamento vindo da integração entra como STATUS_LATE (aguarda aprovação).
+     */
+    private function isCompetenciaFechada(string $date, int $projectId): bool
+    {
+        $ym   = \Carbon\Carbon::parse($date)->format('Y-m');
+        $fech = \App\Models\FechamentoAdministrativo::where('year_month', $ym)->first();
+        if (!$fech || !$fech->isClosed()) {
+            return false;
+        }
+        $reaberto = \App\Models\ProjectOpenPeriod::where('project_id', $projectId)
+            ->where('year_month', $ym)
+            ->whereNull('closed_at')
+            ->exists();
+        return !$reaberto;
+    }
 
     private function createTimesheet(array $data): void
     {
@@ -747,10 +1294,22 @@ class MovideskService
             $timesheet->ticket                  = $data['ticket'];
             $timesheet->movidesk_appointment_id = $data['movidesk_appointment_id'] ?? null;
             $timesheet->is_internal_action      = $data['is_internal_action'] ?? false;
-            $timesheet->origin = 'webhook';
+            $timesheet->origin                  = $data['origin'] ?? 'webhook';
+
+            // SÓ apontamento GENUINAMENTE NOVO vira atraso. Se já existiu um apontamento
+            // (mesmo soft-deletado) pra este movidesk_appointment_id, é RECRIAÇÃO do
+            // reprocesso — NÃO vira late (senão o reprocesso derrubaria horas já fechadas).
+            $jaExistiu = !empty($data['movidesk_appointment_id'])
+                && Timesheet::withTrashed()
+                    ->where('movidesk_appointment_id', $data['movidesk_appointment_id'])
+                    ->exists();
 
             if ($data['is_internal_action'] ?? false) {
                 $timesheet->status = Timesheet::STATUS_INTERNAL;
+            } elseif (!$jaExistiu && $this->isCompetenciaFechada($data['date'], (int) $data['project_id'])) {
+                // Atraso pós-fechamento: apontamento NOVO chegou pela integração com data em
+                // competência já fechada. NÃO entra no período — aguarda aprovação na tela de Atrasos.
+                $timesheet->status = Timesheet::STATUS_LATE;
             } else {
                 $timesheet->status = $conflict
                     ? Timesheet::STATUS_CONFLICTED

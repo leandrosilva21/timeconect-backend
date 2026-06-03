@@ -4,9 +4,12 @@ namespace App\Http\Controllers;
 
 use App\Models\Customer;
 use App\Models\Project;
+use App\Models\ProjectStage;
 use App\Models\ServiceType;
+use App\Models\StageDelivery;
 use App\Models\Timesheet;
 use App\Models\MovideskTicket;
+use App\Services\ProjectWorkflowService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -73,7 +76,7 @@ class ClientPortalController extends Controller
 
         // Período para filtrar timesheets
         $tsQuery = Timesheet::whereIn('project_id', $allProjectIds)
-            ->where('status', '!=', Timesheet::STATUS_REJECTED);
+            ->whereIn('status', ['approved', 'pending']);
 
         $this->applyPeriod($tsQuery, $period);
 
@@ -88,7 +91,7 @@ class ClientPortalController extends Controller
         $fYear  = $filterYear  ? (int)$filterYear  : $now->year;
 
         $monthMinutes = Timesheet::whereIn('project_id', $allProjectIds)
-            ->where('status', '!=', Timesheet::STATUS_REJECTED)
+            ->whereIn('status', ['approved', 'pending'])
             ->whereMonth('date', $fMonth)->whereYear('date', $fYear)
             ->sum('effort_minutes');
         $monthConsumed = round($monthMinutes / 60, 1);
@@ -96,7 +99,7 @@ class ClientPortalController extends Controller
         // Mês anterior para tendência
         $prevDate = Carbon::create($fYear, $fMonth, 1)->subMonth();
         $prevMinutes = Timesheet::whereIn('project_id', $allProjectIds)
-            ->where('status', '!=', Timesheet::STATUS_REJECTED)
+            ->whereIn('status', ['approved', 'pending'])
             ->whereMonth('date', $prevDate->month)->whereYear('date', $prevDate->year)
             ->sum('effort_minutes');
         $prevConsumed = round($prevMinutes / 60, 1);
@@ -111,7 +114,7 @@ class ClientPortalController extends Controller
         for ($i = 5; $i >= 0; $i--) {
             $d = Carbon::create($fYear, $fMonth, 1)->subMonths($i);
             $mins = Timesheet::whereIn('project_id', $allProjectIds)
-                ->where('status', '!=', Timesheet::STATUS_REJECTED)
+                ->whereIn('status', ['approved', 'pending'])
                 ->whereMonth('date', $d->month)->whereYear('date', $d->year)
                 ->sum('effort_minutes');
             $monthlyChart[] = [
@@ -382,7 +385,7 @@ class ClientPortalController extends Controller
         }
 
         $tsBase = Timesheet::whereIn('project_id', $sustProjectIds)
-            ->where('status', '!=', Timesheet::STATUS_REJECTED);
+            ->whereIn('status', ['approved', 'pending']);
 
         $this->applyPeriod($tsBase, $period);
 
@@ -416,7 +419,7 @@ class ClientPortalController extends Controller
         // Chamados por mês (últimos 6 meses)
         try {
             $monthlyData = Timesheet::whereIn('project_id', $sustProjectIds)
-                ->where('status', '!=', Timesheet::STATUS_REJECTED)
+                ->whereIn('status', ['approved', 'pending'])
                 ->whereNotNull('ticket')
                 ->where('date', '>=', Carbon::now()->subMonths(5)->startOfMonth())
                 ->selectRaw("strftime('%Y-%m', date) as month, COUNT(DISTINCT ticket) as count")
@@ -428,7 +431,7 @@ class ClientPortalController extends Controller
         } catch (\Throwable $e) {
             try {
                 $monthlyData = Timesheet::whereIn('project_id', $sustProjectIds)
-                    ->where('status', '!=', Timesheet::STATUS_REJECTED)
+                    ->whereIn('status', ['approved', 'pending'])
                     ->whereNotNull('ticket')
                     ->where('date', '>=', Carbon::now()->subMonths(5)->startOfMonth())
                     ->selectRaw("DATE_FORMAT(date, '%Y-%m') as month, COUNT(DISTINCT ticket) as count")
@@ -512,5 +515,351 @@ class ClientPortalController extends Controller
         usort($alerts, fn($a, $b) => ($a['type'] === 'critical' ? 0 : 1) - ($b['type'] === 'critical' ? 0 : 1));
 
         return $alerts;
+    }
+
+    /**
+     * Resumo executivo do cliente: tickets abertos no Movidesk, qtd projetos,
+     * horas contratadas total e saúde dos projetos não-fechados.
+     * Substitui a antiga "Visão Executiva" por uma visão minimalista.
+     */
+    public function summary(Request $request): JsonResponse
+    {
+        $user        = $request->user();
+        $customerId  = $request->get('customer_id');
+
+        if ($user->isCliente()) {
+            $customerId = $user->customer_id;
+        }
+        if (!$customerId) {
+            return response()->json(['message' => 'customer_id obrigatório'], 422);
+        }
+
+        $customer = Customer::find($customerId);
+        if (!$customer) {
+            return response()->json(['message' => 'Cliente não encontrado'], 404);
+        }
+
+        // Coordenador: mesma regra de acesso da action portal()
+        if ($user->isCoordenador()) {
+            $isSustentacao = $user->coordinator_type === 'sustentacao';
+            $hasAccess = Project::where('customer_id', $customerId)
+                ->where(function ($q) use ($user, $isSustentacao) {
+                    $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id));
+                    if ($isSustentacao) {
+                        $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'));
+                    }
+                })
+                ->exists();
+            if (!$hasAccess) {
+                return response()->json(['message' => 'Acesso negado'], 403);
+            }
+        }
+
+        // Tickets em aberto agora (estado atual, qualquer data) — mesma regra de SustentacaoController.
+        $openTicketsBaseQuery = MovideskTicket::where('customer_id', $customerId)
+            ->where(function ($q) {
+                $q->whereIn('base_status', ['New', 'InAttendance'])
+                  ->orWhere(function ($qq) {
+                      $qq->where('base_status', 'Stopped')
+                         ->whereIn('status', ['Pendente Terceiros', 'Pendente TOTVS', 'Agendado']);
+                  });
+            });
+        $openTicketsTotal = (clone $openTicketsBaseQuery)->count();
+
+        // Tickets abertos NO MÊS atual — usa created_date (abertura real no
+        // Movidesk). created_at é só a hora do sync e ficava inflado porque
+        // todo ticket sincronizado recentemente tinha created_at no mês corrente,
+        // mesmo sendo de outro cliente que voltou a aparecer no sync.
+        $startMonth = now()->startOfMonth();
+        $endMonth   = now()->endOfMonth();
+        $openTicketsCurrentMonth = MovideskTicket::where('customer_id', $customerId)
+            ->whereBetween('created_date', [$startMonth, $endMonth])
+            ->count();
+
+        // Série mensal — últimos 12 meses (inclui o mês atual).
+        // Agrupa projetos contratados pela start_date: quantos projetos foram
+        // iniciados no mês e quantas horas eles totalizam.
+        $monthsBack = 11;
+        $start12     = now()->startOfMonth()->subMonths($monthsBack);
+        // Tickets abertos por mês (created_date no Movidesk)
+        $rawTickets = MovideskTicket::where('customer_id', $customerId)
+            ->whereNotNull('created_date')
+            ->where('created_date', '>=', $start12)
+            ->selectRaw("TO_CHAR(created_date, 'YYYY-MM') as ym, COUNT(*) as c")
+            ->groupByRaw("TO_CHAR(created_date, 'YYYY-MM')")
+            ->pluck('c', 'ym')->toArray();
+
+        // Horas consumidas por mês — soma de effort_minutes APENAS dos projetos
+        // de sustentação (service_type.code = 'sustentacao' ou name ~ 'sustenta').
+        // Histórico de apontamentos começa em 2025-05 (início do Minutor); meses
+        // anteriores não têm dados — o front exibe nota explicativa.
+        $rawHours = DB::table('timesheets')
+            ->join('projects', 'projects.id', '=', 'timesheets.project_id')
+            ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
+            ->where('projects.customer_id', $customerId)
+            ->where(function ($q) {
+                $q->where('service_types.code', 'sustentacao')
+                  ->orWhere('service_types.name', 'ilike', '%sustenta%');
+            })
+            ->whereNull('timesheets.deleted_at')
+            ->whereIn('timesheets.status', ['approved', 'pending'])
+            ->where('timesheets.date', '>=', $start12)
+            ->selectRaw("TO_CHAR(timesheets.date, 'YYYY-MM') as ym, COALESCE(SUM(timesheets.effort_minutes), 0) as m")
+            ->groupByRaw("TO_CHAR(timesheets.date, 'YYYY-MM')")
+            ->pluck('m', 'ym')->toArray();
+
+        $monthly = [];
+        for ($i = $monthsBack; $i >= 0; $i--) {
+            $d  = now()->startOfMonth()->subMonths($i);
+            $ym = $d->format('Y-m');
+            $monthly[] = [
+                'month'           => $ym,
+                'label'           => $d->translatedFormat('M/y'),
+                'tickets'         => (int)   ($rawTickets[$ym] ?? 0),
+                'consumed_hours'  => round(((float) ($rawHours[$ym] ?? 0)) / 60, 1),
+            ];
+        }
+
+        // Projetos do cliente — raiz com filhos eager loaded (multi-contratual).
+        $projects = Project::with(['contractType', 'childProjects.contractType'])
+            ->where('customer_id', $customerId)
+            ->where('is_investimento_comercial', false)
+            ->whereNull('parent_project_id')
+            ->get();
+
+        // Card "Projetos": contagem de projetos visíveis ao cliente
+        // (raiz + filhos, qualquer tipo, qualquer data). Exclui Investimento
+        // Interno (IC/IS/IP-*) — são controles da casa, não do cliente.
+        $totalProjects  = (int) DB::table('projects')
+            ->where('customer_id', $customerId)
+            ->where('is_investimento_comercial', false)
+            ->whereNull('deleted_at')
+            ->count();
+        // Horas contratadas: soma apenas das raízes pra evitar duplicidade pai+filho.
+        $totalSoldHours = round((float) $projects->sum('sold_hours'), 2);
+
+        $mapProject = function ($p) {
+            $ctName  = strtolower(trim(optional($p->contractType)->name ?? ''));
+            $ctCode  = optional($p->contractType)->code ?? '';
+            $isClosed = $ctName === 'fechado' || $ctCode === 'closed';
+
+            // Saldo / % uso apenas pra projetos NÃO-Fechado. Fechado: só sold_hours.
+            $sold = (float) ($p->sold_hours ?? 0);
+            if ($isClosed) {
+                return [
+                    'id'             => $p->id,
+                    'code'           => $p->code,
+                    'name'           => $p->name,
+                    'contract_type'  => optional($p->contractType)->name,
+                    'is_closed'      => true,
+                    'sold_hours'     => $sold,
+                    'consumed_hours' => null,
+                    'balance_hours'  => null,
+                    'percentage'     => null,
+                    'status'         => 'closed',
+                ];
+            }
+
+            try {
+                // Saldo pela ótica da Gestão de Contratos (fonte da verdade): managementBreakdown
+                // NÃO re-soma initial_hours_balance nem subtrai horas de coordenação, ao contrário
+                // do antigo getGeneralHoursBalance — que inflava o saldo visto pelo cliente.
+                $balance = $p->managementBreakdown()['balance'];
+            } catch (\Throwable $e) {
+                $balance = null;
+            }
+            $available = $sold > 0 ? $sold : null;
+            // Consumed: pra BH (com sold>0) = sold - balance; pra On Demand (sold=0) soma timesheets.
+            if ($available !== null && $balance !== null) {
+                $consumed = max(0, $available - $balance);
+            } else {
+                // On Demand: soma effort_minutes dos timesheets approved+pending (regra
+                // [[reference_minutor_consumo_whitelist]] — não inclui adjustment/rejected).
+                $consumedMin = \App\Models\Timesheet::where('project_id', $p->id)
+                    ->whereNull('deleted_at')
+                    ->whereIn('status', ['approved', 'pending'])
+                    ->sum('effort_minutes');
+                $consumed = $consumedMin > 0 ? round((float) $consumedMin / 60, 2) : 0.0;
+            }
+            $pct = ($available && $available > 0 && $consumed !== null)
+                ? round(($consumed / $available) * 100, 1)
+                : null;
+            $status = match (true) {
+                $pct === null => 'unknown',
+                $pct >= 90    => 'critical',
+                $pct >= 70    => 'warning',
+                default       => 'ok',
+            };
+            return [
+                'id'             => $p->id,
+                'code'           => $p->code,
+                'name'           => $p->name,
+                'contract_type'  => optional($p->contractType)->name,
+                'is_closed'      => false,
+                'sold_hours'     => $sold,
+                'consumed_hours' => $consumed,
+                'balance_hours'  => $balance,
+                'percentage'     => $pct,
+                'status'         => $status,
+            ];
+        };
+
+        // Cada projeto raiz vira um nó; childProjects mapeados recursivamente.
+        $health = $projects->map(function ($p) use ($mapProject) {
+            $node = $mapProject($p);
+            $node['children'] = $p->childProjects->map($mapProject)->values();
+            return $node;
+        })->values();
+
+        return response()->json([
+            'customer' => [
+                'id'   => $customer->id,
+                'name' => $customer->name,
+            ],
+            'open_tickets'                  => $openTicketsTotal,
+            'open_tickets_current_month'    => $openTicketsCurrentMonth,
+            'current_month_label'           => now()->translatedFormat('M/y'),
+            'total_projects'                => $totalProjects,
+            'total_sold_hours'              => $totalSoldHours,
+            'projects_health'               => $health,
+            'monthly_series'                => $monthly,
+        ]);
+    }
+
+    /**
+     * Visão macro do projeto pra perfil cliente — read-only.
+     * 6 indicadores derivados; sem etapas/entregas/timeline técnica.
+     *
+     * Ver ADR 0002: cliente nunca vê `status` cru — só labels derivados.
+     */
+    public function operationalSummary(Request $request, int $projectId): JsonResponse
+    {
+        $user = $request->user();
+
+        $project = Project::with(['customer:id,name', 'consultants:id,name'])
+            ->find($projectId);
+
+        if (!$project) {
+            return response()->json(['message' => 'Projeto não encontrado.'], 404);
+        }
+
+        // Cliente só pode ver projetos do próprio customer; admin/coord não-cliente passam.
+        if ($user && method_exists($user, 'isCliente') && $user->isCliente()) {
+            if ((int) $user->customer_id !== (int) $project->customer_id) {
+                return response()->json(['message' => 'Acesso negado.'], 403);
+            }
+        }
+
+        // Status macro humano — mapping fixo, NÃO expõe status técnico
+        $statusMacroMap = [
+            Project::STATUS_AWAITING_START       => 'Aguardando início',
+            Project::STATUS_BACKLOG              => 'Em planejamento',
+            Project::STATUS_STARTED              => 'Em execução',
+            Project::STATUS_LIBERADO_PARA_TESTES => 'Em homologação',
+            Project::STATUS_FINISHED             => 'Concluído',
+            Project::STATUS_PAUSED               => 'Pausado',
+            Project::STATUS_CANCELLED            => 'Cancelado',
+        ];
+        $statusMacro = $statusMacroMap[$project->status] ?? 'Em andamento';
+
+        // % geral — earned value das etapas se houver; senão pelo consumo de horas
+        $stages = ProjectStage::where('project_id', $project->id)
+            ->withCount(['deliveries', 'deliveries as deliveries_done_count' => function ($q) {
+                $q->where('status', StageDelivery::STATUS_DONE);
+            }])
+            ->withSum('deliveries as deliveries_hours_planned_sum', 'hours_planned')
+            ->withSum(['deliveries as deliveries_hours_planned_done_sum' => function ($q) {
+                $q->where('status', StageDelivery::STATUS_DONE);
+            }], 'hours_planned')
+            ->get();
+
+        $totalPlanned = (float) $stages->sum('deliveries_hours_planned_sum');
+        $totalDone    = (float) $stages->sum('deliveries_hours_planned_done_sum');
+        $sold         = (float) ($project->sold_hours ?? 0);
+        $consumed     = (float) ($project->getTotalLoggedHours() ?? 0);
+
+        if ($totalPlanned > 0) {
+            $progressPct = round(($totalDone / $totalPlanned) * 100, 1);
+        } elseif ($sold > 0) {
+            $progressPct = round(min(100, ($consumed / $sold) * 100), 1);
+        } else {
+            $progressPct = 0.0;
+        }
+
+        // Health dominante — precedência: atrasado > estourando > atenção > saudável
+        $today = now()->startOfDay();
+        $deadline = $project->expected_end_date ? Carbon::parse($project->expected_end_date) : null;
+        $daysLeft = $deadline ? $today->diffInDays($deadline, false) : null;
+
+        $isTerminal = ProjectWorkflowService::isTerminal($project->status);
+        $health = 'ok';
+        if (!$isTerminal) {
+            $ratioHours = $sold > 0 ? $consumed / $sold : 0;
+            if ($deadline && $daysLeft < 0 && $progressPct < 100) {
+                $health = 'atrasado';
+            } elseif ($ratioHours > 1.1) {
+                $health = 'estourando';
+            } elseif (
+                ($deadline && $daysLeft !== null && $daysLeft <= 7) ||
+                ($sold > 0 && $ratioHours > 0.9)
+            ) {
+                $health = 'atencao';
+            }
+        }
+
+        // Atualizações macro — só timesheets aprovados + entregas concluídas (sem
+        // status_changed técnico). Limitado a 10 itens mais recentes.
+        $approvedTimesheets = Timesheet::where('project_id', $project->id)
+            ->where('status', Timesheet::STATUS_APPROVED)
+            ->with('user:id,name')
+            ->latest('date')
+            ->limit(10)
+            ->get(['id', 'date', 'effort_minutes', 'user_id']);
+
+        $completedDeliveryIds = StageDelivery::whereHas('stage', fn ($q) => $q->where('project_id', $project->id))
+            ->where('status', StageDelivery::STATUS_DONE)
+            ->orderByDesc('completed_at')
+            ->limit(10)
+            ->get(['id', 'title', 'completed_at']);
+
+        $updates = collect();
+        foreach ($approvedTimesheets as $t) {
+            $updates->push([
+                'type'  => 'hours_approved',
+                'label' => 'Horas registradas',
+                'who'   => $t->user?->name ?? 'Consultor',
+                'when'  => $t->date?->toIso8601String(),
+                'value' => round(($t->effort_minutes ?? 0) / 60, 1) . 'h',
+            ]);
+        }
+        foreach ($completedDeliveryIds as $d) {
+            $updates->push([
+                'type'  => 'delivery_completed',
+                'label' => 'Entrega concluída',
+                'who'   => null,
+                'when'  => $d->completed_at?->toIso8601String(),
+                'value' => $d->title,
+            ]);
+        }
+        $updates = $updates->sortByDesc('when')->take(10)->values();
+
+        return response()->json([
+            'project' => [
+                'id'   => $project->id,
+                'name' => $project->name,
+                'code' => $project->code,
+                'customer' => $project->customer ? [
+                    'id'   => $project->customer->id,
+                    'name' => $project->customer->name,
+                ] : null,
+            ],
+            'status_macro'         => $statusMacro,
+            'progress_pct'         => $progressPct,
+            'expected_end_date'    => $project->expected_end_date?->toDateString(),
+            'sold_hours'           => $sold,
+            'consumed_hours'       => $consumed,
+            'health'               => $health,
+            'recent_activity'      => $updates,
+        ]);
     }
 }

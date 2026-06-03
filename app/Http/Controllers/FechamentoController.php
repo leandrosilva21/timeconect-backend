@@ -25,7 +25,7 @@ class FechamentoController extends Controller
     private function effectiveHourlyRate(float $hourlyRate, string $rateType): float
     {
         return ($rateType === 'monthly' && $hourlyRate > 0)
-            ? round($hourlyRate / 180, 4)
+            ? round($hourlyRate / 160, 4)
             : $hourlyRate;
     }
 
@@ -69,7 +69,7 @@ class FechamentoController extends Controller
             'project.customer:id,name',
         ])
             ->whereBetween('date', [$from, $to])
-            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
             ->where('is_internal_action', false)
             ->whereNull('deleted_at')
             ->get();
@@ -127,7 +127,7 @@ class FechamentoController extends Controller
 
         $timesheets = Timesheet::with('user:id,name,type,hourly_rate,rate_type')
             ->whereBetween('date', [$from, $to])
-            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
             ->where('is_internal_action', false)
             ->whereNull('deleted_at')
             ->get();
@@ -187,7 +187,7 @@ class FechamentoController extends Controller
 
         [$from, $to] = $this->period($yearMonth);
 
-        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE];
 
         // Projetos que tiveram apontamentos no período (exceto ajuste/rejeitado)
         $projectIds = Timesheet::whereBetween('date', [$from, $to])
@@ -494,7 +494,7 @@ class FechamentoController extends Controller
             'project.customer:id,name',
         ])
             ->whereBetween('date', [$from, $to])
-            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
             ->where('is_internal_action', false)
             ->whereNull('deleted_at')
             ->get();
@@ -541,7 +541,7 @@ class FechamentoController extends Controller
 
         $timesheets = Timesheet::with('user:id,name,type,hourly_rate,rate_type')
             ->whereBetween('date', [$from, $to])
-            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
             ->where('is_internal_action', false)
             ->whereNull('deleted_at')
             ->get();
@@ -592,7 +592,7 @@ class FechamentoController extends Controller
     {
         [$from, $to] = $this->period($yearMonth);
 
-        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE];
 
         $projectIds = Timesheet::whereBetween('date', [$from, $to])
             ->whereNotIn('status', $excludeStatuses)

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Models\Partner;
 use App\Models\User;
 use App\Models\UserHourlyRateLog;
 use App\Http\Traits\ResponseHelpers;
@@ -123,22 +124,28 @@ class UserController extends Controller
 
         // Se não é admin nem tem permissão para ver/editar/resetar todos, só pode ver próprio perfil
         // Coordenadores podem ver todos os usuários (necessário para filtros de aprovações/apontamentos)
-        $canSeeAll = $user->isAdmin()
+        // Consultor NUNCA vê outros usuários — mesmo com extra_permissions; rotina não pertence ao escopo dele.
+        $canSeeAll = !$user->isConsultor() && (
+            $user->isAdmin()
             || $user->isCoordenador()
             || $user->hasAccess('users.view_all')
             || $user->hasAccess('users.update')
             || $user->hasAccess('users.reset_password')
-            || $user->hasAccess('users.create');
+            || $user->hasAccess('users.create')
+        );
         if (!$canSeeAll) {
-            $query->where('id', $user->id);
+            $query->where('users.id', $user->id);
         }
 
         // Filtros
+        // Importante: qualificar `users.*` porque o ORDER BY pode adicionar
+        // leftJoin('partners', ...) e ambas as tabelas têm coluna `name` —
+        // sem prefixo gera SQLSTATE[42702] "column reference is ambiguous".
         $search = $request->get('filter') ?? $request->get('search');
         if (!empty($search)) {
             $query->where(function($q) use ($search) {
-                $q->where('name', 'ilike', "%{$search}%")
-                  ->orWhere('email', 'ilike', "%{$search}%");
+                $q->where('users.name', 'ilike', "%{$search}%")
+                  ->orWhere('users.email', 'ilike', "%{$search}%");
             });
         }
 
@@ -153,9 +160,16 @@ class UserController extends Controller
             $query->where('type', $typeFilter);
         }
 
-        // Aceita ?type= como alias de ?role=
+        // Aceita ?type= como alias de ?role=. Suporta valores múltiplos via vírgula.
         if ($request->filled('type') && !$request->filled('role')) {
-            $query->where('type', $request->type);
+            $types = is_array($request->type)
+                ? $request->type
+                : array_values(array_filter(array_map('trim', explode(',', (string) $request->type))));
+            if (count($types) === 1) {
+                $query->where('type', $types[0]);
+            } elseif (count($types) > 1) {
+                $query->whereIn('type', $types);
+            }
         }
 
         if ($request->filled('coordinator_type')) {
@@ -172,6 +186,10 @@ class UserController extends Controller
 
         if ($request->filled('partner_id')) {
             $query->where('partner_id', $request->partner_id);
+        }
+
+        if ($request->filled('customer_id')) {
+            $query->where('customer_id', $request->customer_id);
         }
 
         // Filtro por status (ativo/inativo) usando campo enabled
@@ -195,7 +213,9 @@ class UserController extends Controller
 
                 $allowedFields = ['name', 'email', 'created_at', 'updated_at'];
                 if (in_array($field, $allowedFields)) {
-                    $query->orderBy($field, $direction);
+                    // Qualifica users.* — campo pode ser ambíguo se algum filtro
+                    // anterior adicionou leftJoin com partners (mesma coluna name/email/timestamps).
+                    $query->orderBy("users.{$field}", $direction);
                 } elseif ($field === 'partner_name') {
                     $query->leftJoin('partners', 'partners.id', '=', 'users.partner_id')
                           ->orderBy('partners.name', $direction)
@@ -253,6 +273,86 @@ class UserController extends Controller
      *     )
      * )
      */
+    /**
+     * Tipo de contrato (cooperado/clt/pj): regra "trava em todos".
+     *  - Parceiro (parceiro_admin com partner_id): grava no parceiro e PROPAGA p/ todos
+     *    os usuários daquele partner_id (só quando o valor é enviado, p/ não zerar em update parcial).
+     *  - Consultor vinculado a parceiro: SEMPRE herda do parceiro (ignora qualquer input).
+     *  - Sem parceiro: o valor próprio já foi gravado via fillable — nada a propagar.
+     */
+    private function syncContractType(User $user, Request $request): void
+    {
+        if (!$user->partner_id) {
+            return;
+        }
+        $partner = Partner::find($user->partner_id);
+        if (!$partner) {
+            return;
+        }
+
+        if ($user->type === 'parceiro_admin') {
+            if ($request->has('contract_type')) {
+                $ct = $request->input('contract_type');
+                $partner->contract_type = $ct;
+                $partner->save();
+                User::where('partner_id', $partner->id)->update(['contract_type' => $ct]);
+            }
+        } else {
+            if ($user->contract_type !== $partner->contract_type) {
+                $user->forceFill(['contract_type' => $partner->contract_type])->save();
+            }
+        }
+    }
+
+    /**
+     * Atualização em massa do tipo de contrato (cooperado/clt/pj) para usuários selecionados.
+     * Respeita a trava: consultor vinculado a parceiro é pulado (herda do parceiro);
+     * se um parceiro_admin estiver na seleção, propaga p/ todos os usuários daquele parceiro.
+     */
+    public function bulkContractType(Request $request): JsonResponse
+    {
+        $currentUser = Auth::user();
+        if (!($currentUser->isAdmin() || $currentUser->hasAccess('users.update'))) {
+            return $this->accessDeniedResponse('Você não tem permissão para atualizar usuários.');
+        }
+
+        $validator = Validator::make($request->all(), [
+            'user_ids'      => 'required|array|min:1',
+            'user_ids.*'    => 'integer|exists:users,id',
+            'contract_type' => 'nullable|in:cooperado,clt,pj',
+        ]);
+        if ($validator->fails()) {
+            return $this->validationErrorResponse($validator->errors()->all());
+        }
+
+        $ct  = $request->input('contract_type');
+        $ids = $request->input('user_ids');
+
+        DB::beginTransaction();
+        try {
+            $applied = 0;
+            $skipped = 0;
+            foreach (User::whereIn('id', $ids)->get() as $u) {
+                if ($u->type === 'parceiro_admin' && $u->partner_id) {
+                    Partner::where('id', $u->partner_id)->update(['contract_type' => $ct]);
+                    User::where('partner_id', $u->partner_id)->update(['contract_type' => $ct]);
+                    $applied++;
+                } elseif ($u->partner_id) {
+                    // Consultor vinculado: herda do parceiro (trava) — não altera direto.
+                    $skipped++;
+                } else {
+                    $u->forceFill(['contract_type' => $ct])->save();
+                    $applied++;
+                }
+            }
+            DB::commit();
+            return response()->json(['applied' => $applied, 'skipped' => $skipped]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return $this->serverErrorResponse('Erro na atualização em massa: ' . $e->getMessage());
+        }
+    }
+
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -261,13 +361,20 @@ class UserController extends Controller
             'password' => 'nullable|string|min:8',
             'enabled' => 'sometimes|boolean',
             'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
+            'hourly_rate_effective_from' => 'nullable|date',
             'rate_type' => 'nullable|in:hourly,monthly',
             'consultant_type' => 'nullable|in:horista,banco_de_horas,fixo',
+            'contract_type' => 'nullable|in:cooperado,clt,pj',
+            'full_name'      => 'nullable|string|max:255',
+            'cpf'            => 'nullable|string|max:20',
+            'matricula'      => 'nullable|string|max:30',
+            'payroll_status' => 'nullable|string|max:40',
             'bank_hours_start_date' => 'nullable|date',
             'guaranteed_hours'      => 'nullable|numeric|min:0|max:744',
             'customer_id'  => 'nullable|exists:customers,id',
             'partner_id'   => 'nullable|exists:partners,id',
             'is_executive' => 'sometimes|boolean',
+            'is_bizify' => 'sometimes|boolean',
             'dashboard_types' => 'nullable|array',
             'dashboard_types.*' => 'string|in:bank_hours_fixed',
             'type' => 'nullable|in:admin,administrativo,coordenador,consultor,cliente,parceiro_admin',
@@ -275,6 +382,7 @@ class UserController extends Controller
             'can_timesheet_sustentacao' => 'sometimes|boolean',
             'extra_permissions'   => 'nullable|array',
             'extra_permissions.*' => 'string',
+            'smtp_app_password'   => 'nullable|string|max:255',
         ], [
             'name.required'  => 'O nome é obrigatório.',
             'email.required' => 'O e-mail é obrigatório.',
@@ -302,7 +410,9 @@ class UserController extends Controller
 
             // Remover dashboard_types dos dados do usuário (campo auxiliar, não coluna)
             $dashboardTypes = $userData['dashboard_types'] ?? [];
-            unset($userData['dashboard_types'], $userData['password']);
+            // smtp_app_password: setado explicitamente após o save (fora do mass-assignment).
+            $smtpAppPassword = $userData['smtp_app_password'] ?? null;
+            unset($userData['dashboard_types'], $userData['password'], $userData['smtp_app_password']);
 
             // Criar usuário com senha placeholder (setTemporaryPassword irá sobrescrever com hash correto)
             $userData['password'] = 'placeholder';
@@ -316,8 +426,17 @@ class UserController extends Controller
                 $user->forceFill($protectedData)->save();
             }
 
+            // Tipo de contrato: parceiro define p/ todos; consultor vinculado herda (trava)
+            $this->syncContractType($user, $request);
+
             // Definir senha com hash correto via DB direto (evita duplo hash pelo cast 'hashed')
             $user->setTemporaryPassword($temporaryPassword, 24);
+
+            // App Password de SMTP (O365): só grava se veio NÃO-vazio; o cast criptografa.
+            if (filled($smtpAppPassword)) {
+                $user->smtp_app_password = $smtpAppPassword;
+                $user->save();
+            }
 
             // Sincronizar tipos de dashboard permitidos
             if (!empty($dashboardTypes)) {
@@ -470,13 +589,20 @@ class UserController extends Controller
             'password' => 'sometimes|string|min:8|confirmed',
             'enabled' => 'sometimes|boolean',
             'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
+            'hourly_rate_effective_from' => 'nullable|date',
             'rate_type' => 'nullable|in:hourly,monthly',
             'consultant_type' => 'nullable|in:horista,banco_de_horas,fixo',
+            'contract_type' => 'nullable|in:cooperado,clt,pj',
+            'full_name'      => 'nullable|string|max:255',
+            'cpf'            => 'nullable|string|max:20',
+            'matricula'      => 'nullable|string|max:30',
+            'payroll_status' => 'nullable|string|max:40',
             'bank_hours_start_date' => 'nullable|date',
             'guaranteed_hours'      => 'nullable|numeric|min:0|max:744',
             'customer_id'  => 'nullable|exists:customers,id',
             'partner_id'   => 'nullable|exists:partners,id',
             'is_executive' => 'sometimes|boolean',
+            'is_bizify' => 'sometimes|boolean',
             'dashboard_types' => 'sometimes|array',
             'dashboard_types.*' => 'string|in:bank_hours_fixed',
             'type' => 'sometimes|nullable|in:admin,administrativo,coordenador,consultor,cliente,parceiro_admin',
@@ -484,6 +610,7 @@ class UserController extends Controller
             'can_timesheet_sustentacao' => 'sometimes|boolean',
             'extra_permissions'   => 'sometimes|nullable|array',
             'extra_permissions.*' => 'string',
+            'smtp_app_password'   => 'nullable|string|max:255',
         ], [
             'email.email'  => 'O e-mail informado é inválido.',
             'email.unique' => 'Este e-mail já está cadastrado no sistema.',
@@ -521,7 +648,10 @@ class UserController extends Controller
 
             // Remover campos desnecessários
             $dashboardTypes = $updateData['dashboard_types'] ?? null;
-            unset($updateData['dashboard_types'], $updateData['password_confirmation']);
+            // smtp_app_password: setado explicitamente após o update (fora do mass-assignment);
+            // só sobrescreve se veio NÃO-vazio — vazio/ausente preserva o valor atual.
+            $smtpAppPassword = $updateData['smtp_app_password'] ?? null;
+            unset($updateData['dashboard_types'], $updateData['password_confirmation'], $updateData['hourly_rate_effective_from'], $updateData['smtp_app_password']);
 
             // Separar campos protegidos (fora de $fillable) — admin pode setar via forceFill
             $protectedData = array_intersect_key($updateData, array_flip(User::PROTECTED_FIELDS));
@@ -532,19 +662,57 @@ class UserController extends Controller
                 $user->forceFill($protectedData)->save();
             }
 
+            // App Password de SMTP (O365): só grava se veio NÃO-vazio; o cast criptografa.
+            // Vazio/ausente NÃO sobrescreve o valor existente.
+            if (filled($smtpAppPassword)) {
+                $user->smtp_app_password = $smtpAppPassword;
+                $user->save();
+            }
+
+            // Tipo de contrato: parceiro define p/ todos; consultor vinculado herda (trava)
+            $this->syncContractType($user, $request);
+
             // Registrar log de alteração de valor ou tipo de contrato
             if ($shouldLog) {
-                UserHourlyRateLog::create([
-                    'user_id'              => $user->id,
-                    'changed_by'           => $currentUser->id,
-                    'old_hourly_rate'      => $oldHourlyRate,
-                    'new_hourly_rate'      => $user->fresh()->hourly_rate,
-                    'old_rate_type'        => $oldRateType,
-                    'new_rate_type'        => $user->fresh()->rate_type,
-                    'old_consultant_type'  => $oldConsultantType,
-                    'new_consultant_type'  => $user->fresh()->consultant_type,
-                    'reason'               => $request->input('rate_change_reason'),
-                ]);
+                $fresh = $user->fresh();
+
+                // Dedup mesmo-dia: se já existe um log para este usuário criado HOJE,
+                // atualiza-o com os valores mais recentes (mantendo os old_* do início do dia)
+                // em vez de empilhar uma nova linha por alteração.
+                $todayLog = UserHourlyRateLog::where('user_id', $user->id)
+                    ->whereDate('created_at', now()->toDateString())
+                    ->orderByDesc('id')
+                    ->first();
+
+                $newEffectiveFrom = $request->input('hourly_rate_effective_from')
+                    ? \Carbon\Carbon::parse($request->input('hourly_rate_effective_from'))->startOfMonth()->toDateString()
+                    : null;
+
+                if ($todayLog) {
+                    $todayLog->new_hourly_rate     = $fresh->hourly_rate;
+                    $todayLog->new_rate_type       = $fresh->rate_type;
+                    $todayLog->new_consultant_type = $fresh->consultant_type;
+                    $todayLog->changed_by          = $currentUser->id;
+                    $todayLog->reason              = $request->input('rate_change_reason');
+                    // effective_from não-destrutivo: só sobrescreve se uma nova data foi enviada
+                    if ($newEffectiveFrom !== null) {
+                        $todayLog->effective_from = $newEffectiveFrom;
+                    }
+                    $todayLog->save();
+                } else {
+                    UserHourlyRateLog::create([
+                        'user_id'              => $user->id,
+                        'changed_by'           => $currentUser->id,
+                        'old_hourly_rate'      => $oldHourlyRate,
+                        'new_hourly_rate'      => $fresh->hourly_rate,
+                        'old_rate_type'        => $oldRateType,
+                        'new_rate_type'        => $fresh->rate_type,
+                        'old_consultant_type'  => $oldConsultantType,
+                        'new_consultant_type'  => $fresh->consultant_type,
+                        'reason'               => $request->input('rate_change_reason'),
+                        'effective_from'       => $newEffectiveFrom,
+                    ]);
+                }
             }
 
             // Sincronizar tipos de dashboard se fornecidos
@@ -1335,12 +1503,22 @@ class UserController extends Controller
 
 
 
-            // Atualizar usuário com o caminho da foto
-            $user->update(['profile_photo' => 'profile_photos/' . $fileName]);
+            $storagePath = 'profile_photos/' . $fileName;
+
+            // FASE 11.7 — Persistência 100% na camada Attachment.
+            // Falha aqui é fatal porque já não há legado pra cobrir o upload.
+            app(\App\Attachments\AttachmentService::class)->registerExisting($user, [
+                'entity_type'   => 'USER',
+                'entity_id'     => $user->id,
+                'category'      => 'avatar',
+                'storage_path'  => $storagePath,
+                'original_name' => $file->getClientOriginalName(),
+                'mime_type'     => $file->getMimeType() ?: 'image/jpeg',
+            ]);
 
             return response()->json([
                 'message' => 'Foto de perfil atualizada com sucesso',
-                'photo_url' => $user->profile_photo_url
+                'photo_url' => $user->fresh()->profile_photo_url
             ]);
 
         } catch (\Exception $e) {

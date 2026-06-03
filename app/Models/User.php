@@ -18,6 +18,10 @@ class User extends Authenticatable
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable, HasApiTokens;
+    use \App\Attachments\Concerns\HasGlobalAttachments;
+
+    // FASE 11 — chave do registry global de anexos.
+    public static function attachmentEntityType(): string { return 'USER'; }
 
     /**
      * Campos que controlam autorização e identidade — fora de $fillable para evitar
@@ -46,12 +50,17 @@ class User extends Authenticatable
         'rate_type',
         'daily_hours',
         'consultant_type',
+        'contract_type',
+        // Folha de pagamento (planilha de importação)
+        'full_name',
+        'cpf',
+        'matricula',
+        'payroll_status',
         'bank_hours_start_date',
         'guaranteed_hours',
         'theme_preference',
         'has_temporary_password',
         'temporary_password_expires_at',
-        'profile_photo',
         'customer_id',
         'partner_id',
         // Type/permission flags
@@ -60,6 +69,8 @@ class User extends Authenticatable
         'is_executive',
         'can_timesheet_sustentacao',
         'extra_permissions',
+        // Funcionário Bizify (separa do resultado ERPSERV no fechamento de consultores)
+        'is_bizify',
         // Capacity (módulo skills)
         'capacity_hours',
         'allocated_hours',
@@ -94,6 +105,8 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
+        // App Password de SMTP do usuário — NUNCA serializar em JSON/API.
+        'smtp_app_password',
     ];
 
     /**
@@ -112,13 +125,24 @@ class User extends Authenticatable
             'has_temporary_password' => 'boolean',
             'temporary_password_expires_at' => 'datetime',
             'is_executive' => 'boolean',
+            'is_bizify' => 'boolean',
             'can_timesheet_sustentacao' => 'boolean',
             'bank_hours_start_date' => 'date:Y-m-d',
             'guaranteed_hours'      => 'decimal:2',
             'extra_permissions'     => 'array',
             'segments' => 'array',
-            'extra_permissions' => 'array',
+            // Criptografa em repouso com APP_KEY; descriptografa na leitura.
+            'smtp_app_password' => 'encrypted',
         ];
+    }
+
+    /**
+     * Pode enviar e-mail COMO ele mesmo (From = próprio e-mail) via App Password O365?
+     * Exige App Password configurado E e-mail cadastrado. Caso contrário, usa o remetente padrão.
+     */
+    public function canSendAsSelf(): bool
+    {
+        return filled($this->smtp_app_password) && filled($this->email);
     }
 
     /**
@@ -333,31 +357,32 @@ class User extends Authenticatable
     }
 
     /**
-     * Obtém a URL da foto de perfil
+     * Obtém a URL da foto de perfil — 100% via nova camada (FASE 11.7).
      */
     public function getProfilePhotoUrlAttribute(): ?string
     {
-        if (!$this->profile_photo) {
-            return null;
-        }
-
-        return asset('storage/' . $this->profile_photo);
+        return $this->attachmentUrl('avatar');
     }
 
+
     /**
-     * Remove a foto de perfil
+     * Remove a foto de perfil — soft-delete na camada Attachment.
+     * O arquivo físico não é removido; só a referência é invalidada
+     * (deleted_at na tabela attachments). Restore possível.
      */
     public function removeProfilePhoto(): void
     {
-        if ($this->profile_photo) {
-            // Remove o arquivo físico
-            $path = storage_path('app/public/' . $this->profile_photo);
-            if (file_exists($path)) {
-                unlink($path);
-            }
-
-            // Remove a referência do banco
-            $this->update(['profile_photo' => null]);
+        try {
+            \App\Models\Attachment::query()
+                ->forEntity('USER', $this->id)
+                ->ofCategory('avatar')
+                ->whereNull('deleted_at')
+                ->get()
+                ->each(fn ($att) => $att->delete());
+        } catch (\Throwable $e) {
+            \Log::warning('USER.avatar soft-delete falhou', [
+                'user_id' => $this->id, 'error' => $e->getMessage(),
+            ]);
         }
     }
 

@@ -13,6 +13,10 @@ use App\Models\PaymentMethod;
 class Expense extends Model
 {
     use HasFactory;
+    use \App\Attachments\Concerns\HasGlobalAttachments;
+
+    // FASE 11 — chave do registry global de anexos.
+    public static function attachmentEntityType(): string { return 'EXPENSE'; }
 
     // Status constants
     const STATUS_PENDING = 'pending';
@@ -35,18 +39,18 @@ class Expense extends Model
     protected $fillable = [
         'user_id',
         'project_id',
+        'real_project_id',
         'expense_category_id',
         'expense_date',
         'description',
         'amount',
         'expense_type',
         'payment_method',
-        'receipt_path',
-        'receipt_original_name',
         'status',
         'rejection_reason',
         'charge_client',
         'is_paid',
+        'pagar_no_fechamento',
         'paid_by',
         'paid_at',
         'reviewed_by',
@@ -58,6 +62,7 @@ class Expense extends Model
         'amount' => 'decimal:2',
         'charge_client' => 'boolean',
         'is_paid' => 'boolean',
+        'pagar_no_fechamento' => 'boolean',
         'paid_at' => 'datetime',
         'reviewed_at' => 'datetime',
         'created_at' => 'datetime',
@@ -94,6 +99,12 @@ class Expense extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    /** Projeto REAL da despesa de investimento (referência). */
+    public function realProject(): BelongsTo
+    {
+        return $this->belongsTo(Project::class, 'real_project_id');
     }
 
     /**
@@ -169,17 +180,13 @@ class Expense extends Model
     }
 
     /**
-     * Accessor para URL completa do comprovante
+     * Accessor para URL completa do comprovante — 100% via nova camada (FASE 11.7).
      */
     public function getReceiptUrlAttribute(): ?string
     {
-        if (!$this->receipt_path) {
-            return null;
-        }
-
-        // Serve via endpoint da API (não depende de symlink do storage)
-        $backendUrl = rtrim(config('app.url'), '/');
-        return $backendUrl . '/api/v1/expenses/' . $this->id . '/receipt';
+        $newUrl = $this->attachmentUrl('receipt');
+        if ($newUrl === null) return null;
+        return rtrim(config('app.url'), '/') . $newUrl;
     }
 
     /**
@@ -218,7 +225,17 @@ class Expense extends Model
             return true;
         }
 
-        if (!$user->isCoordenador() || !$this->project) {
+        if (!$this->project) {
+            return false;
+        }
+
+        // Investimento COMERCIAL: o EXECUTIVO do cliente aprova (cliente via projeto).
+        if ($this->project->is_investimento_comercial && $this->project->categoria_interna === 'Comercial') {
+            return (bool) \App\Models\Customer::where('id', $this->project->customer_id)
+                ->where('executive_id', $user->id)->exists();
+        }
+
+        if (!$user->isCoordenador()) {
             return false;
         }
 
@@ -230,6 +247,13 @@ class Expense extends Model
                     ->exists();
         }
 
+        // Despesa de INVESTIMENTO (Suporte/Projeto): aprova o coordenador do PROJETO REAL.
+        if ($this->project->is_investimento_comercial && $this->real_project_id) {
+            return \App\Models\Project::where('id', $this->real_project_id)
+                ->whereHas('coordinators', fn($q) => $q->where('users.id', $user->id))
+                ->exists();
+        }
+
         // Coordenador de projetos aprova projetos onde está vinculado como coordenador
         return $this->project->coordinators()->where('users.id', $user->id)->exists();
     }
@@ -239,6 +263,12 @@ class Expense extends Model
      */
     public function approve(User $approver, bool $chargeClient = false): bool
     {
+        // Ninguém aprova a própria despesa — nem administrador. Quem lançou
+        // (user_id) não pode ser o aprovador; qualquer outro admin/coordenador pode.
+        if ((int) $this->user_id === (int) $approver->id) {
+            return false;
+        }
+
         if (!$this->canBeApproved() || !$this->canBeApprovedBy($approver)) {
             return false;
         }

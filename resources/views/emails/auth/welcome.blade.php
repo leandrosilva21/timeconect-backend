@@ -154,10 +154,8 @@
                 </tr>
                 <tr>
                   <td style="padding:4px 20px 16px;">
-                    <span style="font-size:16px;color:#00F5FF;font-weight:700;letter-spacing:1px;
-                      font-family:'Courier New',Courier,monospace;">
-                      {{ $temporaryPassword }}
-                    </span>
+                    {{-- Senha colada e sem whitespace ao redor: evita copiar espaço/quebra junto (login falha como "credenciais inválidas"). --}}
+                    <span style="font-size:16px;color:#00F5FF;font-weight:700;font-family:'Courier New',Courier,monospace;white-space:nowrap;">{{ trim($temporaryPassword) }}</span>
                   </td>
                 </tr>
 

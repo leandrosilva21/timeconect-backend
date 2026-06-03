@@ -1,5 +1,9 @@
 <?php
 
+ini_set('display_errors', 'Off');
+ini_set('display_startup_errors', 'Off');
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_STRICT);
+
 use Illuminate\Foundation\Application;
 use Illuminate\Http\Request;
 

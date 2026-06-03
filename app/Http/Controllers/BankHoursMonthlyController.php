@@ -207,23 +207,20 @@ class BankHoursMonthlyController extends Controller
         $hoursBalanceExcludingCurrentMonth = 0;
 
         foreach ($parentProjects as $parentProject) {
-            // getGeneralHoursBalance já exclui filhos frozen; subtrair initial_hours_consumed (histórico pré-importação)
-            $projectBalance = $parentProject->getGeneralHoursBalance()
-                - (float) ($parentProject->initial_hours_consumed ?? 0);
-            $hoursBalance += $projectBalance;
-
-            $projectBalanceExcludingCurrentMonth = $parentProject->getGeneralHoursBalanceExcludingCurrentMonth()
-                - (float) ($parentProject->initial_hours_consumed ?? 0);
-            $hoursBalanceExcludingCurrentMonth += $projectBalanceExcludingCurrentMonth;
+            // getGeneralHoursBalance(Excluding...) já subtrai initial_hours_consumed do pai (fix f727001)
+            $hoursBalance += $parentProject->getGeneralHoursBalance();
+            $hoursBalanceExcludingCurrentMonth += $parentProject->getGeneralHoursBalanceExcludingCurrentMonth();
         }
 
         // Arredondar para 2 casas decimais
         $hoursBalance = round($hoursBalance, 2);
         $hoursBalanceExcludingCurrentMonth = round($hoursBalanceExcludingCurrentMonth, 2);
 
-        // Calcular horas excedentes baseado no saldo excluindo o mês atual (apenas meses fechados)
-        // Valor absoluto do saldo quando negativo, ou 0 quando positivo/zero
-        $exceededHours = $hoursBalanceExcludingCurrentMonth < 0 ? abs($hoursBalanceExcludingCurrentMonth) : 0;
+        // Horas excedentes = valor absoluto do SALDO TOTAL (com mês atual incluído)
+        // — reflete o card "Saldo de Horas" exibido na UI. Antes usava
+        // hoursBalanceExcludingCurrentMonth, o que causava divergência com o que o
+        // usuário vê e gerava confusão (ex: saldo -85.4h mas excedentes 98.3h).
+        $exceededHours = $hoursBalance < 0 ? abs($hoursBalance) : 0;
 
         // Calcular valor hora PADRÃO (média do campo additional_hourly_rate dos projetos pais)
         // Este é o valor/hora INICIAL mostrado no card
@@ -290,6 +287,13 @@ class BankHoursMonthlyController extends Controller
             $amountToPay = round($exceededHours * $rateForPayment, 2);
         }
 
+        // Fallback do card "Valor Hora": se additional_hourly_rate não estiver setado,
+        // mostra a média ponderada (mesmo valor usado no cálculo do Valor a Pagar).
+        // Antes o card aparecia vazio mesmo quando havia valor real sendo usado.
+        if ($hourlyRate === null && $weightedHourlyRate !== null) {
+            $hourlyRate = $weightedHourlyRate;
+        }
+
         // Buscar projetos para cálculo de aporte
         if ($projectId) {
             // Projeto específico: busca diretamente (pai ou filho)
@@ -353,10 +357,12 @@ class BankHoursMonthlyController extends Controller
                 } else {
                     // Para outros tipos: usar horas apontadas normalmente (excluindo rejeitados)
                     $parentLoggedMinutes = $parentProject->timesheets()
-                        ->where('status', '!=', 'rejected')
+                        ->whereIn('status', ['approved', 'pending'])
                         ->sum('effort_minutes') ?? 0;
                     $parentLoggedHours = round($parentLoggedMinutes / 60, 2);
-                    $consumedHours += $parentLoggedHours;
+                    // + horas iniciais já consumidas antes do Minutor (saldo histórico). Sem isso o
+                    // cliente via saldo inflado (ignorava initial_hours_consumed) ≠ Gestão de Contratos.
+                    $consumedHours += $parentLoggedHours + (float) ($parentProject->initial_hours_consumed ?? 0);
                 }
             }
 
@@ -380,10 +386,10 @@ class BankHoursMonthlyController extends Controller
                     } else {
                         // Para outros tipos: usar horas apontadas normalmente (excluindo rejeitados)
                         $childLoggedMinutes = $childProject->timesheets()
-                            ->where('status', '!=', 'rejected')
+                            ->whereIn('status', ['approved', 'pending'])
                             ->sum('effort_minutes') ?? 0;
                         $childLoggedHours = round($childLoggedMinutes / 60, 2);
-                        $consumedHours += $childLoggedHours;
+                        $consumedHours += $childLoggedHours + (float) ($childProject->initial_hours_consumed ?? 0);
                     }
                 }
             }
@@ -391,6 +397,13 @@ class BankHoursMonthlyController extends Controller
 
         // Arredondar para 2 casas decimais
         $consumedHours = round($consumedHours, 2);
+
+        // Saldo do banco mensal = horas acumuladas + aporte − consumo acumulado (consistente com o consumo exibido).
+        // Antes usava sum(getGeneralHoursBalance), que conta só apontamentos DIRETOS do projeto e ignora a
+        // sustentação do cliente que consome o banco → saldo inflado/inconsistente com o consumo (igual bug do BH Fixo).
+        $hoursBalance  = round($accumulatedContractedHours + $contributedHours - $consumedHours, 2);
+        $exceededHours = $hoursBalance < 0 ? abs($hoursBalance) : 0;
+        $amountToPay   = ($exceededHours > 0 && $rateForPayment !== null) ? round($exceededHours * $rateForPayment, 2) : null;
 
         // Calcular consumo do mês (apontamentos do mês especificado + projetos fechados com start_date no mês especificado)
         $monthConsumedHours = 0;
@@ -419,69 +432,25 @@ class BankHoursMonthlyController extends Controller
             }
 
             if ($includeParent) {
-                // Verificar se o projeto pai é do tipo "Fechado"
-                $isParentClosedContract = $parentProject->contractType &&
-                                          strtolower(trim($parentProject->contractType->name)) === 'fechado';
-
-                if ($isParentClosedContract) {
-                    // Para projetos fechados: verificar se start_date está no mês especificado
-                    if ($parentProject->start_date) {
-                        $parentStartDate = \Carbon\Carbon::parse($parentProject->start_date);
-                        $isInTargetMonth = $parentStartDate->year === $targetDate->year &&
-                                           $parentStartDate->month === $targetDate->month;
-
-                        if ($isInTargetMonth) {
-                            // Se o projeto fechado começou no mês especificado, usar horas vendidas
-                            $parentSoldHours = $parentProject->sold_hours ?? 0;
-                            $monthConsumedHours += $parentSoldHours;
-                        }
-                    }
-                } else {
-                        // Para outros tipos: usar horas apontadas do mês especificado (excluindo rejeitados)
-                    $parentMonthLoggedMinutes = $parentProject->timesheets()
-                        ->where('status', '!=', 'rejected')
-                        ->whereBetween('date', [$monthStart, $monthEnd])
-                        ->sum('effort_minutes') ?? 0;
-                    $parentMonthLoggedHours = round($parentMonthLoggedMinutes / 60, 2);
-                    $monthConsumedHours += $parentMonthLoggedHours;
-                }
+                // Consumo do mês = sempre apontamentos do mês (independente do tipo de contrato).
+                $parentMonthLoggedMinutes = $parentProject->timesheets()
+                    ->whereIn('status', ['approved', 'pending'])
+                    ->whereBetween('date', [$monthStart, $monthEnd])
+                    ->sum('effort_minutes') ?? 0;
+                $monthConsumedHours += round($parentMonthLoggedMinutes / 60, 2);
             }
 
-            // Processar projetos filhos
             if ($parentProject->hasChildProjects()) {
                 foreach ($parentProject->childProjects as $childProject) {
                     if ($childProject->isAusterFrozen()) continue;
-                    // Filtrar por tipo de serviço se especificado
                     if ($serviceTypeId && $childProject->service_type_id !== $serviceTypeId) {
                         continue;
                     }
-
-                    // Verificar se o projeto filho é do tipo "Fechado"
-                    $isClosedContract = $childProject->contractType &&
-                                        strtolower(trim($childProject->contractType->name)) === 'fechado';
-
-                    if ($isClosedContract) {
-                        // Para projetos fechados: verificar se start_date está no mês especificado
-                        if ($childProject->start_date) {
-                            $childStartDate = \Carbon\Carbon::parse($childProject->start_date);
-                            $isInTargetMonth = $childStartDate->year === $targetDate->year &&
-                                               $childStartDate->month === $targetDate->month;
-
-                            if ($isInTargetMonth) {
-                                // Se o projeto fechado começou no mês especificado, usar horas vendidas
-                                $childSoldHours = $childProject->sold_hours ?? 0;
-                                $monthConsumedHours += $childSoldHours;
-                            }
-                        }
-                    } else {
-                        // Para outros tipos: usar horas apontadas do mês especificado (excluindo rejeitados)
-                        $childMonthLoggedMinutes = $childProject->timesheets()
-                            ->where('status', '!=', 'rejected')
-                            ->whereBetween('date', [$monthStart, $monthEnd])
-                            ->sum('effort_minutes') ?? 0;
-                        $childMonthLoggedHours = round($childMonthLoggedMinutes / 60, 2);
-                        $monthConsumedHours += $childMonthLoggedHours;
-                    }
+                    $childMonthLoggedMinutes = $childProject->timesheets()
+                        ->whereIn('status', ['approved', 'pending'])
+                        ->whereBetween('date', [$monthStart, $monthEnd])
+                        ->sum('effort_minutes') ?? 0;
+                    $monthConsumedHours += round($childMonthLoggedMinutes / 60, 2);
                 }
             }
         }
@@ -515,25 +484,16 @@ class BankHoursMonthlyController extends Controller
                 if ($isClosedContract) {
                     $accum += $proj->getTotalAvailableHours();
                 } else {
-                    $mins = $proj->timesheets()->where('status', '!=', 'rejected')->sum('effort_minutes') ?? 0;
+                    $mins = $proj->timesheets()->whereIn('status', ['approved', 'pending'])->sum('effort_minutes') ?? 0;
                     $accum += round($mins / 60, 2);
                 }
 
-                // Consumo do mês
-                if ($isClosedContract) {
-                    if ($proj->start_date) {
-                        $sd = \Carbon\Carbon::parse($proj->start_date);
-                        if ($sd->year === $targetDate->year && $sd->month === $targetDate->month) {
-                            $accumMonth += $proj->sold_hours ?? 0;
-                        }
-                    }
-                } else {
-                    $mins = $proj->timesheets()
-                        ->where('status', '!=', 'rejected')
-                        ->whereBetween('date', [$monthStart, $monthEnd])
-                        ->sum('effort_minutes') ?? 0;
-                    $accumMonth += round($mins / 60, 2);
-                }
+                // Consumo do mês — sempre por timesheets do mês (independente do tipo de contrato).
+                $mins = $proj->timesheets()
+                    ->whereIn('status', ['approved', 'pending'])
+                    ->whereBetween('date', [$monthStart, $monthEnd])
+                    ->sum('effort_minutes') ?? 0;
+                $accumMonth += round($mins / 60, 2);
             };
 
             // Processar projeto pai
@@ -584,6 +544,7 @@ class BankHoursMonthlyController extends Controller
                             ? (int) $log->new_value - (int) $log->old_value
                             : ($log->new_value ? (int) $log->new_value : 0),
                         'reason' => $log->reason,
+                        'motivo' => 'aporte',
                         'changed_by' => $log->changedByUser ? [
                             'id' => $log->changedByUser->id,
                             'name' => $log->changedByUser->name,
@@ -613,6 +574,7 @@ class BankHoursMonthlyController extends Controller
                         'hourly_rate' => (float) $contribution->hourly_rate,
                         'total_value' => $contribution->getTotalValue(),
                         'description' => $contribution->description,
+                        'motivo' => $contribution->motivo ?? 'aporte',
                         'changed_by' => $contribution->contributedBy ? [
                             'id' => $contribution->contributedBy->id,
                             'name' => $contribution->contributedBy->name,
@@ -826,6 +788,10 @@ class BankHoursMonthlyController extends Controller
 
             $projects = $query->get();
         }
+
+        // A aba Projetos NÃO filtra a lista por data (igual ao BH Fixo): os projetos do
+        // contrato sempre aparecem, independente do mês/período. A data vale só pros
+        // números de consumo, não pra lista. (Removido o filtro por start_date.)
 
         $projectsData = $projects->map(function($project) {
             return [
@@ -1212,7 +1178,7 @@ class BankHoursMonthlyController extends Controller
         $timesheets = Timesheet::whereIn('project_id', $maintenanceProjects)
             ->whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', Timesheet::STATUS_REJECTED)
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['project:id,name,code', 'user:id,name,email'])
             ->get();
 
@@ -1491,7 +1457,7 @@ class BankHoursMonthlyController extends Controller
         // Importante: ignorar timesheets com status "rejected"
         $query = Timesheet::whereIn('project_id', $maintenanceProjects)
             ->where('ticket', $ticketId)
-            ->where('status', '!=', Timesheet::STATUS_REJECTED);
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de intervalo de datas
         if ($request->has('start_date') && $request->has('end_date')) {
@@ -1683,7 +1649,7 @@ class BankHoursMonthlyController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -1881,7 +1847,7 @@ class BankHoursMonthlyController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
@@ -2084,7 +2050,7 @@ class BankHoursMonthlyController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -2279,7 +2245,7 @@ class BankHoursMonthlyController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
@@ -2467,7 +2433,7 @@ class BankHoursMonthlyController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -2671,7 +2637,7 @@ class BankHoursMonthlyController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
@@ -2866,7 +2832,7 @@ class BankHoursMonthlyController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -3075,7 +3041,7 @@ class BankHoursMonthlyController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
@@ -3269,7 +3235,7 @@ class BankHoursMonthlyController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -3473,7 +3439,7 @@ class BankHoursMonthlyController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
@@ -3660,7 +3626,7 @@ class BankHoursMonthlyController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -3893,7 +3859,7 @@ class BankHoursMonthlyController extends Controller
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
             ->where('ticket', $ticketIdStr)
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // NÃO aplicar filtro de mês e ano para tickets específicos
@@ -4052,7 +4018,7 @@ class BankHoursMonthlyController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de cliente através dos projetos
         if ($customerId) {
@@ -4271,7 +4237,7 @@ class BankHoursMonthlyController extends Controller
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
             ->whereIn('ticket', $ticketIds->toArray())
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de cliente através dos projetos
@@ -4460,62 +4426,20 @@ class BankHoursMonthlyController extends Controller
             $monthConsumedHours = 0;
 
             foreach ($parentProjects as $parentProject) {
-                // Verificar se o projeto pai é do tipo "Fechado"
-                $isParentClosedContract = $parentProject->contractType &&
-                                          strtolower(trim($parentProject->contractType->name)) === 'fechado';
+                // Consumo do mês = sempre apontamentos do mês (independente do tipo de contrato).
+                $parentMonthLoggedMinutes = $parentProject->timesheets()
+                    ->whereIn('status', ['approved', 'pending'])
+                    ->whereBetween('date', [$monthStart, $monthEnd])
+                    ->sum('effort_minutes') ?? 0;
+                $monthConsumedHours += round($parentMonthLoggedMinutes / 60, 2);
 
-                if ($isParentClosedContract) {
-                    // Para projetos fechados: verificar se start_date está no mês alvo
-                    if ($parentProject->start_date) {
-                        $parentStartDate = \Carbon\Carbon::parse($parentProject->start_date);
-                        $isInTargetMonth = $parentStartDate->year === $targetDate->year &&
-                                           $parentStartDate->month === $targetDate->month;
-
-                        if ($isInTargetMonth) {
-                            // Se o projeto fechado começou no mês alvo, usar horas vendidas
-                            $parentSoldHours = $parentProject->sold_hours ?? 0;
-                            $monthConsumedHours += $parentSoldHours;
-                        }
-                    }
-                } else {
-                    // Para outros tipos: usar horas apontadas do mês alvo (excluindo rejeitados)
-                    $parentMonthLoggedMinutes = $parentProject->timesheets()
-                        ->where('status', '!=', 'rejected')
-                        ->whereBetween('date', [$monthStart, $monthEnd])
-                        ->sum('effort_minutes') ?? 0;
-                    $parentMonthLoggedHours = round($parentMonthLoggedMinutes / 60, 2);
-                    $monthConsumedHours += $parentMonthLoggedHours;
-                }
-
-                // Processar projetos filhos
                 if ($parentProject->hasChildProjects()) {
                     foreach ($parentProject->childProjects as $childProject) {
-                        // Verificar se o projeto filho é do tipo "Fechado"
-                        $isClosedContract = $childProject->contractType &&
-                                            strtolower(trim($childProject->contractType->name)) === 'fechado';
-
-                        if ($isClosedContract) {
-                            // Para projetos fechados: verificar se start_date está no mês alvo
-                            if ($childProject->start_date) {
-                                $childStartDate = \Carbon\Carbon::parse($childProject->start_date);
-                                $isInTargetMonth = $childStartDate->year === $targetDate->year &&
-                                                   $childStartDate->month === $targetDate->month;
-
-                                if ($isInTargetMonth) {
-                                    // Se o projeto fechado começou no mês alvo, usar horas vendidas
-                                    $childSoldHours = $childProject->sold_hours ?? 0;
-                                    $monthConsumedHours += $childSoldHours;
-                                }
-                            }
-                        } else {
-                            // Para outros tipos: usar horas apontadas do mês alvo (excluindo rejeitados)
-                            $childMonthLoggedMinutes = $childProject->timesheets()
-                                ->where('status', '!=', 'rejected')
-                                ->whereBetween('date', [$monthStart, $monthEnd])
-                                ->sum('effort_minutes') ?? 0;
-                            $childMonthLoggedHours = round($childMonthLoggedMinutes / 60, 2);
-                            $monthConsumedHours += $childMonthLoggedHours;
-                        }
+                        $childMonthLoggedMinutes = $childProject->timesheets()
+                            ->whereIn('status', ['approved', 'pending'])
+                            ->whereBetween('date', [$monthStart, $monthEnd])
+                            ->sum('effort_minutes') ?? 0;
+                        $monthConsumedHours += round($childMonthLoggedMinutes / 60, 2);
                     }
                 }
             }
@@ -4662,7 +4586,7 @@ class BankHoursMonthlyController extends Controller
         // Filtramos pela data do timesheet, independentemente do tipo de projeto ou data de criação do ticket
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->whereDate('date', '>=', $startDate)
             ->whereDate('date', '<=', $endDate)
             ->with(['user', 'project', 'reviewedBy']);

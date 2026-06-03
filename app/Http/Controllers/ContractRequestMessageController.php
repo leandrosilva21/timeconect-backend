@@ -2,9 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Attachment;
 use App\Models\ContractRequest;
 use App\Models\ContractRequestMessage;
-use App\Models\ContractRequestMessageAttachment;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Storage;
 
 class ContractRequestMessageController extends Controller
 {
+
     public function index(Request $request, ContractRequest $contractRequest): JsonResponse
     {
         $user = auth()->user();
@@ -20,12 +21,17 @@ class ContractRequestMessageController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        $messages = $contractRequest->messages()
+        $query = $contractRequest->messages()
             ->with(['author:id,name', 'attachments'])
-            ->orderBy('created_at')
-            ->get();
+            ->orderBy('created_at');
 
-        return response()->json($messages);
+        // Cliente: depois que a requisição virou projeto (req_decided_at preenchido),
+        // mensagens novas da equipe ficam invisíveis. Cliente só vê o histórico até a transição.
+        if ($user->isCliente() && $contractRequest->req_decided_at) {
+            $query->where('created_at', '<=', $contractRequest->req_decided_at);
+        }
+
+        return response()->json($query->get());
     }
 
     public function store(Request $request, ContractRequest $contractRequest): JsonResponse
@@ -34,6 +40,15 @@ class ContractRequestMessageController extends Controller
 
         if ($user->isCliente() && $user->customer_id !== $contractRequest->customer_id) {
             return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        // Cliente só interage enquanto é requisição. Quando vira projeto
+        // (req_decision setado em requestPlanDecision), chat fica read-only
+        // pro cliente — internos (admin/coord) seguem podendo comentar.
+        if ($user->isCliente() && $contractRequest->req_decision !== null) {
+            return response()->json([
+                'message' => 'A requisição virou projeto. O chat ficou disponível apenas para histórico.',
+            ], 403);
         }
 
         $request->validate([
@@ -53,15 +68,18 @@ class ContractRequestMessageController extends Controller
             'message'             => $text,
         ]);
 
+        // FASE 11.7 (PR 7b) — Upload de anexos 100% via camada Attachment.
         if ($request->hasFile('files')) {
+            $service = app(\App\Attachments\AttachmentService::class);
             foreach ($request->file('files') as $file) {
                 $path = $file->store('req-message-attachments', 'public');
-                ContractRequestMessageAttachment::create([
-                    'message_id'    => $msg->id,
+                $service->registerExisting($user, [
+                    'entity_type'   => 'REQUEST_MESSAGE',
+                    'entity_id'     => $msg->id,
+                    'category'      => 'attachment',
+                    'storage_path'  => $path,
                     'original_name' => $file->getClientOriginalName(),
-                    'file_path'     => $path,
-                    'file_size'     => $file->getSize(),
-                    'mime_type'     => $file->getMimeType(),
+                    'mime_type'     => $file->getMimeType() ?: 'application/octet-stream',
                 ]);
             }
         }
@@ -71,7 +89,7 @@ class ContractRequestMessageController extends Controller
         return response()->json($msg, 201);
     }
 
-    public function downloadAttachment(Request $request, ContractRequestMessage $message, ContractRequestMessageAttachment $attachment): mixed
+    public function downloadAttachment(Request $request, ContractRequestMessage $message, Attachment $attachment): mixed
     {
         $user = auth()->user();
 
@@ -79,7 +97,12 @@ class ContractRequestMessageController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        return Storage::disk('public')->download($attachment->file_path, $attachment->original_name);
+        // FASE 11.7 (PR 7b) — valida vínculo polimórfico.
+        if ($attachment->entity_type !== 'REQUEST_MESSAGE' || (int) $attachment->entity_id !== (int) $message->id) {
+            return response()->json(['message' => 'Anexo não encontrado'], 404);
+        }
+
+        return Storage::disk('public')->download($attachment->storage_path, $attachment->original_name);
     }
 
     public function mentionableUsers(Request $request, ContractRequest $contractRequest): JsonResponse

@@ -16,7 +16,7 @@
     body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
     table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
     img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
-    body { margin: 0 !important; padding: 0 !important; background-color: #0A0A0B; }
+    body { margin: 0 !important; padding: 0 !important; background-color: #000000; }
     a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !important; }
     @media only screen and (max-width: 620px) {
       .wrapper { width: 100% !important; }
@@ -27,21 +27,21 @@
     }
   </style>
 </head>
-<body style="margin:0;padding:0;background-color:#0A0A0B;font-family:'Segoe UI',Arial,sans-serif;">
+<body style="margin:0;padding:0;background-color:#000000;font-family:'Segoe UI',Arial,sans-serif;">
 
   <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
-    style="background-color:#0A0A0B;min-height:100vh;">
+    style="background-color:#000000;min-height:100vh;">
     <tr>
       <td align="center" style="padding:32px 16px;">
 
         <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600"
           class="wrapper card"
-          style="background-color:#161618;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,0.06);">
+          style="background-color:#000000;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,0.06);">
 
           {{-- ── HEADER ── --}}
           <tr>
             <td class="pd-header" align="left"
-              style="padding:36px 40px 28px;background-color:#111113;border-bottom:1px solid rgba(255,255,255,0.06);">
+              style="padding:36px 40px 28px;background-color:#000000;border-bottom:1px solid rgba(255,255,255,0.06);">
 
               <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:28px;">
                 <tr>
@@ -138,10 +138,8 @@
                 </tr>
                 <tr>
                   <td style="padding:4px 20px 20px;">
-                    <span style="font-size:20px;color:#00F5FF;font-weight:700;letter-spacing:2px;
-                      font-family:'Courier New',Courier,monospace;">
-                      {{ $temporaryPassword }}
-                    </span>
+                    {{-- Senha colada e sem whitespace ao redor: evita copiar espaço/quebra junto (login falha como "credenciais inválidas"). --}}
+                    <span style="font-size:20px;color:#00F5FF;font-weight:700;font-family:'Courier New',Courier,monospace;white-space:nowrap;">{{ trim($temporaryPassword) }}</span>
                   </td>
                 </tr>
               </table>

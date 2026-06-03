@@ -17,6 +17,8 @@ class Contract extends Model
         'architect_id', 'tipo_alocacao', 'horas_contratadas',
         'valor_projeto', 'valor_hora', 'hora_adicional', 'pct_horas_coordenador', 'horas_coordenacao', 'horas_consultor',
         'expectativa_inicio', 'condicao_pagamento',
+        // Contratos recorrentes (gestão de aniversário / reajuste)
+        'data_assinatura', 'data_vencimento', 'valor_inicial', 'taxa_reajuste', 'pct_reajuste', 'data_ultimo_reajuste',
         'executivo_conta_id', 'vendedor_id', 'observacoes', 'project_code_preview',
         'project_id', 'parent_project_id', 'generated_at', 'generated_by_id',
         'approved_by_id', 'approved_at', 'created_by_id',
@@ -32,6 +34,11 @@ class Contract extends Model
         'horas_consultor'        => 'integer',
         'valor_projeto'          => 'decimal:2',
         'valor_hora'             => 'decimal:2',
+        'data_assinatura'        => 'date:Y-m-d',
+        'data_vencimento'        => 'date:Y-m-d',
+        'data_ultimo_reajuste'   => 'date:Y-m-d',
+        'valor_inicial'          => 'decimal:2',
+        'pct_reajuste'           => 'decimal:3',
         'hora_adicional'         => 'decimal:2',
         'pct_horas_coordenador'  => 'decimal:2',
         'horas_coordenacao'      => 'decimal:2',
@@ -78,6 +85,11 @@ class Contract extends Model
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
+    }
+
+    public function valueChanges(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(\App\Models\ContractValueChange::class);
     }
 
     public function serviceType(): BelongsTo
@@ -135,9 +147,14 @@ class Contract extends Model
         return $this->hasMany(ContractContact::class);
     }
 
+    /**
+     * Anexos do contrato — FASE 11.7 (PR 7b): polimórficos via tabela `attachments`.
+     */
     public function attachments(): HasMany
     {
-        return $this->hasMany(ContractAttachment::class);
+        return $this->hasMany(\App\Models\Attachment::class, 'entity_id')
+            ->where('attachments.entity_type', 'CONTRACT')
+            ->whereNull('attachments.deleted_at');
     }
 
     public function kanbanLogs(): HasMany

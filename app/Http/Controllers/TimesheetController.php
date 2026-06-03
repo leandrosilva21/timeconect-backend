@@ -156,9 +156,34 @@ class TimesheetController extends Controller
         $perPage = min($request->get('pageSize', 15), 100);
         $page = (int) $request->get('page', 1);
 
-        $query = Timesheet::with(['user', 'customer', 'project.contractType', 'project.customer', 'project.serviceType', 'reviewedBy'])
+        // Eager-load com colunas específicas — evita trazer rows inteiras de relações
+        // (cada user/customer/project tem muitos campos não usados pela listagem).
+        // Reduz payload e tempo de serialização significativamente.
+        $query = Timesheet::with([
+                'user:id,name,email,type,partner_id,customer_id',
+                'customer:id,name',
+                'project' => fn($q) => $q->select('id', 'name', 'service_type_id', 'contract_type_id', 'customer_id', 'is_investimento_comercial', 'parent_project_id', 'status', 'kanban_coordinator_override_id'),
+                'project.contractType:id,name',
+                'project.customer:id,name,executive_id',
+                'project.customer.executive:id,name',
+                'project.serviceType:id,code,name',
+                'project.coordinators:id,name',
+                'project.kanbanOverrideCoordinator:id,name',
+                'realProject:id,name',
+                'reviewedBy:id,name',
+            ])
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject', 'movidesk_tickets.solicitante as ticket_solicitante')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket');
+
+        // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
+        if ($request->get('scope') === 'sustentacao') {
+            $scopedIds = app(\App\Services\SustentacaoScopeService::class)->projectIds();
+            if (empty($scopedIds)) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('timesheets.project_id', $scopedIds);
+            }
+        }
 
         // Controle de visibilidade por perfil
         if ($user->isCliente()) {
@@ -172,12 +197,11 @@ class TimesheetController extends Controller
         } elseif (!$user->isAdmin() && !$user->hasAccess('hours.view_all')) {
             $query->forUser($user->id);
         } elseif ($user->isCoordenador()) {
-            $coordinatorProjectIds = $user->coordinatorProjects()->pluck('projects.id');
+            // Sustentação: apenas projetos do tipo sustentacao ou cloud (escopo do perfil).
+            // Projetos (default): vê TODOS os apontamentos — filtro client-side via
+            // chip "Meus projetos / Todos" no FE manda coordinator_id[]=user.id.
             if ($user->coordinator_type === 'sustentacao') {
-                // Sustentação: apenas projetos com tipo de serviço sustentacao ou cloud
                 $query->whereHas('project.serviceType', fn($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
-            } else {
-                $query->whereIn('timesheets.project_id', $coordinatorProjectIds);
             }
         }
 
@@ -199,6 +223,33 @@ class TimesheetController extends Controller
         $customerIds = array_values(array_filter((array) $request->input('customer_id', [])));
         if (!empty($customerIds)) {
             $query->whereIn('timesheets.customer_id', $customerIds);
+        }
+
+        // Triagem dos "padrões Movidesk": filtra timesheets cujo user_id, customer_id
+        // OU project_id coincida com algum dos IDs configurados em system_settings
+        // (movidesk_default_*). Usado pela rotina Triagem da Sustentação pra revisar
+        // apontamentos atribuídos ao fallback.
+        if ($request->boolean('triagem_padrao')) {
+            $defaultUserId     = \App\Models\SystemSetting::get('movidesk_default_user_id');
+            $defaultCustomerId = \App\Models\SystemSetting::get('movidesk_default_customer_id');
+            $defaultProjectId  = \App\Models\SystemSetting::get('movidesk_default_project_id');
+
+            // triagem_field opcional: user | customer | project — filtra só uma
+            // dimensão. Sem o parâmetro, faz OR entre os 3 (default Todos).
+            $field = $request->input('triagem_field');
+
+            $query->where(function ($q) use ($defaultUserId, $defaultCustomerId, $defaultProjectId, $field) {
+                $applyUser     = (!$field || $field === 'user')     && $defaultUserId;
+                $applyCustomer = (!$field || $field === 'customer') && $defaultCustomerId;
+                $applyProject  = (!$field || $field === 'project')  && $defaultProjectId;
+
+                if ($applyUser)     $q->orWhere('timesheets.user_id',     (int) $defaultUserId);
+                if ($applyCustomer) $q->orWhere('timesheets.customer_id', (int) $defaultCustomerId);
+                if ($applyProject)  $q->orWhere('timesheets.project_id',  (int) $defaultProjectId);
+                if (!$applyUser && !$applyCustomer && !$applyProject) {
+                    $q->whereRaw('1 = 0');
+                }
+            });
         }
 
         $executiveIds = array_values(array_filter((array) $request->input('executive_id', [])));
@@ -262,11 +313,56 @@ class TimesheetController extends Controller
             });
         }
 
+        // Filtro por coordenador — espelha a regra de exibição do coordinator_label:
+        //   override do coord > (se sustentação) coordenador de sustentação > coordenadores do projeto.
+        $coordinatorIds = array_values(array_filter((array) $request->input('coordinator_id', [])));
+        if (!empty($coordinatorIds)) {
+            $sustSelected = \App\Models\User::whereIn('id', $coordinatorIds)
+                ->where('coordinator_type', 'sustentacao')->exists();
+            $query->where(function ($q) use ($coordinatorIds, $sustSelected) {
+                // (A) override do coordenador é um dos selecionados
+                $q->whereHas('project', fn($pq) => $pq->whereIn('kanban_coordinator_override_id', $coordinatorIds));
+                // (C) sem override, projeto NÃO-sustentação, coordenador do projeto é um dos selecionados
+                $q->orWhere(function ($q2) use ($coordinatorIds) {
+                    $q2->whereHas('project', fn($pq) => $pq->whereNull('kanban_coordinator_override_id')
+                            ->whereDoesntHave('serviceType', fn($sq) => $sq->where('code', 'sustentacao')))
+                       ->whereHas('project.coordinators', fn($cq) => $cq->whereIn('users.id', $coordinatorIds));
+                });
+                // (B) sem override, serviço de sustentação e um coord de sustentação foi selecionado
+                if ($sustSelected) {
+                    $q->orWhereHas('project', fn($pq) => $pq->whereNull('kanban_coordinator_override_id')
+                        ->whereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao')));
+                }
+            });
+        }
+
+        // date_field: 'date' (data do apontamento, padrão) ou 'created_at' (data de inclusão).
+        // O relatório de cliente usa 'created_at' pra reconciliar com o que foi LANÇADO no
+        // período de cobrança (independe de quando o consultor diz que trabalhou).
+        $useCreatedAt = $request->input('date_field') === 'created_at';
+
         if ($request->filled('start_date')) {
             $endDate = $request->filled('end_date') ? $request->end_date : now()->toDateString();
-            $query->inPeriod($request->start_date, $endDate);
+            if ($useCreatedAt) {
+                $query->whereRaw('timesheets.created_at::date BETWEEN ? AND ?', [$request->start_date, $endDate]);
+            } else {
+                $query->inPeriod($request->start_date, $endDate);
+            }
         } elseif ($request->filled('end_date')) {
-            $query->where('timesheets.date', '<=', $request->end_date);
+            if ($useCreatedAt) {
+                $query->whereRaw('timesheets.created_at::date <= ?', [$request->end_date]);
+            } else {
+                $query->where('timesheets.date', '<=', $request->end_date);
+            }
+        }
+
+        // Competência: trava a DATA DO SERVIÇO no intervalo, independente do date_field.
+        // Permite filtrar por digitação num range amplo sem trazer serviço de outros meses.
+        if ($request->filled('competencia_start')) {
+            $query->where('timesheets.date', '>=', $request->competencia_start);
+        }
+        if ($request->filled('competencia_end')) {
+            $query->where('timesheets.date', '<=', $request->competencia_end);
         }
 
         if ($request->boolean('only_investimento_comercial')) {
@@ -412,17 +508,108 @@ class TimesheetController extends Controller
                     ->where('timesheets.is_billable_only', true)
                     ->sum('effort_minutes');
 
+                // Agrega no SQL (SUM(effort_minutes * consultant_extra_pct/100)) em vez
+                // de carregar todas as rows em PHP só pra somar — economiza tráfego e CPU.
                 $totalConsultantExtraMinutes = (int) round(
                     (clone $query)
                         ->where('timesheets.is_billable_only', false)
                         ->whereNotNull('consultant_extra_pct')
-                        ->get(['effort_minutes', 'consultant_extra_pct'])
-                        ->sum(fn ($t) => $t->effort_minutes * ((float) $t->consultant_extra_pct / 100))
+                        ->sum(\Illuminate\Support\Facades\DB::raw('timesheets.effort_minutes * timesheets.consultant_extra_pct / 100'))
                 );
 
                 $timesheets = $query->paginate($perPage, ['*'], 'page', $page);
 
-                $items = collect($timesheets->items())->map(function ($ts) use ($hideClientPct) {
+                // Total acumulado (lifetime) por ticket, no mesmo cliente — para coluna
+                // "Consumo do Ticket" no frontend. Só tickets com padrão 5 dígitos.
+                $ticketsByCustomer = [];
+                foreach ($timesheets->items() as $ts) {
+                    $t = $ts->ticket;
+                    if (!$t || !$ts->customer_id) continue;
+                    if (!preg_match('/^\d{5}$/', (string) $t)) continue;
+                    $ticketsByCustomer[$ts->customer_id][$t] = true;
+                }
+                $ticketTotalsMap = [];
+                if (!empty($ticketsByCustomer)) {
+                    // DB::table não aplica global scope de soft-delete; sem o
+                    // whereNull('deleted_at') o "Hist. de Hs Ticket" continua
+                    // somando apontamentos já soft-deletados (ex.: limpeza dos <5min).
+                    $totalsQ = \Illuminate\Support\Facades\DB::table('timesheets')
+                        ->whereNull('deleted_at')
+                        ->whereNotIn('status', [
+                            Timesheet::STATUS_REJECTED,
+                            Timesheet::STATUS_CONFLICTED,
+                            Timesheet::STATUS_ADJUSTMENT_REQUESTED,
+                            Timesheet::STATUS_INTERNAL,
+                        ])
+                        ->whereRaw("ticket ~ '^[0-9]{5}$'");
+                    $totalsQ->where(function ($q) use ($ticketsByCustomer) {
+                        foreach ($ticketsByCustomer as $cid => $tickets) {
+                            $q->orWhere(function ($qq) use ($cid, $tickets) {
+                                $qq->where('customer_id', $cid)->whereIn('ticket', array_keys($tickets));
+                            });
+                        }
+                    });
+                    foreach ($totalsQ->groupBy('customer_id', 'ticket')->selectRaw('customer_id, ticket, SUM(effort_minutes) AS total')->get() as $r) {
+                        $ticketTotalsMap[$r->customer_id . ':' . $r->ticket] = (int) $r->total;
+                    }
+
+                    // Soma o saldo inicial cadastrado (ticket_initial_balances).
+                    $initQ = \Illuminate\Support\Facades\DB::table('ticket_initial_balances')
+                        ->whereNull('deleted_at')
+                        ->where(function ($q) use ($ticketsByCustomer) {
+                            foreach ($ticketsByCustomer as $cid => $tickets) {
+                                $q->orWhere(function ($qq) use ($cid, $tickets) {
+                                    $qq->where('customer_id', $cid)->whereIn('ticket', array_keys($tickets));
+                                });
+                            }
+                        });
+                    foreach ($initQ->select('customer_id', 'ticket', 'initial_minutes')->get() as $r) {
+                        $key = $r->customer_id . ':' . $r->ticket;
+                        $ticketTotalsMap[$key] = ($ticketTotalsMap[$key] ?? 0) + (int) $r->initial_minutes;
+                    }
+                }
+
+                // Batch das queries de conflicting_timesheets: 1 SELECT pra todos os
+                // conflitos do lote em vez de N queries (1 por conflito).
+                $conflictedItems = array_values(array_filter(
+                    $timesheets->items(),
+                    fn($t) => $t->status === Timesheet::STATUS_CONFLICTED && $t->start_time && $t->end_time && $t->date
+                ));
+                $conflictCandidatesByKey = [];
+                if (!empty($conflictedItems)) {
+                    try {
+                        $userIds     = array_unique(array_map(fn($t) => $t->user_id, $conflictedItems));
+                        $customerIdsCnf = array_unique(array_map(fn($t) => $t->customer_id, $conflictedItems));
+                        $datesCnf    = array_unique(array_map(
+                            fn($t) => $t->date instanceof \Carbon\Carbon ? $t->date->format('Y-m-d') : (string) $t->date,
+                            $conflictedItems
+                        ));
+                        $candidates = Timesheet::with(['customer', 'project.customer'])
+                            ->whereIn('user_id', $userIds)
+                            ->whereIn('customer_id', $customerIdsCnf)
+                            ->whereIn('date', $datesCnf)
+                            ->whereNotIn('status', [Timesheet::STATUS_REJECTED])
+                            ->whereNotNull('start_time')
+                            ->whereNotNull('end_time')
+                            ->get();
+                        foreach ($candidates as $c) {
+                            $cDate = $c->date instanceof \Carbon\Carbon ? $c->date->format('Y-m-d') : (string) $c->date;
+                            $key   = $c->user_id . ':' . $c->customer_id . ':' . $cDate;
+                            $conflictCandidatesByKey[$key][] = $c;
+                        }
+                    } catch (\Throwable $e) {
+                        \Illuminate\Support\Facades\Log::warning('conflicting_timesheets batch lookup failed', [
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                }
+
+                // Coordenador de sustentação (regra: serviço de sustentação => coordenador é
+                // sempre o(s) coordinator_type='sustentacao', ex.: Anderson Arantes).
+                $sustentacaoCoordNames = \App\Models\User::where('coordinator_type', 'sustentacao')
+                    ->where('enabled', true)->pluck('name')->all();
+
+                $items = collect($timesheets->items())->map(function ($ts) use ($hideClientPct, $ticketTotalsMap, $conflictCandidatesByKey, $sustentacaoCoordNames) {
                     if ($hideClientPct) {
                         $ts->makeHidden(['client_extra_pct']);
                     }
@@ -431,42 +618,57 @@ class TimesheetController extends Controller
                         $arr['ticket_solicitante'] = json_decode($arr['ticket_solicitante'], true);
                     }
                     // Para timesheets em conflito, inclui os apontamentos sobrepostos
+                    // (filtragem por overlap feita in-memory sobre o lote pré-carregado).
                     $arr['conflicting_timesheets'] = [];
                     if ($ts->status === Timesheet::STATUS_CONFLICTED && $ts->start_time && $ts->end_time && $ts->date) {
-                        try {
-                            $dateStr  = $ts->date instanceof \Carbon\Carbon ? $ts->date->format('Y-m-d') : (string) $ts->date;
-                            $endStr   = $ts->end_time instanceof \Carbon\Carbon   ? $ts->end_time->format('H:i:s')   : substr((string) $ts->end_time,   0, 8);
-                            $startStr = $ts->start_time instanceof \Carbon\Carbon ? $ts->start_time->format('H:i:s') : substr((string) $ts->start_time, 0, 8);
-
-                            $arr['conflicting_timesheets'] = Timesheet::with(['customer', 'project.customer'])
-                                ->where('user_id', $ts->user_id)
-                                ->whereDate('date', $dateStr)
-                                ->where('id', '!=', $ts->id)
-                                ->whereNotIn('status', [Timesheet::STATUS_REJECTED])
-                                ->whereNotNull('start_time')
-                                ->whereNotNull('end_time')
-                                ->where('start_time', '<', $endStr)
-                                ->where('end_time', '>', $startStr)
-                                ->get()
-                                ->map(fn($c) => [
-                                    'id'            => $c->id,
-                                    'date'          => $c->date instanceof \Carbon\Carbon ? $c->date->format('Y-m-d') : (string) $c->date,
-                                    'start_time'    => $c->start_time instanceof \Carbon\Carbon ? $c->start_time->format('H:i') : null,
-                                    'end_time'      => $c->end_time instanceof \Carbon\Carbon   ? $c->end_time->format('H:i')   : null,
-                                    'effort_hours'  => $c->effort_hours,
-                                    'customer_name' => $c->customer?->name ?? $c->project?->customer?->name,
-                                    'project_name'  => $c->project?->name,
-                                    'origin'        => $c->origin,
-                                ])
-                                ->values()
-                                ->all();
-                        } catch (\Throwable $e) {
-                            \Illuminate\Support\Facades\Log::warning('conflicting_timesheets lookup failed', [
-                                'timesheet_id' => $ts->id,
-                                'error'        => $e->getMessage(),
-                            ]);
+                        $dateStr  = $ts->date instanceof \Carbon\Carbon ? $ts->date->format('Y-m-d') : (string) $ts->date;
+                        $endStr   = $ts->end_time instanceof \Carbon\Carbon   ? $ts->end_time->format('H:i:s')   : substr((string) $ts->end_time,   0, 8);
+                        $startStr = $ts->start_time instanceof \Carbon\Carbon ? $ts->start_time->format('H:i:s') : substr((string) $ts->start_time, 0, 8);
+                        $key      = $ts->user_id . ':' . $ts->customer_id . ':' . $dateStr;
+                        $bucket   = $conflictCandidatesByKey[$key] ?? [];
+                        $arr['conflicting_timesheets'] = collect($bucket)
+                            ->filter(function ($c) use ($ts, $startStr, $endStr) {
+                                if ($c->id === $ts->id) return false;
+                                $cStart = $c->start_time instanceof \Carbon\Carbon ? $c->start_time->format('H:i:s') : substr((string) $c->start_time, 0, 8);
+                                $cEnd   = $c->end_time   instanceof \Carbon\Carbon ? $c->end_time->format('H:i:s')   : substr((string) $c->end_time,   0, 8);
+                                // overlap clássico: a.start < b.end && b.start < a.end
+                                return $cStart < $endStr && $startStr < $cEnd;
+                            })
+                            ->map(fn($c) => [
+                                'id'            => $c->id,
+                                'date'          => $c->date instanceof \Carbon\Carbon ? $c->date->format('Y-m-d') : (string) $c->date,
+                                'start_time'    => $c->start_time instanceof \Carbon\Carbon ? $c->start_time->format('H:i') : null,
+                                'end_time'      => $c->end_time instanceof \Carbon\Carbon   ? $c->end_time->format('H:i')   : null,
+                                'effort_hours'  => $c->effort_hours,
+                                'customer_name' => $c->customer?->name ?? $c->project?->customer?->name,
+                                'project_name'  => $c->project?->name,
+                                'origin'        => $c->origin,
+                            ])
+                            ->values()
+                            ->all();
+                    }
+                    // Total acumulado do ticket no mesmo cliente (lifetime)
+                    $tk = (string) ($ts->ticket ?? '');
+                    if ($tk !== '' && preg_match('/^\d{5}$/', $tk) && $ts->customer_id) {
+                        $arr['ticket_total_minutes'] = $ticketTotalsMap[$ts->customer_id . ':' . $tk] ?? null;
+                    } else {
+                        $arr['ticket_total_minutes'] = null;
+                    }
+                    // Coordenador exibido: override do coord > (se sustentação) coordenador de
+                    // sustentação (Anderson Arantes) > coordenadores do projeto.
+                    $proj = $ts->project;
+                    $coordLabel = null;
+                    if ($proj) {
+                        $isSustentacao = optional($proj->serviceType)->code === 'sustentacao';
+                        if ($proj->kanbanOverrideCoordinator) {
+                            $coordLabel = $proj->kanbanOverrideCoordinator->name;
+                        } elseif ($isSustentacao && !empty($sustentacaoCoordNames)) {
+                            $coordLabel = implode(', ', $sustentacaoCoordNames);
+                        } elseif ($proj->coordinators && $proj->coordinators->count()) {
+                            $coordLabel = $proj->coordinators->pluck('name')->implode(', ');
                         }
                     }
+                    $arr['coordinator_label'] = $coordLabel;
                     return $arr;
                 })->all();
 
@@ -545,10 +747,16 @@ class TimesheetController extends Controller
         $hasTotalHours = !empty($request->total_hours);
         $rules = [
             'project_id' => 'required|exists:projects,id',
+            'real_project_id' => 'nullable|integer|exists:projects,id',
             'date' => 'required|date|before_or_equal:today',
             'start_time' => $hasTotalHours ? 'nullable|date_format:H:i' : 'required|date_format:H:i',
             'end_time'   => $hasTotalHours ? 'nullable|date_format:H:i' : 'required|date_format:H:i|after:start_time',
-            'total_hours' => 'nullable|string|regex:/^\d+:[0-5][0-9]$/',
+            // Aceita HH:MM ("4:30"), decimal com ponto ou vírgula ("4.5", "4,5", "4.25"),
+            // ou inteiro puro ("4"). Parseado por Timesheet::parseTotalHoursToMinutes.
+            // Sintaxe ARRAY obrigatória: a regex tem `|` (alternation), que o Laravel
+            // confunde com separador de regras quando rules vêm como string —
+            // `preg_match(): No ending delimiter '/' found` em prod (29/05/2026).
+            'total_hours' => ['nullable', 'string', 'regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/'],
             'observation' => 'nullable|string|max:5000',
             'ticket' => 'nullable',
             'attachment' => 'nullable|file|mimes:pdf,jpg,jpeg,png,doc,docx|max:5120',
@@ -751,14 +959,11 @@ class TimesheetController extends Controller
         try {
             $validatedData = $validator->validated();
 
-            // Processar total_hours se fornecido
+            // Processar total_hours se fornecido (HH:MM | decimal | inteiro).
             $effortMinutes = null;
             if (!empty($validatedData['total_hours'])) {
-                // Converter total_hours para effort_minutes antes de criar o timesheet
-                if (preg_match('/^(\d+):([0-5][0-9])$/', $validatedData['total_hours'], $matches)) {
-                    $hours = intval($matches[1]);
-                    $minutes = intval($matches[2]);
-                    $effortMinutes = ($hours * 60) + $minutes;
+                $effortMinutes = Timesheet::parseTotalHoursToMinutes($validatedData['total_hours']);
+                if ($effortMinutes !== null) {
                     $validatedData['effort_minutes'] = $effortMinutes;
                 }
                 // Remover total_hours dos dados validados pois não é um campo do modelo
@@ -787,6 +992,28 @@ class TimesheetController extends Controller
             $isOnDemandContract = $project->contractType && $project->contractType->code === 'on_demand';
             // Projetos de Investimento Interno não têm horas contratadas — pulam validação de saldo
             $isInvestimentoInterno = (bool) $project->is_investimento_comercial;
+
+            // Apontamento de investimento exige o "Projeto Real" (referência + define o coordenador
+            // que aprova). O consumo continua no projeto de investimento.
+            $realProjectId = $isInvestimentoInterno ? ((int) $request->input('real_project_id') ?: null) : null;
+            if ($isInvestimentoInterno && !$realProjectId) {
+                DB::rollBack();
+                return response()->json([
+                    'message' => 'Projeto Real é obrigatório para apontamento de investimento.',
+                    'errors'  => ['real_project_id' => ['Selecione o projeto real.']],
+                ], 422);
+            }
+            // Investimento SUPORTE: o projeto real precisa ser de SUSTENTAÇÃO.
+            if ($realProjectId && $project->categoria_interna === 'Suporte') {
+                $realProj = Project::with('serviceType')->find($realProjectId);
+                if (optional(optional($realProj)->serviceType)->code !== 'sustentacao') {
+                    DB::rollBack();
+                    return response()->json([
+                        'message' => 'Investimento Suporte: o Projeto Real deve ser de Sustentação.',
+                        'errors'  => ['real_project_id' => ['Selecione um projeto de Sustentação.']],
+                    ], 422);
+                }
+            }
 
             Log::info('Criando apontamento - Antes de validar saldo', [
                 'project_id' => $project->id,
@@ -830,6 +1057,7 @@ class TimesheetController extends Controller
             $timesheet = new Timesheet($validatedData);
             $timesheet->user_id = $timesheetUserId;
             $timesheet->customer_id = $project->customer_id;
+            $timesheet->real_project_id = $realProjectId; // só preenchido em investimento
             $timesheet->status = $hasConflict ? Timesheet::STATUS_CONFLICTED : Timesheet::STATUS_PENDING;
             $timesheet->origin = 'web'; // Origem: criação manual via webapp
             $timesheet->is_billable_only = $user->isAdmin()
@@ -846,15 +1074,20 @@ class TimesheetController extends Controller
                     ? (float) $request->input('consultant_extra_pct') : null;
             }
 
+            $newAttachmentInfo = null;
             if ($request->hasFile('attachment')) {
                 $file = $request->file('attachment');
                 $filename = time() . '_' . $file->getClientOriginalName();
                 $path = $file->storeAs('timesheets/' . date('Y/m'), $filename, 'public');
-                $timesheet->attachment_path = $path;
-                $timesheet->attachment_original_name = $file->getClientOriginalName();
+                $newAttachmentInfo = ['path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType()];
             }
 
             $timesheet->save();
+
+            // FASE 11.7 — Attachment persiste 100% na camada Attachment.
+            if ($newAttachmentInfo !== null) {
+                $this->registerTimesheetAttachment($timesheet, $newAttachmentInfo);
+            }
 
             // Auto-transição: se o projeto está "Aguardando início", marcar como "Iniciado"
             if ($project->status === Project::STATUS_AWAITING_START) {
@@ -864,13 +1097,25 @@ class TimesheetController extends Controller
             }
 
             // Marcar apontamentos sobrepostos como conflitados
+            $newlyConflictedIds = collect();
             if ($hasConflict && isset($overlappingIds) && $overlappingIds->isNotEmpty()) {
-                Timesheet::whereIn('id', $overlappingIds)
-                    ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED])
+                $newlyConflictedIds = Timesheet::whereIn('id', $overlappingIds)
+                    ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_LATE])
+                    ->pluck('id');
+                Timesheet::whereIn('id', $newlyConflictedIds)
                     ->update(['status' => Timesheet::STATUS_CONFLICTED]);
             }
 
             DB::commit();
+
+            // Notifica donos dos apontamentos marcados como conflito
+            if ($hasConflict) {
+                $timesheet->notifyOwnerOfStatus('CONFLITO');
+            }
+            foreach ($newlyConflictedIds as $cid) {
+                $conflicted = Timesheet::find($cid);
+                if ($conflicted) $conflicted->notifyOwnerOfStatus('CONFLITO');
+            }
 
             $timesheet->load(['user', 'customer', 'project']);
 
@@ -971,7 +1216,12 @@ class TimesheetController extends Controller
             $step = 'auth_check';
             $isOwner      = $timesheet->user_id === $user->id;
             $isClienteOk  = $user->isCliente() && $user->customer_id && $timesheet->customer_id === $user->customer_id;
-            $canView      = $user->isAdmin() || $user->isCoordenador() || $user->hasAccess('hours.view_all') || $isOwner || $isClienteOk;
+            // Parceiro Admin/Gestor: vê apontamentos de qualquer membro da sua parceria
+            $isTeamTimesheet = $user->isParceiroAdmin() && $user->partner_id &&
+                \App\Models\User::where('id', $timesheet->user_id)
+                    ->where('partner_id', $user->partner_id)
+                    ->exists();
+            $canView      = $user->isAdmin() || $user->isCoordenador() || $user->hasAccess('hours.view_all') || $isOwner || $isClienteOk || $isTeamTimesheet;
             if ($user && !$canView) {
                 return response()->json(['success' => false, 'message' => 'Acesso negado'], 403);
             }
@@ -1070,7 +1320,12 @@ class TimesheetController extends Controller
             'date' => 'sometimes|date|before_or_equal:today',
             'start_time' => 'sometimes|date_format:H:i',
             'end_time' => 'sometimes|date_format:H:i|after:start_time',
-            'total_hours' => 'nullable|string|regex:/^\d+:[0-5][0-9]$/',
+            // Aceita HH:MM ("4:30"), decimal com ponto ou vírgula ("4.5", "4,5", "4.25"),
+            // ou inteiro puro ("4"). Parseado por Timesheet::parseTotalHoursToMinutes.
+            // Sintaxe ARRAY obrigatória: a regex tem `|` (alternation), que o Laravel
+            // confunde com separador de regras quando rules vêm como string —
+            // `preg_match(): No ending delimiter '/' found` em prod (29/05/2026).
+            'total_hours' => ['nullable', 'string', 'regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/'],
             'observation' => 'nullable|string|max:5000',
             'ticket' => 'nullable|string|max:100',
             'customer_id' => 'sometimes|exists:customers,id',
@@ -1246,14 +1501,11 @@ class TimesheetController extends Controller
             // Determinar qual usuário usar para validação
             $userIdForValidation = isset($validatedData['user_id']) ? $validatedData['user_id'] : $timesheet->user_id;
 
-            // Processar total_hours se fornecido
+            // Processar total_hours se fornecido (HH:MM | decimal | inteiro).
             $newEffortMinutes = null;
             if (!empty($validatedData['total_hours'])) {
-                // Converter total_hours para effort_minutes antes de atualizar
-                if (preg_match('/^(\d+):([0-5][0-9])$/', $validatedData['total_hours'], $matches)) {
-                    $hours = intval($matches[1]);
-                    $minutes = intval($matches[2]);
-                    $newEffortMinutes = ($hours * 60) + $minutes;
+                $newEffortMinutes = Timesheet::parseTotalHoursToMinutes($validatedData['total_hours']);
+                if ($newEffortMinutes !== null) {
                     $validatedData['effort_minutes'] = $newEffortMinutes;
                 }
                 // Remover total_hours dos dados validados pois não é um campo do modelo
@@ -1376,8 +1628,14 @@ class TimesheetController extends Controller
                 }
             }
 
-            // Resetar status para pendente se houve alterações após rejeição ou conflito
+            // Resetar status para pendente quando o usuário corrige um apontamento
+            // que foi rejeitado, conflitado ou marcado para ajuste. Edição = correção.
             if ($timesheet->status === Timesheet::STATUS_REJECTED) {
+                $validatedData['status'] = Timesheet::STATUS_PENDING;
+                $validatedData['rejection_reason'] = null;
+                $validatedData['reviewed_by'] = null;
+                $validatedData['reviewed_at'] = null;
+            } elseif ($timesheet->status === Timesheet::STATUS_ADJUSTMENT_REQUESTED) {
                 $validatedData['status'] = Timesheet::STATUS_PENDING;
                 $validatedData['rejection_reason'] = null;
                 $validatedData['reviewed_by'] = null;
@@ -1419,15 +1677,14 @@ class TimesheetController extends Controller
                 }
             }
 
+            $newAttachmentInfoUpd = null;
             if ($request->hasFile('attachment')) {
-                if ($timesheet->attachment_path) {
-                    \Storage::disk('public')->delete($timesheet->attachment_path);
-                }
+                // FASE 11.7 — soft-delete dos attachment(s) atuais (fonte única).
+                $this->softDeleteTimesheetAttachments($timesheet);
                 $file = $request->file('attachment');
                 $filename = time() . '_' . $file->getClientOriginalName();
                 $path = $file->storeAs('timesheets/' . date('Y/m'), $filename, 'public');
-                $timesheet->attachment_path = $path;
-                $timesheet->attachment_original_name = $file->getClientOriginalName();
+                $newAttachmentInfoUpd = ['path' => $path, 'original' => $file->getClientOriginalName(), 'mime' => $file->getMimeType()];
             }
 
             // Bloquear edição que criaria sobreposição de horários (mesmo cliente)
@@ -1471,6 +1728,11 @@ class TimesheetController extends Controller
 
             $timesheet->save();
 
+            // FASE 11.7 — Attachment persiste 100% na camada Attachment.
+            if (isset($newAttachmentInfoUpd) && $newAttachmentInfoUpd !== null) {
+                $this->registerTimesheetAttachment($timesheet->fresh(), $newAttachmentInfoUpd);
+            }
+
             // Re-detectar conflitos após a edição (mesmo cliente, com horários definidos)
             if ($timesheet->start_time && $timesheet->end_time) {
                 $overlappingIds = Timesheet::where('user_id', $timesheet->user_id)
@@ -1484,11 +1746,14 @@ class TimesheetController extends Controller
                     ->where('end_time', '>', $timesheet->start_time)
                     ->pluck('id');
 
+                $newlyConflictedIds = collect();
                 if ($overlappingIds->isNotEmpty()) {
                     $timesheet->status = Timesheet::STATUS_CONFLICTED;
                     $timesheet->save();
-                    Timesheet::whereIn('id', $overlappingIds)
-                        ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED])
+                    $newlyConflictedIds = Timesheet::whereIn('id', $overlappingIds)
+                        ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_LATE])
+                        ->pluck('id');
+                    Timesheet::whereIn('id', $newlyConflictedIds)
                         ->update(['status' => Timesheet::STATUS_CONFLICTED]);
                 }
             }
@@ -1497,6 +1762,17 @@ class TimesheetController extends Controller
             $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
 
             DB::commit();
+
+            // Notifica donos dos apontamentos marcados como conflito
+            if ($timesheet->status === Timesheet::STATUS_CONFLICTED) {
+                $timesheet->notifyOwnerOfStatus('CONFLITO');
+            }
+            if (isset($newlyConflictedIds)) {
+                foreach ($newlyConflictedIds as $cid) {
+                    $conflicted = Timesheet::find($cid);
+                    if ($conflicted) $conflicted->notifyOwnerOfStatus('CONFLITO');
+                }
+            }
 
             $timesheet->load(['user', 'customer', 'project']);
 
@@ -1585,7 +1861,17 @@ class TimesheetController extends Controller
             ], 422);
         }
 
+        // Captura user_id/date ANTES do delete pra resolver conflitos órfãos depois.
+        $tsUserId = $timesheet->user_id;
+        $tsDate   = $timesheet->date instanceof \Carbon\Carbon
+            ? $timesheet->date->format('Y-m-d')
+            : (string) $timesheet->date;
+
+        // FASE 11.7 — soft-delete attachment(s) ANTES do timesheet sumir.
+        $this->softDeleteTimesheetAttachments($timesheet);
+
         $timesheet->delete();
+        $this->resolveStaleConflicts($tsUserId, $tsDate);
         $this->invalidateListCache('timesheets');
 
         return response()->json([
@@ -1618,6 +1904,59 @@ class TimesheetController extends Controller
      *     )
      * )
      */
+    /**
+     * Bulk update de cliente/projeto em vários apontamentos. Marca manual_project_edit=true
+     * em cada um pra que o reprocess do Movidesk não reverta a alteração manual.
+     */
+    public function bulkUpdateProjectCustomer(\Illuminate\Http\Request $request): \Illuminate\Http\JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Não autorizado'], 403);
+        }
+        $data = $request->validate([
+            'ids'         => 'required|array|min:1',
+            'ids.*'       => 'integer|exists:timesheets,id',
+            'customer_id' => 'nullable|integer|exists:customers,id',
+            'project_id'  => 'nullable|integer|exists:projects,id',
+        ]);
+        if (empty($data['customer_id']) && empty($data['project_id'])) {
+            return response()->json(['message' => 'Informe customer_id e/ou project_id'], 422);
+        }
+
+        // Se projeto for fornecido, descobrir o customer dele e validar coerência
+        $projectCustomerId = null;
+        if (!empty($data['project_id'])) {
+            $project = \App\Models\Project::find($data['project_id']);
+            if (!$project) {
+                return response()->json(['message' => 'Projeto não encontrado'], 422);
+            }
+            $projectCustomerId = (int) $project->customer_id;
+            if (!empty($data['customer_id']) && (int) $data['customer_id'] !== $projectCustomerId) {
+                return response()->json([
+                    'message' => 'Projeto não pertence ao cliente informado',
+                ], 422);
+            }
+        }
+
+        $finalCustomerId = $data['customer_id'] ?? $projectCustomerId;
+        $finalProjectId  = $data['project_id'] ?? null;
+
+        $updated = 0;
+        foreach (Timesheet::whereIn('id', $data['ids'])->get() as $ts) {
+            if ($finalCustomerId !== null) $ts->customer_id = $finalCustomerId;
+            if ($finalProjectId  !== null) $ts->project_id  = $finalProjectId;
+            // Trava manual: sync do Movidesk não sobrescreve mais cliente/projeto.
+            $ts->manual_project_edit = true;
+            if ($ts->isDirty()) {
+                $ts->save(); // dispara observer pra log de auditoria
+                $updated++;
+            }
+        }
+
+        return response()->json(['success' => true, 'updated' => $updated]);
+    }
+
     public function bulkExtraPct(\Illuminate\Http\Request $request): \Illuminate\Http\JsonResponse
     {
         $user = Auth::user();
@@ -1651,6 +1990,77 @@ class TimesheetController extends Controller
         return response()->json(['success' => true, 'updated' => count($data['ids'])]);
     }
 
+    /**
+     * Lista os apontamentos em ATRASO (status late): chegaram pela integração com data
+     * em competência fechada e aguardam aprovação (entrar no período ou mudar a data).
+     */
+    public function atrasos(Request $request): JsonResponse
+    {
+        $query = Timesheet::with(['user:id,name', 'customer:id,name', 'project:id,name,code'])
+            ->where('status', Timesheet::STATUS_LATE)
+            ->whereNull('deleted_at')
+            ->orderBy('date');
+
+        if ($request->filled('year_month')) {
+            $query->whereRaw("to_char(date, 'YYYY-MM') = ?", [$request->query('year_month')]);
+        }
+
+        $rows = $query->get()->map(fn ($t) => [
+            'id'             => $t->id,
+            'date'           => $t->date->format('Y-m-d'),
+            'year_month'     => $t->date->format('Y-m'),
+            'colaborador'    => $t->user?->name ?? '—',
+            'cliente'        => $t->customer?->name ?? '—',
+            'projeto'        => $t->project?->name ?? '—',
+            'projeto_codigo' => $t->project?->code ?? '—',
+            'ticket'         => $t->ticket,
+            'horas'          => round($t->effort_minutes / 60, 2),
+            'observacao'     => $t->observation,
+            'date_locked'    => (bool) $t->date_locked,
+        ]);
+
+        return response()->json(['data' => $rows]);
+    }
+
+    /**
+     * Aprova um apontamento em ATRASO (status late):
+     *  • action=keep        → entra no período (status=pending, data original).
+     *  • action=change_date → muda a data de inclusão (escolhida pelo aprovador) e TRAVA a
+     *    data (date_locked) p/ o reprocesso da integração não sobrescrever; status=pending.
+     */
+    public function aprovarAtraso(Request $request, int $id): JsonResponse
+    {
+        $timesheet = Timesheet::find($id);
+        if (!$timesheet) {
+            return response()->json(['success' => false, 'message' => 'Apontamento não encontrado'], 404);
+        }
+        if ($timesheet->status !== Timesheet::STATUS_LATE) {
+            return response()->json(['success' => false, 'message' => 'Apontamento não está em atraso.'], 422);
+        }
+
+        $action = $request->input('action', 'keep');
+        if ($action === 'change_date') {
+            $validated = $request->validate(['date' => 'required|date']);
+            $timesheet->date        = $validated['date'];
+            $timesheet->date_locked = true;
+        }
+
+        $timesheet->status = Timesheet::STATUS_PENDING;
+        $timesheet->save();
+
+        $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
+        $this->invalidateListCache('timesheets');
+        $timesheet->load(['user', 'customer', 'project']);
+
+        return response()->json([
+            'success' => true,
+            'data'    => $timesheet,
+            'message' => $action === 'change_date'
+                ? 'Atraso aprovado com a nova data de inclusão.'
+                : 'Atraso aprovado — entrou no período.',
+        ]);
+    }
+
     public function approve(int $id): JsonResponse
     {
         $user = Auth::user();
@@ -1673,6 +2083,7 @@ class TimesheetController extends Controller
 
         if ($timesheet->approve($user)) {
             $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
+            $this->invalidateListCache('timesheets');
             $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
 
             return response()->json([
@@ -1805,6 +2216,7 @@ class TimesheetController extends Controller
 
         if ($timesheet->reject($user, $request->reason)) {
             $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
+            $this->invalidateListCache('timesheets');
             $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
 
             return response()->json([
@@ -1856,6 +2268,7 @@ class TimesheetController extends Controller
         }
 
         if ($timesheet->requestAdjustment($user, $request->reason)) {
+            $this->invalidateListCache('timesheets');
             $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
 
             return response()->json([
@@ -1931,6 +2344,7 @@ class TimesheetController extends Controller
         }
 
         if ($timesheet->reverseApproval($user, $request->reason)) {
+            $this->invalidateListCache('timesheets');
             $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
 
             return response()->json([
@@ -2006,6 +2420,7 @@ class TimesheetController extends Controller
         }
 
         if ($timesheet->reverseRejection($user, $request->reason)) {
+            $this->invalidateListCache('timesheets');
             $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
 
             return response()->json([
@@ -2114,13 +2529,15 @@ class TimesheetController extends Controller
 
         $request->validate([
             'customer_id' => 'required|integer',
-            'start_date'  => 'required|date',
-            'end_date'    => 'required|date',
+            // Opcionais: quando só a competência é usada, o período (digitação) pode vir vazio.
+            'start_date'  => 'nullable|date',
+            'end_date'    => 'nullable|date',
         ]);
 
         $customerId  = (int) $request->customer_id;
-        $startDate   = $request->start_date;
-        $endDate     = $request->end_date;
+        // Competência (serviço) trava o conjunto; o período (digitação) é opcional → fallback p/ a competência.
+        $startDate   = $request->start_date ?: $request->competencia_start;
+        $endDate     = $request->end_date ?: $request->competencia_end;
         $statusInput = $request->input('status');
         $statuses    = $statusInput === null
             ? []
@@ -2149,6 +2566,12 @@ class TimesheetController extends Controller
             $base->whereIn('timesheets.project_id', $projectIds);
         }
 
+        // Filtro por tipo de serviço (alinha com /timesheets index)
+        $serviceTypeIds = array_values(array_filter((array) $request->input('service_type_id', [])));
+        if (!empty($serviceTypeIds)) {
+            $base->whereHas('project', fn($q) => $q->whereIn('service_type_id', $serviceTypeIds));
+        }
+
         // Visibilidade por perfil — replica regras do index()
         if ($user->isCliente()) {
             $base->where('timesheets.customer_id', $user->customer_id)
@@ -2159,17 +2582,23 @@ class TimesheetController extends Controller
         } elseif (!$user->isAdmin() && !$user->hasAccess('hours.view_all')) {
             $base->forUser($user->id);
         } elseif ($user->isCoordenador()) {
-            $coordinatorProjectIds = $user->coordinatorProjects()->pluck('projects.id');
+            // Coord projetos: vê tudo. Sustentação: restrito ao escopo.
             if ($user->coordinator_type === 'sustentacao') {
                 $base->whereHas('project.serviceType', fn($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
-            } else {
-                $base->whereIn('timesheets.project_id', $coordinatorProjectIds);
             }
         }
 
+        // Competência: trava a DATA DO SERVIÇO (afeta tickets-no-período E agregações via clone).
+        if ($request->filled('competencia_start')) $base->where('timesheets.date', '>=', $request->competencia_start);
+        if ($request->filled('competencia_end'))   $base->where('timesheets.date', '<=', $request->competencia_end);
+
+        // date_field: 'date' (padrão) ou 'created_at' (data de inclusão).
+        $useCreatedAt = $request->input('date_field') === 'created_at';
+        $periodCol = $useCreatedAt ? 'timesheets.created_at::date' : 'timesheets.date';
+
         // 1) Tickets que tiveram apontamento no período
         $ticketsInPeriod = (clone $base)
-            ->whereBetween('timesheets.date', [$startDate, $endDate])
+            ->whereRaw("$periodCol BETWEEN ? AND ?", [$startDate, $endDate])
             ->select('timesheets.ticket')
             ->distinct()
             ->pluck('ticket')
@@ -2188,22 +2617,35 @@ class TimesheetController extends Controller
             ->selectRaw("MAX(movidesk_tickets.solicitante::jsonb->>'name') as requester")
             ->selectRaw('SUM(timesheets.effort_minutes) as lifetime_minutes')
             ->selectRaw('COUNT(*) as lifetime_count')
-            ->selectRaw('SUM(CASE WHEN timesheets.date BETWEEN ? AND ? THEN timesheets.effort_minutes ELSE 0 END) as period_minutes', [$startDate, $endDate])
-            ->selectRaw('SUM(CASE WHEN timesheets.date BETWEEN ? AND ? THEN 1 ELSE 0 END) as period_count', [$startDate, $endDate])
+            ->selectRaw("SUM(CASE WHEN $periodCol BETWEEN ? AND ? THEN timesheets.effort_minutes ELSE 0 END) as period_minutes", [$startDate, $endDate])
+            ->selectRaw("SUM(CASE WHEN $periodCol BETWEEN ? AND ? THEN 1 ELSE 0 END) as period_count", [$startDate, $endDate])
             ->groupBy('timesheets.ticket')
             ->orderBy('timesheets.ticket')
             ->get();
 
+        // Saldos iniciais cadastrados pra esse cliente — somam SOMENTE no
+        // lifetime_minutes (histórico), não no period_minutes (saldo é
+        // histórico anterior à entrada do ticket no Minutor).
+        $initialByTicket = \DB::table('ticket_initial_balances')
+            ->whereNull('deleted_at')
+            ->where('customer_id', $customerId)
+            ->whereIn('ticket', $rows->pluck('ticket')->all())
+            ->pluck('initial_minutes', 'ticket');
+
         return response()->json([
-            'tickets' => $rows->map(fn ($r) => [
-                'ticket'           => $r->ticket,
-                'title'            => $r->title,
-                'requester'        => $r->requester,
-                'period_minutes'   => (int) $r->period_minutes,
-                'period_count'     => (int) $r->period_count,
-                'lifetime_minutes' => (int) $r->lifetime_minutes,
-                'lifetime_count'   => (int) $r->lifetime_count,
-            ])->values(),
+            'tickets' => $rows->map(function ($r) use ($initialByTicket) {
+                $initial = (int) ($initialByTicket[$r->ticket] ?? 0);
+                return [
+                    'ticket'           => $r->ticket,
+                    'title'            => $r->title,
+                    'requester'        => $r->requester,
+                    'period_minutes'   => (int) $r->period_minutes,
+                    'period_count'     => (int) $r->period_count,
+                    'lifetime_minutes' => (int) $r->lifetime_minutes + $initial,
+                    'lifetime_count'   => (int) $r->lifetime_count,
+                    'initial_minutes'  => $initial,
+                ];
+            })->values(),
         ]);
     }
 
@@ -2244,6 +2686,46 @@ class TimesheetController extends Controller
             'consultant_hours' => $project->consultant_hours,
             'coordinator_hours' => $project->coordinator_hours,
         ]);
+
+        // On Demand é SOB DEMANDA — não controla saldo. Não valida saldo nem para o projeto
+        // On Demand nem para projeto FILHO de um On Demand. (getGeneralHoursBalance retorna 0
+        // para On Demand, o que antes era tratado erroneamente como "saldo insuficiente".)
+        if (($project->contractType?->code ?? null) === 'on_demand'
+            || ($project->parentProject?->contractType?->code ?? null) === 'on_demand') {
+            Log::info('Validação de saldo IGNORADA (On Demand não tem saldo)', ['project_id' => $project->id]);
+            return null;
+        }
+
+        // ── Bloqueio por HORAS APONTÁVEIS (coordination_hours) — só Fechado e BH Fixo ──
+        // O teto do bloqueio deixa de ser Horas Vendidas (sold_hours) e passa a ser
+        // "Horas Apontáveis" (coordination_hours). TUDO o mais fica idêntico: consumido
+        // (apontadas + saldo inicial), aportes, ajuste de filhos e allow_negative_balance —
+        // por isso reaproveitamos getGeneralHoursBalance e só trocamos a base sold→apontáveis.
+        // Não afeta interface nem nenhum outro cálculo. BH Mensal/demais seguem a regra atual.
+        $ctNameBlock = strtolower(trim((string) ($project->contractType->name ?? '')));
+        $ctCodeBlock = (string) ($project->contractType->code ?? '');
+        if ($ctNameBlock === 'fechado' || $ctCodeBlock === 'fixed_hours' || $ctNameBlock === 'banco de horas fixo') {
+            $generalBalance    = $project->getGeneralHoursBalance(false, $excludeTimesheetId);
+            $apontaveisBalance = $generalBalance - (float) ($project->sold_hours ?? 0) + (float) ($project->coordination_hours ?? 0);
+            if ($apontaveisBalance < $hoursToAdd && !$project->allow_negative_balance) {
+                Log::warning('Apontamento bloqueado — Horas Apontáveis insuficientes', [
+                    'project_id' => $project->id, 'user_id' => $userId,
+                    'horas_apontaveis' => $project->coordination_hours, 'sold_hours' => $project->sold_hours,
+                    'apontaveis_balance' => $apontaveisBalance, 'hours_to_add' => $hoursToAdd,
+                ]);
+                return response()->json([
+                    'code' => 'INSUFFICIENT_HOURS_BALANCE',
+                    'type' => 'error',
+                    'message' => 'Saldo de horas insuficiente',
+                    'details' => [
+                        'available_balance' => round($apontaveisBalance, 2),
+                        'requested_hours'   => $hoursToAdd,
+                        'balance_type'      => 'apontaveis',
+                    ],
+                ], 422);
+            }
+            return null;
+        }
 
         // Carregar relacionamentos necessários
         $project->load(['consultants', 'coordinators']);
@@ -2510,30 +2992,36 @@ class TimesheetController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        if (!$timesheet->attachment_path) {
+        // FASE 11.7 — Attachment vem 100% da camada Attachment.
+        $att = \App\Models\Attachment::query()
+            ->forEntity('TIMESHEET', $timesheet->id)
+            ->ofCategory('attachment')
+            ->visible()
+            ->latest('id')
+            ->first();
+
+        if (!$att) {
             return response()->json(['message' => 'Anexo não encontrado'], 404);
         }
 
         try {
-            $disk = \Storage::disk('public');
+            $service = app(\App\Attachments\AttachmentService::class);
+            $stream  = $service->downloadStream($user, $att->id);
 
-            if (!$disk->exists($timesheet->attachment_path)) {
-                return response()->json(['message' => 'Arquivo não encontrado no servidor'], 404);
-            }
-
-            $mime = $disk->mimeType($timesheet->attachment_path) ?: 'application/octet-stream';
-            $name = $timesheet->attachment_original_name ?? basename($timesheet->attachment_path);
-
-            return response($disk->get($timesheet->attachment_path), 200, [
-                'Content-Type'        => $mime,
-                'Content-Disposition' => 'inline; filename="' . addslashes($name) . '"',
+            return response()->stream(function () use ($stream) {
+                while (!feof($stream)) { echo fread($stream, 8192); }
+                fclose($stream);
+            }, 200, [
+                'Content-Type'        => $att->mime_type ?: 'application/octet-stream',
+                'Content-Disposition' => 'inline; filename="' . addslashes($att->original_name ?: basename($att->storage_path)) . '"',
                 'Cache-Control'       => 'no-cache',
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             \Log::error('Erro ao servir anexo de apontamento', [
-                'timesheet_id'    => $id,
-                'attachment_path' => $timesheet->attachment_path,
-                'error'           => $e->getMessage(),
+                'timesheet_id' => $id,
+                'attachment_id'=> $att->id,
+                'storage_path' => $att->storage_path,
+                'error'        => $e->getMessage(),
             ]);
             return response()->json(['message' => 'Erro ao acessar o anexo.'], 503);
         }
@@ -2552,24 +3040,17 @@ class TimesheetController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        $ids              = $request->input('ids', []);
-        $defaultProjectId = \App\Models\SystemSetting::get('movidesk_default_project_id');
+        $ids             = $request->input('ids', []);
+        $movideskOrigins = ['movidesk', 'webhook', 'movidesk_fallback'];
 
-        $movideskOrigins = ['movidesk', 'webhook'];
-
-        if (!empty($ids)) {
-            $timesheets = Timesheet::whereIn('id', array_map('intval', $ids))
-                ->whereIn('origin', $movideskOrigins)
-                ->whereNotNull('ticket')
-                ->whereNotNull('movidesk_appointment_id')
-                ->get();
-        } else {
-            // Sem IDs: prioriza apontamentos que caíram no PROJETO PADRÃO
-            // (esses são os candidatos a re-resolver depois de ajustes feitos
-            // no Movidesk, como amarrar pessoa→organização ou dept→empresa).
-            // Invalida o cache de departamento Movidesk antes do reprocess
-            // para respeitar mudanças recentes feitas no Movidesk.
+        // Sem IDs: roda o MESMO fluxo do cron (movidesk:sync) — fetch tickets
+        // atualizados desde o último sync, importa novos, atualiza existentes
+        // e detecta órfãos. Antes o botão só re-resolvia timesheets do PROJETO
+        // PADRÃO (limit 50) — divergia do automático e deixava de pegar tudo.
+        if (empty($ids)) {
             try {
+                // Invalida cache de departamento Movidesk antes do sync — respeita
+                // mudanças recentes (pessoa→organização, dept→empresa).
                 $store = \Illuminate\Support\Facades\Cache::getStore();
                 if (method_exists($store, 'getRedis')) {
                     $redis = $store->getRedis();
@@ -2579,20 +3060,35 @@ class TimesheetController extends Controller
                     }
                 }
             } catch (\Throwable $e) {
-                // Cache driver sem suporte a keys() — sem invalidação manual.
-                // Cada entrada expira em 1h naturalmente.
+                // Cache driver sem suporte a keys() — cada entrada expira em 1h.
             }
 
-            $query = Timesheet::whereIn('origin', $movideskOrigins)
-                ->whereNotNull('ticket')
-                ->whereNotNull('movidesk_appointment_id');
-
-            if ($defaultProjectId) {
-                $query->where('project_id', (int) $defaultProjectId);
+            // Sync completo processa 100+ tickets e leva minutos — não cabe num
+            // request HTTP (nginx tem proxy_read_timeout=120s). Despacha pra
+            // fila e retorna imediatamente; o worker (minutor-queue) executa
+            // em background e o usuário vê o resultado ao recarregar a tela.
+            try {
+                \Illuminate\Support\Facades\Artisan::queue('movidesk:sync');
+                return response()->json([
+                    'message' => 'Reprocessamento iniciado em segundo plano. Os apontamentos serão atualizados em alguns minutos — recarregue a tela em ~3 min.',
+                    'updated' => 0,
+                    'skipped' => 0,
+                    'errors'  => 0,
+                    'queued'  => true,
+                ]);
+            } catch (\Throwable $e) {
+                Log::error('[Reprocess Movidesk] Falha ao enfileirar sync', ['error' => $e->getMessage()]);
+                return response()->json(['message' => 'Erro ao iniciar sync. Verifique os logs.', 'updated' => 0, 'skipped' => 0, 'errors' => 1], 500);
             }
-
-            $timesheets = $query->orderByDesc('id')->limit(50)->get();
         }
+
+        // Com IDs: reprocess individual (caso o usuário queira forçar apenas
+        // os apontamentos selecionados via UI).
+        $timesheets = Timesheet::whereIn('id', array_map('intval', $ids))
+            ->whereIn('origin', $movideskOrigins)
+            ->whereNotNull('ticket')
+            ->whereNotNull('movidesk_appointment_id')
+            ->get();
 
         if ($timesheets->isEmpty()) {
             return response()->json(['message' => 'Nenhum apontamento para reprocessar.', 'updated' => 0, 'skipped' => 0, 'errors' => 0]);
@@ -2626,5 +3122,41 @@ class TimesheetController extends Controller
             'errors'  => $errors,
             'details' => $details,
         ]);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // FASE 11.7 — Helpers da camada Attachment (fonte única).
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private function registerTimesheetAttachment(Timesheet $timesheet, array $info): void
+    {
+        $actor = Auth::user() ?? \App\Models\User::find($timesheet->user_id);
+        if (!$actor) {
+            throw new \RuntimeException("Não há ator pra registrar attachment do timesheet {$timesheet->id}");
+        }
+        app(\App\Attachments\AttachmentService::class)->registerExisting($actor, [
+            'entity_type'   => 'TIMESHEET',
+            'entity_id'     => $timesheet->id,
+            'category'      => 'attachment',
+            'storage_path'  => $info['path'],
+            'original_name' => $info['original'] ?? basename($info['path']),
+            'mime_type'     => $info['mime'] ?? 'application/octet-stream',
+        ]);
+    }
+
+    private function softDeleteTimesheetAttachments(Timesheet $timesheet): void
+    {
+        try {
+            \App\Models\Attachment::query()
+                ->forEntity('TIMESHEET', $timesheet->id)
+                ->ofCategory('attachment')
+                ->whereNull('deleted_at')
+                ->get()
+                ->each(fn ($att) => $att->delete());
+        } catch (\Throwable $e) {
+            \Log::warning('TIMESHEET.attachment soft-delete falhou', [
+                'timesheet_id' => $timesheet->id, 'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

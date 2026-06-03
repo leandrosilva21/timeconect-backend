@@ -87,8 +87,11 @@ class ConsultantGroupController extends Controller
         try {
             $user = $request->user();
 
-            // Verificar permissões
-            if (!$user->isAdmin() && !$user->hasAccess('consultant_groups.view')) {
+            // Verificar permissões: groups.manage (libera o menu) ou consultant_groups.view.
+            if (!$user->isAdmin()
+                && !$user->hasAccess('groups.manage')
+                && !$user->hasAccess('consultant_groups.view')
+            ) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',
@@ -198,7 +201,7 @@ class ConsultantGroupController extends Controller
             unset($validated['consultant_ids']);
 
             // Verificar se os usuários são realmente consultores
-            $consultants = User::where('type', 'consultor')->whereIn('id', $consultantIds)->get();
+            $consultants = User::whereIn('type', ['consultor', 'parceiro_admin'])->whereIn('id', $consultantIds)->get();
 
             if ($consultants->count() !== count($consultantIds)) {
                 return response()->json([
@@ -279,8 +282,11 @@ class ConsultantGroupController extends Controller
         try {
             $user = $request->user();
 
-            // Verificar permissões
-            if (!$user->isAdmin() && !$user->hasAccess('consultant_groups.view')) {
+            // Verificar permissões: groups.manage (libera o menu) ou consultant_groups.view.
+            if (!$user->isAdmin()
+                && !$user->hasAccess('groups.manage')
+                && !$user->hasAccess('consultant_groups.view')
+            ) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',
@@ -383,7 +389,7 @@ class ConsultantGroupController extends Controller
             // Atualizar consultores se fornecido
             if ($consultantIds !== null) {
                 // Verificar se os usuários são realmente consultores
-                $consultants = User::where('type', 'consultor')->whereIn('id', $consultantIds)->get();
+                $consultants = User::whereIn('type', ['consultor', 'parceiro_admin'])->whereIn('id', $consultantIds)->get();
 
                 if ($consultants->count() !== count($consultantIds)) {
                     DB::rollBack();
@@ -460,8 +466,12 @@ class ConsultantGroupController extends Controller
         try {
             $user = $request->user();
 
-            // Verificar permissões
-            if (!$user->isAdmin() && !$user->hasAccess('consultant_groups.delete')) {
+            // Verificar permissões: groups.manage (cadastrada em PermissionService)
+            // ou consultant_groups.delete (legado).
+            if (!$user->isAdmin()
+                && !$user->hasAccess('groups.manage')
+                && !$user->hasAccess('consultant_groups.delete')
+            ) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',
@@ -526,8 +536,11 @@ class ConsultantGroupController extends Controller
         try {
             $user = $request->user();
 
-            // Verificar permissões
-            if (!$user->isAdmin() && !$user->hasAccess('consultant_groups.view')) {
+            // groups.manage também libera (alinhamento com o menu lateral).
+            if (!$user->isAdmin()
+                && !$user->hasAccess('groups.manage')
+                && !$user->hasAccess('consultant_groups.view')
+            ) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',
@@ -535,7 +548,7 @@ class ConsultantGroupController extends Controller
                 ], 403);
             }
 
-            $consultants = User::where('type', 'consultor')
+            $consultants = User::whereIn('type', ['consultor', 'parceiro_admin'])
             ->where('enabled', true)
             ->select('id', 'name', 'email')
             ->orderBy('name')

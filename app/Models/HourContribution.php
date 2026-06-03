@@ -10,7 +10,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class HourContribution extends Model
 {
     use HasFactory, SoftDeletes;
-    
+    use \App\Attachments\Concerns\HasGlobalAttachments;
+
+    // FASE 11 — chave do registry global de anexos.
+    public static function attachmentEntityType(): string { return 'HOUR_CONTRIBUTION'; }
+
+
     /**
      * The attributes that are mass assignable.
      *
@@ -22,8 +27,6 @@ class HourContribution extends Model
         'hourly_rate',
         'description',
         'motivo',
-        'proposta_path',
-        'proposta_original_name',
         'kanban_status',
         'contributed_by',
         'contributed_at',

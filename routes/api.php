@@ -2,6 +2,7 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\AusterIndicatorsController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ContractTypeController;
 use App\Http\Controllers\CustomerController;
@@ -134,6 +135,19 @@ Route::prefix('v1')->group(function () {
                 ->name('dashboards.bank-hours-fixed.projects');
             Route::get('/dashboards/bank-hours-fixed/projects/{projectId}/tickets', [BankHoursFixedController::class, 'bankHoursFixedProjectTickets'])
                 ->name('dashboards.bank-hours-fixed.projects.tickets');
+            // Listas inline e agrupamentos dentro do dashboard
+            Route::get('/dashboards/bank-hours-fixed/category-timesheets', [BankHoursFixedController::class, 'categoryTimesheetsModal'])
+                ->name('dashboards.bank-hours-fixed.category-timesheets');
+            Route::get('/dashboards/bank-hours-fixed/category-ticket-summary', [BankHoursFixedController::class, 'categoryTicketSummary'])
+                ->name('dashboards.bank-hours-fixed.category-ticket-summary');
+            Route::get('/dashboards/bank-hours-fixed/project-timesheets', [BankHoursFixedController::class, 'projectTimesheetsModal'])
+                ->name('dashboards.bank-hours-fixed.project-timesheets');
+            Route::get('/dashboards/bank-hours-fixed/project-timesheets/pdf', [BankHoursFixedController::class, 'projectTimesheetsPdf'])
+                ->name('dashboards.bank-hours-fixed.project-timesheets.pdf');
+            Route::get('/dashboards/bank-hours-fixed/project-ticket-summary', [BankHoursFixedController::class, 'projectTicketSummary'])
+                ->name('dashboards.bank-hours-fixed.project-ticket-summary');
+            Route::get('/dashboards/bank-hours-fixed/expenses', [BankHoursFixedController::class, 'expensesModal'])
+                ->name('dashboards.bank-hours-fixed.expenses');
             Route::get('/dashboards/bank-hours-fixed/maintenance/tickets', [BankHoursFixedController::class, 'bankHoursFixedMaintenanceTickets'])
                 ->name('dashboards.bank-hours-fixed.maintenance.tickets');
             Route::get('/dashboards/bank-hours-fixed/maintenance/tickets/{ticketId}/timesheets', [BankHoursFixedController::class, 'bankHoursFixedMaintenanceTicketTimesheets'])
@@ -146,6 +160,10 @@ Route::prefix('v1')->group(function () {
                 ->name('dashboards.bank-hours-fixed.indicators.hours-by-service');
             Route::get('/dashboards/bank-hours-fixed/indicators/service-timesheets', [BankHoursFixedController::class, 'bankHoursFixedServiceTimesheets'])
                 ->name('dashboards.bank-hours-fixed.indicators.service-timesheets');
+            Route::get('/dashboards/bank-hours-fixed/indicators/tickets-by-urgency', [BankHoursFixedController::class, 'bankHoursFixedTicketsByUrgency'])
+                ->name('dashboards.bank-hours-fixed.indicators.tickets-by-urgency');
+            Route::get('/dashboards/bank-hours-fixed/indicators/urgency-timesheets', [BankHoursFixedController::class, 'bankHoursFixedUrgencyTimesheets'])
+                ->name('dashboards.bank-hours-fixed.indicators.urgency-timesheets');
             Route::get('/dashboards/bank-hours-fixed/indicators/tickets-by-status', [BankHoursFixedController::class, 'bankHoursFixedTicketsByStatus'])
                 ->name('dashboards.bank-hours-fixed.indicators.tickets-by-status');
             Route::get('/dashboards/bank-hours-fixed/indicators/status-timesheets', [BankHoursFixedController::class, 'bankHoursFixedStatusTimesheets'])
@@ -290,6 +308,9 @@ Route::prefix('v1')->group(function () {
         // 🏢 CLIENT PORTAL
         Route::get('/client/portal', [ClientPortalController::class, 'portal'])->name('client.portal');
         Route::get('/client/portal/customers', [ClientPortalController::class, 'customers'])->name('client.portal.customers');
+        Route::get('/client/portal/summary', [ClientPortalController::class, 'summary'])->name('client.portal.summary');
+        Route::get('/client/portal/projects/{projectId}/operational-summary', [ClientPortalController::class, 'operationalSummary'])
+            ->name('client.portal.project-operational-summary');
 
         // 👥 CUSTOMERS - Protegido por permissões específicas (Admins sempre têm acesso)
         Route::middleware('permission.or.admin:customers.view')->group(function () {
@@ -378,9 +399,11 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/ic-summary', [ProjectController::class, 'icSummary'])->name('projects.ic-summary');
             Route::get('/projects/ic-analytics', [ProjectController::class, 'icAnalytics'])->name('projects.ic-analytics');
             Route::get('/projects/hours-per-consultant', [ProjectController::class, 'hoursPerConsultant'])->name('projects.hours-per-consultant');
+            Route::get('/projects/movidesk-integration-conflict', [ProjectController::class, 'movideskIntegrationConflict'])->name('projects.movidesk-conflict');
             Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
             Route::get('/projects/{project}/change-history', [ProjectController::class, 'changeHistory'])->name('projects.change-history');
             Route::get('/projects/{project}/contract-request', [ProjectController::class, 'contractRequest'])->name('projects.contract-request');
+            Route::get('/projects/{project}/monthly-statement', [ProjectController::class, 'monthlyStatement'])->name('projects.monthly-statement');
         });
 
         Route::middleware('permission.or.admin:projects.view_costs')->group(function () {
@@ -402,6 +425,7 @@ Route::prefix('v1')->group(function () {
             Route::patch('/projects/{project}', [ProjectController::class, 'update'])->name('projects.patch');
             Route::put('/projects/{project}/sold-hours-history/{history}', [ProjectController::class, 'updateSoldHoursHistory'])->name('projects.sold-hours-history.update');
             Route::delete('/projects/{project}/sold-hours-history/{history}', [ProjectController::class, 'destroySoldHoursHistory'])->name('projects.sold-hours-history.destroy');
+            Route::put('/projects/{project}/monthly-consumption', [ProjectController::class, 'updateMonthlyConsumption'])->name('projects.monthly-consumption');
             Route::put('/projects/{project}/change-history/{log}', [ProjectController::class, 'updateChangeHistory'])->name('projects.change-history.update');
             Route::delete('/projects/{project}/change-history/{log}', [ProjectController::class, 'destroyChangeHistory'])->name('projects.change-history.destroy');
             Route::post('/projects/{project}/detach-from-parent', [ProjectController::class, 'detachFromParent'])->name('projects.detach-from-parent');
@@ -425,14 +449,32 @@ Route::prefix('v1')->group(function () {
             Route::patch('/projects/{project}/hour-contributions/{contribution}/move', [HourContributionController::class, 'moveKanban'])->name('hour-contributions.move');
         });
 
+        // Mover aporte no Kanban (transição comercial novo_contrato ↔ aporte) — admin,
+        // coordenador (auto-pass do middleware) e administrativo (via contracts.manage).
+        // Separado do grupo acima pra não permitir editar/deletar aporte ao administrativo.
+        Route::middleware('permission.or.admin:projects.update,contracts.manage')->group(function () {
+            Route::patch('/projects/{project}/hour-contributions/{contribution}/move', [HourContributionController::class, 'moveKanban'])->name('hour-contributions.move');
+        });
+
         // ⏰ TIMESHEETS - Protegido por permissões específicas (Admins sempre têm acesso)
 
         // Rotas que qualquer usuário autenticado pode acessar (com lógica de permissão no controller)
         Route::get('/timesheets', [TimesheetController::class, 'index'])->name('timesheets.index');
         Route::get('/timesheets/export', [TimesheetController::class, 'export'])->name('timesheets.export');
         Route::put('/timesheets/bulk-extra-pct', [TimesheetController::class, 'bulkExtraPct'])->name('timesheets.bulk-extra-pct');
+        Route::put('/timesheets/bulk-update-project-customer', [TimesheetController::class, 'bulkUpdateProjectCustomer'])->name('timesheets.bulk-update-project-customer');
         Route::post('/timesheets/reprocess-movidesk', [TimesheetController::class, 'reprocessMovidesk'])->name('timesheets.reprocess-movidesk');
         Route::get('/timesheets/summary-by-ticket', [TimesheetController::class, 'summaryByTicket'])->name('timesheets.summary-by-ticket');
+        Route::get('/timesheets/atrasos', [TimesheetController::class, 'atrasos'])->name('timesheets.atrasos');
+
+        // Saldo inicial de ticket (admin/coord) — soma no histórico do ticket
+        Route::get   ('/ticket-initial-balances/lookup', [\App\Http\Controllers\TicketInitialBalanceController::class, 'lookup'])->name('ticket-initial-balances.lookup');
+        Route::get   ('/ticket-initial-balances',        [\App\Http\Controllers\TicketInitialBalanceController::class, 'index'])->name('ticket-initial-balances.index');
+        Route::get   ('/ticket-initial-balances/{id}',   [\App\Http\Controllers\TicketInitialBalanceController::class, 'show'])->name('ticket-initial-balances.show');
+        Route::post  ('/ticket-initial-balances',        [\App\Http\Controllers\TicketInitialBalanceController::class, 'store'])->name('ticket-initial-balances.store');
+        Route::put   ('/ticket-initial-balances/{id}',   [\App\Http\Controllers\TicketInitialBalanceController::class, 'update'])->name('ticket-initial-balances.update');
+        Route::delete('/ticket-initial-balances/{id}',   [\App\Http\Controllers\TicketInitialBalanceController::class, 'destroy'])->name('ticket-initial-balances.destroy');
+
         Route::get('/timesheets/{timesheet}', [TimesheetController::class, 'show'])->name('timesheets.show');
 
         // Histórico de alterações de um apontamento específico (admin/coord)
@@ -452,6 +494,7 @@ Route::prefix('v1')->group(function () {
         // Aprovação, liberação e rejeição
         Route::middleware('permission.or.admin:hours.approve')->group(function () {
             Route::post('/timesheets/{timesheet}/approve', [TimesheetController::class, 'approve'])->name('timesheets.approve');
+            Route::post('/timesheets/{timesheet}/aprovar-atraso', [TimesheetController::class, 'aprovarAtraso'])->name('timesheets.aprovar-atraso');
             Route::post('/timesheets/{timesheet}/release', [TimesheetController::class, 'release'])->name('timesheets.release');
             Route::post('/timesheets/{timesheet}/reverse-release', [TimesheetController::class, 'reverseRelease'])->name('timesheets.reverse-release');
         });
@@ -473,6 +516,7 @@ Route::prefix('v1')->group(function () {
 
         Route::put('/expenses/{expense}', [ExpenseController::class, 'update'])->name('expenses.update');
         Route::patch('/expenses/{expense}', [ExpenseController::class, 'update'])->name('expenses.patch');
+        Route::post('/expenses/{expense}/set-fechamento', [ExpenseController::class, 'setFechamento'])->name('expenses.set-fechamento');
         Route::delete('/expenses/{expense}', [ExpenseController::class, 'destroy'])->name('expenses.destroy');
 
         Route::middleware('permission.or.admin:expenses.approve')->group(function () {
@@ -577,6 +621,9 @@ Route::prefix('v1')->group(function () {
         Route::put('/users/{user}', [UserController::class, 'update'])->name('users.update');
         Route::patch('/users/{user}', [UserController::class, 'update'])->name('users.patch');
 
+        // Atualização em massa do tipo de contrato (cooperado/clt/pj)
+        Route::post('/users/bulk-contract-type', [UserController::class, 'bulkContractType'])->name('users.bulk-contract-type');
+
         Route::middleware('permission.or.admin:users.delete')->group(function () {
             Route::delete('/users/{user}',    [UserController::class, 'destroy'])->name('users.destroy');
             Route::delete('/users',           [UserController::class, 'bulkDestroy'])->name('users.bulk-destroy');
@@ -590,6 +637,10 @@ Route::prefix('v1')->group(function () {
 
         // Histórico de alterações de valor hora
         Route::get('/users/{user}/hourly-rate-history', [UserController::class, 'getHourlyRateHistory'])->name('users.hourly-rate-history');
+
+        // 📊 INDICADORES — Auster (admin only via check no controller; inclui projetos congelados)
+        Route::get('/indicadores/auster/projects',      [AusterIndicatorsController::class, 'projects'])->name('indicadores.auster.projects');
+        Route::get('/indicadores/auster/top-consumed',  [AusterIndicatorsController::class, 'topConsumed'])->name('indicadores.auster.top-consumed');
 
         // 🎯 APROVAÇÕES - Endpoints para gerenciar aprovações pendentes
         Route::middleware('permission.or.admin:timesheets.approve,expenses.approve')->group(function () {
@@ -670,6 +721,7 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:partners.update')->group(function () {
             Route::put('/partners/{partner}', [PartnerController::class, 'update'])->name('partners.update');
+            Route::get('/partners/{partner}/hourly-rate-history', [PartnerController::class, 'getHourlyRateHistory'])->name('partners.hourly-rate-history');
         });
 
         Route::middleware('permission.or.admin:partners.delete')->group(function () {
@@ -706,14 +758,20 @@ Route::prefix('v1')->group(function () {
         // 🧾 FECHAMENTO CLIENTE
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/fechamento-cliente',                                                      [\App\Http\Controllers\FechamentoClienteController::class, 'index']);
+            Route::get('/fechamento-cliente/despesas-resumo',                                       [\App\Http\Controllers\FechamentoClienteController::class, 'despesasResumo']);
+            Route::get('/fechamento-cliente/apontamentos-geral',                                    [\App\Http\Controllers\FechamentoClienteController::class, 'apontamentosGeral']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/contratos',                   [\App\Http\Controllers\FechamentoClienteController::class, 'contratos']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/por-tipo',                    [\App\Http\Controllers\FechamentoClienteController::class, 'porTipo']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/apontamentos',               [\App\Http\Controllers\FechamentoClienteController::class, 'apontamentos']);
+            Route::get('/fechamento-cliente/{customerId}/{yearMonth}/report-html',                 [\App\Http\Controllers\FechamentoClienteController::class, 'reportHtml']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/despesas',                    [\App\Http\Controllers\FechamentoClienteController::class, 'despesas']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/pendencias',                  [\App\Http\Controllers\FechamentoClienteController::class, 'pendencias']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/pagamento',                   [\App\Http\Controllers\FechamentoClienteController::class, 'pagamento']);
-            Route::post('/fechamento-cliente/{customerId}/{yearMonth}/fechar',                     [\App\Http\Controllers\FechamentoClienteController::class, 'fechar']);
-            Route::post('/fechamento-cliente/{customerId}/{yearMonth}/reabrir',                    [\App\Http\Controllers\FechamentoClienteController::class, 'reabrir']);
+            Route::post('/fechamento-cliente/{customerId}/{yearMonth}/enviar-email',               [\App\Http\Controllers\FechamentoClienteController::class, 'enviarEmail']);
+            Route::post('/fechamento-cliente/{customerId}/{yearMonth}/limpar-envio',               [\App\Http\Controllers\FechamentoClienteController::class, 'limparEnvio']);
+            Route::get('/fechamento-cliente/{customerId}/{yearMonth}/excel',                       [\App\Http\Controllers\FechamentoClienteController::class, 'excel']);
+            Route::post('/fechamento-cliente/{customerId}/{yearMonth}/email-preview',              [\App\Http\Controllers\FechamentoClienteController::class, 'emailPreview']);
+            Route::post('/fechamento-cliente/{customerId}/fechamento-email',                       [\App\Http\Controllers\FechamentoClienteController::class, 'saveFechamentoEmail']);
         });
 
         // 🤝 FECHAMENTO PARCEIRO
@@ -722,15 +780,49 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/consultores',                 [\App\Http\Controllers\FechamentoParceiroController::class, 'consultores']);
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/despesas',                    [\App\Http\Controllers\FechamentoParceiroController::class, 'despesas']);
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/apontamentos',               [\App\Http\Controllers\FechamentoParceiroController::class, 'apontamentos']);
-            Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/fechar',                     [\App\Http\Controllers\FechamentoParceiroController::class, 'fechar']);
-            Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/reabrir',                    [\App\Http\Controllers\FechamentoParceiroController::class, 'reabrir']);
+            Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/report-html',                [\App\Http\Controllers\FechamentoParceiroController::class, 'reportHtml']);
+            Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/enviar-email',               [\App\Http\Controllers\FechamentoParceiroController::class, 'enviarEmail']);
+            Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/limpar-envio',               [\App\Http\Controllers\FechamentoParceiroController::class, 'limparEnvio']);
+            Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/excel',                       [\App\Http\Controllers\FechamentoParceiroController::class, 'excel']);
+            Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/email-preview',              [\App\Http\Controllers\FechamentoParceiroController::class, 'emailPreview']);
+            Route::post('/fechamento-parceiro/{partnerId}/fechamento-email',                       [\App\Http\Controllers\FechamentoParceiroController::class, 'saveFechamentoEmail']);
+            // Ajustes do recebimento (desconto/adiantamento/adicional) do parceiro no mês.
+            Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/ajustes',                     [\App\Http\Controllers\FechamentoParceiroController::class, 'salvarAjustes']);
         });
 
         // 👤 FECHAMENTO CONSULTOR
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/fechamento-consultor/{yearMonth}',                              [\App\Http\Controllers\FechamentoConsultorController::class, 'index']);
+            Route::get('/fechamento-consultor/{yearMonth}/export-excel',                 [\App\Http\Controllers\FechamentoConsultorController::class, 'exportExcel']);
+
+            // 📎 Notas fiscais PJ (NFS-e + Nota de débito) — consultor PJ avulso ou parceiro PJ.
+            Route::get('/fechamento/notas/{type}/{id}/{yearMonth}',                 [\App\Http\Controllers\FechamentoNotaController::class, 'show']);
+            Route::post('/fechamento/notas/{type}/{id}/{yearMonth}',                [\App\Http\Controllers\FechamentoNotaController::class, 'upload']);
+            Route::get('/fechamento/notas/{type}/{id}/{yearMonth}/{tipo}/download',  [\App\Http\Controllers\FechamentoNotaController::class, 'download']);
+            Route::post('/fechamento/notas/{type}/{id}/{yearMonth}/{tipo}/decisao',  [\App\Http\Controllers\FechamentoNotaController::class, 'decisao']);
+            // Admin libera o envio de notas após o prazo (dia 15) para um notable+mês.
+            Route::post('/fechamento/notas/{type}/{id}/{yearMonth}/liberar',         [\App\Http\Controllers\FechamentoNotaController::class, 'liberar']);
+
+            // Folha Cooperativa (planilha de importação)
+            Route::get('/fechamento-folha/{yearMonth}',          [\App\Http\Controllers\FolhaPagamentoController::class, 'grid']);
+            Route::post('/fechamento-folha/{yearMonth}',         [\App\Http\Controllers\FolhaPagamentoController::class, 'save']);
+            Route::get('/fechamento-folha/{yearMonth}/export',   [\App\Http\Controllers\FolhaPagamentoController::class, 'export']);
+            Route::delete('/fechamento-folha/{yearMonth}/manual/{socioKey}', [\App\Http\Controllers\FolhaPagamentoController::class, 'deleteRow']);
+            Route::post('/fechamento-folha/{yearMonth}/cancel',  [\App\Http\Controllers\FolhaPagamentoController::class, 'cancelRow']);
+            Route::post('/fechamento-folha/{yearMonth}/import-bizify', [\App\Http\Controllers\FolhaPagamentoController::class, 'importBizify']);
+
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/apontamentos',        [\App\Http\Controllers\FechamentoConsultorController::class, 'apontamentos']);
+            Route::get('/fechamento-consultor/{userId}/{yearMonth}/report-html',         [\App\Http\Controllers\FechamentoConsultorController::class, 'reportHtml']);
+            Route::get('/fechamento-consultor/{userId}/{yearMonth}/despesas',            [\App\Http\Controllers\FechamentoConsultorController::class, 'despesas']);
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/banco-horas',         [\App\Http\Controllers\FechamentoConsultorController::class, 'bancoHoras']);
+            Route::post('/fechamento-consultor/{userId}/{yearMonth}/enviar-email',       [\App\Http\Controllers\FechamentoConsultorController::class, 'enviarEmail']);
+            Route::post('/fechamento-consultor/{userId}/{yearMonth}/limpar-envio',       [\App\Http\Controllers\FechamentoConsultorController::class, 'limparEnvio']);
+            Route::get('/fechamento-consultor/{userId}/{yearMonth}/excel',               [\App\Http\Controllers\FechamentoConsultorController::class, 'excel']);
+            // Ajustes do recebimento (desconto/adiantamento/adicional) do consultor no mês.
+            Route::post('/fechamento-consultor/{userId}/{yearMonth}/ajustes',            [\App\Http\Controllers\FechamentoConsultorController::class, 'salvarAjustes']);
+            // Recebimento do próprio usuário (meu-painel / partner-dashboard).
+            Route::get('/my-closing/{yearMonth}',                                        [\App\Http\Controllers\FechamentoConsultorController::class, 'myClosing']);
+            Route::post('/fechamento-consultor/{userId}/{yearMonth}/email-preview',      [\App\Http\Controllers\FechamentoConsultorController::class, 'emailPreview']);
         });
 
         // 📅 FERIADOS
@@ -782,6 +874,19 @@ Route::prefix('v1')->group(function () {
         Route::get('/contracts/{contract}/snapshot',                  [ContractController::class, 'snapshot'])->name('contracts.snapshot');
         Route::post('/contracts/{contract}/snapshot/replay',          [ContractController::class, 'replay'])->name('contracts.snapshot.replay');
         Route::get('/contracts/consistency-report',                   [ContractController::class, 'consistencyReport'])->name('contracts.consistency-report');
+        Route::get('/contracts/recorrentes',                          [ContractController::class, 'recorrentes'])->name('contracts.recorrentes');
+        Route::post('/contracts/recorrentes/import',                  [ContractController::class, 'importAniversario'])->name('contracts.recorrentes-import');
+        Route::patch('/contracts/{contract}/recorrente',              [ContractController::class, 'updateRecorrente'])->name('contracts.recorrente-update');
+        // Reajuste sob demanda (índice IPCA/IGP-M via BCB → prévia → aplicação manual + histórico)
+        Route::get('/economic-index',                                 [\App\Http\Controllers\EconomicIndexController::class, 'show'])->name('economic-index.show');
+        Route::get('/contracts/{contract}/adjustment-preview',        [ContractController::class, 'adjustmentPreview'])->name('contracts.adjustment-preview');
+        Route::post('/contracts/{contract}/apply-adjustment',         [ContractController::class, 'applyAdjustment'])->name('contracts.apply-adjustment');
+        Route::post('/contracts/{contract}/renew-no-adjustment',      [ContractController::class, 'renewWithoutAdjustment'])->name('contracts.renew-no-adjustment');
+        Route::post('/contracts/{contract}/notify-client-adjustment', [ContractController::class, 'notifyClientAdjustment'])->name('contracts.notify-client-adjustment');
+        // Dashboard de reajustes (resumo/KPIs + lista priorizada + histórico)
+        Route::get('/contracts/reajustes/summary',                    [ContractController::class, 'reajustesSummary'])->name('contracts.reajustes-summary');
+        Route::get('/contracts/reajustes',                            [ContractController::class, 'reajustesList'])->name('contracts.reajustes-list');
+        Route::get('/contracts/{contract}/value-changes',             [ContractController::class, 'valueChanges'])->name('contracts.value-changes');
         Route::get('/projects/{project}/kanban-logs',                [\App\Http\Controllers\KanbanLogController::class, 'projectLogs'])->name('projects.kanban-logs');
         Route::get('/contract-requests/{contractRequest}/kanban-logs', [\App\Http\Controllers\KanbanLogController::class, 'requestLogs'])->name('contract-requests.kanban-logs');
 
@@ -839,6 +944,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/debug-project-map',   [SustentacaoController::class, 'debugProjectMap'])->name('sustentacao.debug-project-map');
             Route::post('/sync-orgs',          [SustentacaoController::class, 'syncOrgs'])->name('sustentacao.sync-orgs');
             Route::post('/sync-agents',        [SustentacaoController::class, 'syncAgents'])->name('sustentacao.sync-agents');
+            // Rotinas embarcadas no portal — filtradas por service_type Sustentação
+            Route::get('/timesheets',          [SustentacaoController::class, 'timesheets'])->name('sustentacao.timesheets');
+            Route::get('/expenses',            [SustentacaoController::class, 'expenses'])->name('sustentacao.expenses');
+            Route::get('/approvals',           [SustentacaoController::class, 'approvals'])->name('sustentacao.approvals');
         });
 
         // ⚙️ CONFIGURAÇÕES DO SISTEMA - Protegido por permissões específicas (Admins sempre têm acesso)
@@ -854,6 +963,7 @@ Route::prefix('v1')->group(function () {
         // 🔗 MOVIDESK ADMIN - Sync manual e status da integração (somente admins)
         Route::middleware('permission.or.admin:system_settings.view')->group(function () {
             Route::get('/movidesk/status', [\App\Http\Controllers\MovideskAdminController::class, 'status'])->name('movidesk.status');
+            Route::get('/movidesk/problem-tickets', [\App\Http\Controllers\MovideskAdminController::class, 'problemTickets'])->name('movidesk.problem_tickets.index');
         });
 
         Route::middleware('permission.or.admin:system_settings.update')->group(function () {
@@ -865,6 +975,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/movidesk/debug-orgs',        [\App\Http\Controllers\MovideskAdminController::class, 'debugOrgs'])->name('movidesk.debug.orgs');
             Route::post('/movidesk/link-org',         [\App\Http\Controllers\MovideskAdminController::class, 'linkOrg'])->name('movidesk.link.org');
             Route::post('/movidesk/link-org-project', [\App\Http\Controllers\MovideskAdminController::class, 'linkOrgProject'])->name('movidesk.link.org.project');
+
+            // Slow-lane: tickets que travaram no fetchTicket principal
+            Route::post('/movidesk/problem-tickets/{id}/retry', [\App\Http\Controllers\MovideskAdminController::class, 'problemTicketRetry'])->name('movidesk.problem_tickets.retry');
+            Route::delete('/movidesk/problem-tickets/{id}',     [\App\Http\Controllers\MovideskAdminController::class, 'problemTicketDrop'])->name('movidesk.problem_tickets.drop');
         });
 
         // 🧠 MATRIZ DE CONHECIMENTO — Skills + Consultant Skills
@@ -877,6 +991,12 @@ Route::prefix('v1')->group(function () {
         Route::put('/consultant-skills/{id}',          [ConsultantSkillController::class, 'update'])->name('consultant-skills.update');
         Route::get('/consultants/{id}/profile',        [ConsultantSkillController::class, 'showProfile'])->name('consultants.profile.show');
         Route::patch('/consultants/{id}/profile',      [ConsultantSkillController::class, 'updateProfile'])->name('consultants.profile.update');
+
+        // 📋 KANBAN DE CANDIDATOS
+        Route::get('/candidates',                      [CandidateController::class, 'index'])->name('candidates.index');
+        Route::get('/candidates/triage-queue',         [CandidateController::class, 'triageQueue'])->name('candidates.triage-queue');
+        Route::patch('/candidates/{id}',               [CandidateController::class, 'update'])->name('candidates.update');
+        Route::patch('/candidates/{id}/status',        [CandidateController::class, 'updateStatus'])->name('candidates.status.update');
 
         // 🎯 GAPS — Detecção de lacunas de skills (critical e por projeto)
         Route::get('/consultants/{id}/gaps',          [GapController::class, 'consultantGaps'])->name('consultants.gaps');
@@ -951,5 +1071,27 @@ Route::prefix('v1')->group(function () {
             Route::post('/rules/{id}/test',          [\App\Http\Controllers\BotConfigController::class, 'testRule'])->name('bot.rules.test');
             Route::post('/rules/{id}/dispatch-test', [\App\Http\Controllers\BotConfigController::class, 'dispatchTestRule'])->name('bot.rules.dispatch-test');
         });
+
+        // ────────────────────────────────────────────────────────────────────
+        // 📎 ATTACHMENTS (FASE 11.1 — camada global polimórfica)
+        // Rotas REST genéricas. Permissão delegada ao service via registry.
+        // ────────────────────────────────────────────────────────────────────
+        Route::get('/attachments',                   [\App\Http\Controllers\AttachmentController::class, 'index'])->name('attachments.index');
+        Route::post('/attachments',                  [\App\Http\Controllers\AttachmentController::class, 'store'])->name('attachments.store');
+        // FASE 11.5 — Observability (admin-only, validado no controller).
+        Route::get('/attachments/stats',             [\App\Http\Controllers\AttachmentsAnalyticsController::class, 'stats'])->name('attachments.stats');
+        Route::get('/attachments/events',            [\App\Http\Controllers\AttachmentsAnalyticsController::class, 'events'])->name('attachments.events');
+        Route::get('/attachments/health',            [\App\Http\Controllers\AttachmentsAnalyticsController::class, 'health'])->name('attachments.health');
+        Route::get('/attachments/{id}',              [\App\Http\Controllers\AttachmentController::class, 'show'])->name('attachments.show');
+        Route::get('/attachments/{id}/download',     [\App\Http\Controllers\AttachmentController::class, 'download'])->name('attachments.download');
+        Route::get('/attachments/{id}/url',          [\App\Http\Controllers\AttachmentController::class, 'signedUrl'])->name('attachments.signed-url');
+        Route::delete('/attachments/{id}',           [\App\Http\Controllers\AttachmentController::class, 'destroy'])->name('attachments.destroy');
+        Route::post('/attachments/{id}/restore',     [\App\Http\Controllers\AttachmentController::class, 'restore'])->name('attachments.restore');
     });
+
+    // Signed URL externa (sem auth:sanctum; o middleware 'signed' garante
+    // autenticidade do link; controller revalida permissão no service).
+    Route::middleware('signed')->get('/attachments-signed-download',
+        [\App\Http\Controllers\AttachmentController::class, 'signedDownload'])
+        ->name('attachments.signed-download');
 });

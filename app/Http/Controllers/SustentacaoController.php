@@ -993,4 +993,166 @@ class SustentacaoController extends Controller
             'message' => 'Sincronização iniciada em background. Aguarde ~3 minutos e recarregue a aba.',
         ]);
     }
+
+    // ───────────────────────────────────────────────────────────────
+    // Rotinas do Portal de Sustentação: Apontamentos | Despesas | Aprovações
+    // Filtradas pelo service_type Sustentação.
+    // ───────────────────────────────────────────────────────────────
+
+    private function sustentacaoServiceTypeIds(): array
+    {
+        return \App\Models\ServiceType::where('code', 'sustentacao')
+            ->orWhereRaw('LOWER(TRIM(name)) IN (?, ?)', ['sustentação', 'sustentacao'])
+            ->pluck('id')->all();
+    }
+
+    private function sustentacaoProjectIds(?int $customerId = null): array
+    {
+        $stIds = $this->sustentacaoServiceTypeIds();
+        if (empty($stIds)) return [];
+        $q = \App\Models\Project::whereIn('service_type_id', $stIds)
+            ->whereNull('deleted_at')
+            // Projetos com override de coordenador não pertencem ao "portal de sustentação"
+            // nas abas Apontamentos/Despesas/Aprovações — são gerenciados pelo coord override.
+            ->whereNull('kanban_coordinator_override_id');
+        if ($customerId) $q->where('customer_id', $customerId);
+        return $q->pluck('id')->all();
+    }
+
+    private function parseRequesterName(mixed $req): ?string
+    {
+        if (is_array($req) && isset($req['name'])) return $req['name'];
+        if (is_string($req) && str_starts_with(trim($req), '{')) {
+            $d = json_decode($req, true);
+            if (is_array($d) && isset($d['name'])) return $d['name'];
+        }
+        return is_string($req) ? $req : null;
+    }
+
+    public function timesheets(Request $request): JsonResponse
+    {
+        $customerId = $request->get('customer_id') ? (int) $request->get('customer_id') : null;
+        $projectIds = $this->sustentacaoProjectIds($customerId);
+        if (empty($projectIds)) return response()->json(['data' => [], 'total' => 0]);
+
+        $q = \App\Models\Timesheet::with(['user', 'project.customer', 'project.contractType'])
+            ->whereIn('project_id', $projectIds)
+            ->where('status', '!=', 'rejected');
+        if ($df = $request->get('date_from')) $q->where('date', '>=', $df);
+        if ($dt = $request->get('date_to'))   $q->where('date', '<=', $dt);
+
+        $perPage = (int) $request->get('per_page', 50);
+        $page    = (int) $request->get('page', 1);
+        $total   = (clone $q)->count();
+        $rows    = $q->orderByDesc('date')->orderByDesc('id')
+                     ->skip(($page - 1) * $perPage)->take($perPage)->get();
+
+        $fmtTime = fn ($v) => $v instanceof \DateTimeInterface ? $v->format('H:i') : (is_string($v) && strlen($v) >= 5 ? substr($v, -8, 5) : null);
+
+        return response()->json([
+            'data' => $rows->map(fn ($t) => [
+                'id'             => $t->id,
+                'date'           => optional($t->date)->format('Y-m-d'),
+                'start_time'     => $fmtTime($t->start_time),
+                'end_time'       => $fmtTime($t->end_time),
+                'effort_minutes' => $t->effort_minutes,
+                'description'    => $t->observation,
+                'ticket'         => $t->ticket,
+                'ticket_subject' => $t->ticket_subject,
+                'requester'      => $this->parseRequesterName($t->ticket_solicitante),
+                'status'         => $t->status,
+                'status_display' => $t->status_display,
+                // FASE 11.7 — coluna inline dropada; payload mantém a chave
+                // 'attachment_path' como URL pra não quebrar FE em vôo.
+                'attachment_path'=> $t->attachment_url,
+                'user'           => $t->user ? ['id' => $t->user->id, 'name' => $t->user->name] : null,
+                'customer'       => $t->project && $t->project->customer ? $t->project->customer->name : null,
+                'project'        => $t->project ? [
+                    'id' => $t->project->id, 'code' => $t->project->code, 'name' => $t->project->name,
+                    'contract_type' => optional($t->project->contractType)->name,
+                ] : null,
+            ])->values(),
+            'total' => $total,
+            'page' => $page,
+            'per_page' => $perPage,
+        ]);
+    }
+
+    public function expenses(Request $request): JsonResponse
+    {
+        $customerId = $request->get('customer_id') ? (int) $request->get('customer_id') : null;
+        $projectIds = $this->sustentacaoProjectIds($customerId);
+        if (empty($projectIds)) return response()->json(['data' => [], 'total' => 0]);
+
+        $q = \App\Models\Expense::with(['user', 'project.customer', 'category'])
+            ->whereIn('project_id', $projectIds);
+        if ($df = $request->get('date_from')) $q->where('date', '>=', $df);
+        if ($dt = $request->get('date_to'))   $q->where('date', '<=', $dt);
+
+        $perPage = (int) $request->get('per_page', 50);
+        $page    = (int) $request->get('page', 1);
+        $total   = (clone $q)->count();
+        $rows    = $q->orderByDesc('date')->orderByDesc('id')
+                     ->skip(($page - 1) * $perPage)->take($perPage)->get();
+
+        return response()->json([
+            'data' => $rows->map(fn ($e) => [
+                'id'          => $e->id,
+                'date'        => optional($e->date)->format('Y-m-d'),
+                'amount'      => (float) $e->amount,
+                'description' => $e->description,
+                'status'      => $e->status,
+                'status_display' => $e->status_display ?? $e->status,
+                'user'        => $e->user ? ['id' => $e->user->id, 'name' => $e->user->name] : null,
+                'project'     => $e->project ? ['id' => $e->project->id, 'code' => $e->project->code, 'name' => $e->project->name] : null,
+                'category'    => $e->category ? ['id' => $e->category->id, 'name' => $e->category->name] : null,
+            ])->values(),
+            'total' => $total,
+            'page' => $page,
+            'per_page' => $perPage,
+        ]);
+    }
+
+    public function approvals(Request $request): JsonResponse
+    {
+        $customerId = $request->get('customer_id') ? (int) $request->get('customer_id') : null;
+        $projectIds = $this->sustentacaoProjectIds($customerId);
+        if (empty($projectIds)) return response()->json(['data' => [], 'total' => 0]);
+
+        $q = \App\Models\Timesheet::with(['user', 'project.customer'])
+            ->whereIn('project_id', $projectIds)
+            ->where('status', 'pending');
+        if ($df = $request->get('date_from')) $q->where('date', '>=', $df);
+        if ($dt = $request->get('date_to'))   $q->where('date', '<=', $dt);
+
+        $perPage = (int) $request->get('per_page', 50);
+        $page    = (int) $request->get('page', 1);
+        $total   = (clone $q)->count();
+        $rows    = $q->orderByDesc('date')->orderByDesc('id')
+                     ->skip(($page - 1) * $perPage)->take($perPage)->get();
+
+        $fmtTime = fn ($v) => $v instanceof \DateTimeInterface ? $v->format('H:i') : (is_string($v) && strlen($v) >= 5 ? substr($v, -8, 5) : null);
+
+        return response()->json([
+            'data' => $rows->map(fn ($t) => [
+                'id'             => $t->id,
+                'date'           => optional($t->date)->format('Y-m-d'),
+                'start_time'     => $fmtTime($t->start_time),
+                'end_time'       => $fmtTime($t->end_time),
+                'effort_minutes' => $t->effort_minutes,
+                'description'    => $t->observation,
+                'ticket'         => $t->ticket,
+                'ticket_subject' => $t->ticket_subject,
+                'requester'      => $this->parseRequesterName($t->ticket_solicitante),
+                'status'         => $t->status,
+                'status_display' => $t->status_display,
+                'user'           => $t->user ? ['id' => $t->user->id, 'name' => $t->user->name] : null,
+                'customer'       => $t->project && $t->project->customer ? $t->project->customer->name : null,
+                'project'        => $t->project ? ['id' => $t->project->id, 'code' => $t->project->code, 'name' => $t->project->name] : null,
+            ])->values(),
+            'total' => $total,
+            'page' => $page,
+            'per_page' => $perPage,
+        ]);
+    }
 }

@@ -8,7 +8,7 @@ use App\Models\ServiceType;
 use App\Models\ContractType;
 use App\Models\User;
 use App\Models\ProjectChangeLog;
-use App\Models\ProjectAttachment;
+use App\Models\ProjectMonthlyConsumption;
 use App\Services\ProjectCodeService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
@@ -29,6 +29,30 @@ use Illuminate\Validation\Rule;
 class ProjectController extends Controller
 {
     use \App\Http\Traits\ListCacheable;
+
+    /**
+     * FASE 11.7 (PR 7b) — Map type-legado-pt → category-en (canônico).
+     */
+    private static function mapAttachmentTypeToCategory(string $legacyType): string
+    {
+        return match (strtolower($legacyType)) {
+            'proposta'           => 'proposal',
+            'contrato'           => 'contract',
+            'logo'               => 'logo',
+            'aprovacao_cliente'  => 'client_approval',
+            'evidencia'          => 'evidence',
+            'imagem'             => 'image',
+            'outro'              => 'attachment',
+            default              => 'attachment',
+        };
+    }
+
+    /**
+     * Mês de corte do extrato mensal de banco de horas (formato YYYY-MM).
+     * Meses < corte: consumo manual/editável (persistido em project_monthly_consumptions).
+     * Meses >= corte: consumo vem dos apontamentos (timesheets).
+     */
+    const MONTHLY_CONSUMPTION_CUTOFF = '2026-05';
     /**
      * @OA\Get(
      *     path="/api/v1/projects",
@@ -139,7 +163,11 @@ class ProjectController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $perPage = min($request->get('pageSize', $request->get('per_page', 15)), 200);
+        // Cap maior para listagem de Investimento Interno: cada cliente tem ~3 projetos
+        // (Comercial/Suporte/Projetos) + manuais → o cap padrão de 200 cortava a página
+        // e clientes sumiam da tela /investimento-comercial.
+        $maxPerPage = $request->boolean('only_investimento_comercial') ? 2000 : 200;
+        $perPage = min($request->get('pageSize', $request->get('per_page', 15)), $maxPerPage);
         $minimal = $request->boolean('minimal');
         $search = $request->get('filter') ?? $request->get('search');
         $status = $request->get('status');
@@ -193,6 +221,8 @@ class ProjectController extends Controller
             $withRelations[] = 'executivoConta';
             if ($withTeam) {
                 $withRelations[] = 'consultants';
+                // Grupos vinculados (necessário pra pré-selecionar no modal de Equipe).
+                $withRelations[] = 'consultantGroups';
             }
         }
         // childProjects: sempre carregado em gestaoMode (para calcular closedChildrenHours)
@@ -217,8 +247,9 @@ class ProjectController extends Controller
             $targetUserId = $currentUser->id;
             $targetUser = $currentUser;
 
-            // Se admin forneceu user_id, usar esse usuário
-            if ($requestedUserId && $currentUser->isAdmin()) {
+            // Se admin OU coordenador forneceu user_id, usar esse usuário
+            // (frontend permite a ambos "agir em nome de outro" no modal de apontamento).
+            if ($requestedUserId && ($currentUser->isAdmin() || $currentUser->isCoordenador())) {
                 $targetUserId = $requestedUserId;
                 $targetUser = \App\Models\User::find($targetUserId);
             }
@@ -472,10 +503,14 @@ class ProjectController extends Controller
 
         $timesheetsMap = [];
         if (!empty($allIdsToSum)) {
+            // DB::table bypassa SoftDeletes do Eloquent — precisa whereNull('deleted_at')
+            // explícito. Consumo = tudo apontado MENOS rejeitado/ajuste/conflito (inclui ação
+            // interna, pendente, aprovado, liberado). Regra do user 2026-05-22.
             $rows = DB::table('timesheets')
                 ->selectRaw('project_id, COALESCE(SUM(effort_minutes), 0) as total_logged_minutes')
                 ->whereIn('project_id', $allIdsToSum)
-                ->where('status', '!=', 'rejected')
+                ->whereNull('deleted_at')
+                ->whereIn('status', ['approved', 'pending'])
                 ->groupBy('project_id')
                 ->pluck('total_logged_minutes', 'project_id');
             $timesheetsMap = $rows->toArray();
@@ -508,23 +543,32 @@ class ProjectController extends Controller
         if ($allChildProjectIds->isNotEmpty()) {
             // Atribuir total_logged_minutes e consumed_hours aos projetos filhos
             // consumed_hours usa a mesma lógica do pai para que os valores somem visualmente
-            $projects->getCollection()->each(function ($project) use ($timesheetsMap) {
+            $projects->getCollection()->each(function ($project) use ($timesheetsMap, $gestaoMode) {
                 if ($project->relationLoaded('childProjects') && $project->childProjects) {
-                    $project->childProjects->each(function ($childProject) use ($timesheetsMap) {
+                    $project->childProjects->each(function ($childProject) use ($timesheetsMap, $gestaoMode) {
                         $childProject->total_logged_minutes = $timesheetsMap[$childProject->id] ?? 0;
                         $childLogged = $childProject->total_logged_minutes / 60;
                         $initialConsumed = (float)($childProject->initial_hours_consumed ?? 0);
 
                         if ($childProject->relationLoaded('contractType') && $childProject->contractType) {
                             $ctName = strtolower(trim($childProject->contractType->name));
-                            if ($ctName === 'fechado') {
-                                // Fechado: todo o valor vendido é comprometido (mesma lógica do pai)
+                            if ($ctName === 'fechado' && !$gestaoMode) {
+                                // Visão do cliente: Fechado compromete todo o sold (saldo 0).
+                                // Na visão gerencial (gestaoMode) o consumo do filho vem dos
+                                // apontamentos reais — saldo = sold - apontado.
                                 $childProject->consumed_hours = (float)($childProject->sold_hours ?? 0);
                             } else {
                                 $childProject->consumed_hours = round($childLogged + $initialConsumed, 2);
                             }
                         } else {
                             $childProject->consumed_hours = round($childLogged + $initialConsumed, 2);
+                        }
+
+                        // Visão gerencial: saldo do filho = vendido − consumido real (apontamentos).
+                        // Sem essa atribuição o saldo do filho fica null e a UI mostra "—".
+                        if ($gestaoMode) {
+                            $childSold = (float)($childProject->sold_hours ?? 0);
+                            $childProject->general_hours_balance = round($childSold - (float)$childProject->consumed_hours, 2);
                         }
                     });
                 }
@@ -547,6 +591,48 @@ class ProjectController extends Controller
             if ($gestaoMode) {
                 // Modo leve: usar apenas campos já presentes na query, sem relações extras
                 $consumed = ($project->total_logged_minutes ?? 0) / 60;
+                $initialConsumed = (float)($project->initial_hours_consumed ?? 0);
+
+                // Consumo dos filhos comprometido no banco do pai, conforme o tipo do filho:
+                //  - Fechado / BH Fixo: comprometem sold_hours + aportes do filho (independe do consumo efetivo)
+                //  - On Demand: consome pelas horas EFETIVAMENTE lançadas no filho (sob demanda, sem saldo próprio)
+                // ANTES: On Demand era ignorado aqui e o ramo BH Mensal nem agregava filhos → filho On Demand
+                // não descontava do banco do pai. Detalhe por filho exposto em $childrenBreakdown p/ a UI.
+                $childrenConsumed = 0.0;
+                $childrenBreakdown = [];
+                if ($project->relationLoaded('childProjects')) {
+                    foreach ($project->childProjects as $child) {
+                        if ($child->isAusterFrozen()) continue;
+                        if (!$child->relationLoaded('contractType') || !$child->contractType) continue;
+                        $childCode = (string) ($child->contractType->code ?? '');
+                        $childName = strtolower(trim($child->contractType->name));
+                        $isClosed   = $childCode === 'closed'      || $childName === 'fechado';
+                        $isBhFixo   = $childCode === 'fixed_hours' || $childName === 'banco de horas fixo';
+                        $isOnDemand = $childCode === 'on_demand'   || $childName === 'on demand';
+                        $childConsumedHours = 0.0;
+                        if ($isClosed || $isBhFixo) {
+                            $childConsumedHours = (float) $child->getTotalAvailableHours();
+                        } elseif ($isOnDemand) {
+                            $childLoggedH = ($child->total_logged_minutes ?? 0) / 60;
+                            $childConsumedHours = round($childLoggedH + (float)($child->initial_hours_consumed ?? 0), 2);
+                        } else {
+                            continue;
+                        }
+                        $childrenConsumed += $childConsumedHours;
+                        $childrenBreakdown[] = [
+                            'id'             => $child->id,
+                            'code'           => $child->code,
+                            'name'           => $child->name,
+                            'contract_type'  => $child->contractType->name,
+                            'consumed_hours' => $childConsumedHours,
+                        ];
+                    }
+                }
+                $project->children_consumption_breakdown = $childrenBreakdown;
+                // Decomposição p/ a UI "ver a conta": consumo próprio do pai + consumo dos filhos = total
+                $project->own_consumed_hours      = round($consumed + $initialConsumed, 2);
+                $project->children_consumed_hours = round($childrenConsumed, 2);
+
                 if ($project->isBankHoursMonthly()) {
                     // accumulated_sold_hours: usa valor do DB ou calcula meses × sold_hours
                     $dbAccum = $project->getRawOriginal('accumulated_sold_hours') ?? $project->accumulated_sold_hours;
@@ -564,34 +650,19 @@ class ProjectController extends Controller
                     $project->accumulated_sold_hours = $accumulatedHours;
                     // total_available_hours usa a relação eager-loaded para incluir aportes novos
                     $totalAvailable = $project->getTotalAvailableHours();
-                    // saldo usa o acumulado real; HS consumidas iniciais somadas às novas
-                    $initialConsumed = (float)($project->initial_hours_consumed ?? 0);
-                    $project->consumed_hours = round($consumed + $initialConsumed, 2);
                     $newContributions = $totalAvailable - ($project->sold_hours ?? 0);
-                    $project->general_hours_balance = round($accumulatedHours + $newContributions - $consumed - $initialConsumed, 2);
+                    // Quebra das HS Vendidas p/ "ver a conta": base (acumulada) + aporte = total
+                    $project->vendidas_projeto_hours = round($accumulatedHours, 2);
+                    $project->vendidas_aporte_hours  = round($newContributions, 2);
+                    // saldo usa o acumulado real; HS consumidas iniciais + novas + consumo dos filhos
+                    $project->consumed_hours = round($consumed + $initialConsumed + $childrenConsumed, 2);
+                    $project->general_hours_balance = round($accumulatedHours + $newContributions - $consumed - $initialConsumed - $childrenConsumed, 2);
                 } else {
-                    $initialConsumed = (float)($project->initial_hours_consumed ?? 0);
                     $totalAvailable = $project->getTotalAvailableHours();
-
-                    // Somar horas vendidas dos filhos Fechado (comprometidas no cadastro)
-                    $closedChildrenHours = 0.0;
-                    if ($project->relationLoaded('childProjects')) {
-                        foreach ($project->childProjects as $child) {
-                            if ($child->isAusterFrozen()) continue;
-                            if (!$child->relationLoaded('contractType') || !$child->contractType) continue;
-                            $childContractName = strtolower(trim($child->contractType->name));
-                            if ($childContractName === 'fechado') {
-                                // Fechado: compromete o total vendido
-                                $closedChildrenHours += (float) ($child->sold_hours ?? 0);
-                            } elseif ($childContractName === 'on demand') {
-                                // On Demand filho: consome conforme apontamentos
-                                $closedChildrenHours += ($child->total_logged_minutes ?? 0) / 60;
-                            }
-                        }
-                    }
-
-                    $project->consumed_hours = round($consumed + $initialConsumed + $closedChildrenHours, 2);
-                    $project->general_hours_balance = round($totalAvailable - $consumed - $initialConsumed - $closedChildrenHours, 2);
+                    $project->vendidas_projeto_hours = round((float)($project->sold_hours ?? 0), 2);
+                    $project->vendidas_aporte_hours  = round($totalAvailable - (float)($project->sold_hours ?? 0), 2);
+                    $project->consumed_hours = round($consumed + $initialConsumed + $childrenConsumed, 2);
+                    $project->general_hours_balance = round($totalAvailable - $consumed - $initialConsumed - $childrenConsumed, 2);
                 }
                 $project->balance_percentage = $totalAvailable > 0 ? round(($project->consumed_hours / $totalAvailable) * 100, 2) : 0;
                 $project->total_available_hours = round($totalAvailable, 2);
@@ -733,7 +804,7 @@ class ProjectController extends Controller
             'initial_cost' => 'nullable|numeric|min:0|max:999999999.99',
             'consultant_hours' => 'nullable|integer|min:0|max:999999',
             'coordinator_hours' => 'nullable|integer|min:0|max:999999',
-            'coordination_hours' => 'required|numeric|min:0|max:999999',
+            'coordination_hours' => 'nullable|numeric|min:0|max:999999',
             'additional_hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'start_date' => 'nullable|date',
             'expected_end_date' => 'nullable|date',
@@ -744,6 +815,7 @@ class ProjectController extends Controller
             'expense_responsible_party' => ['nullable', Rule::in(['consultancy', 'client'])],
             'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
             'allow_negative_balance' => 'nullable|boolean',
+            'client_follows_timesheets' => 'nullable|boolean',
             'status' => ['nullable', Rule::in(array_keys(Project::getStatuses()))],
             'consultant_ids' => 'nullable|array',
             'consultant_ids.*' => 'exists:users,id',
@@ -760,6 +832,8 @@ class ProjectController extends Controller
             'vendedor_id'           => 'nullable|exists:users,id',
             'architect_id'          => 'nullable|exists:users,id',
             'executivo_conta_id'    => 'nullable|exists:users,id',
+            'movidesk_integration_enabled' => 'nullable|boolean',
+            'confirm_movidesk_swap'        => 'nullable|boolean',
         ], [
             'name.required' => 'O nome é obrigatório',
             'name.max' => 'O nome não pode ter mais de 255 caracteres',
@@ -778,8 +852,19 @@ class ProjectController extends Controller
             'status.in' => 'Status inválido',
         ]);
 
+        // BH Mensal não tem horas de coordenação — força null e pula a validação/guard.
+        $ctForBhMensal = isset($validated['contract_type_id'])
+            ? ContractType::find($validated['contract_type_id'])
+            : null;
+        $isBhMensal = str_contains(strtolower((string) ($ctForBhMensal->name ?? '')), 'mensal');
+
+        if ($isBhMensal) {
+            $validated['coordination_hours'] = null;
+        }
+
         // Horas de coordenação não podem exceder as horas vendidas (contratadas).
-        if (isset($validated['coordination_hours'], $validated['sold_hours'])
+        if (!$isBhMensal
+            && isset($validated['coordination_hours'], $validated['sold_hours'])
             && $validated['coordination_hours'] !== null && $validated['sold_hours'] !== null
             && (float) $validated['coordination_hours'] > (float) $validated['sold_hours']) {
             return response()->json([
@@ -788,6 +873,11 @@ class ProjectController extends Controller
                 'message' => 'Horas inválidas',
                 'detailMessage' => "As horas de coordenação não podem ser maiores que as horas vendidas ({$validated['sold_hours']}h).",
             ], 422);
+        }
+
+        // Para tipos que NÃO são BH Mensal, horas de coordenação continuam obrigatórias.
+        if (!$isBhMensal && (!array_key_exists('coordination_hours', $validated) || $validated['coordination_hours'] === null)) {
+            return response()->json(['message' => 'Horas de Coordenação obrigatórias.'], 422);
         }
 
         // Validar que o projeto pai não é um subprojeto (evitar múltiplos níveis)
@@ -802,21 +892,28 @@ class ProjectController extends Controller
                 ], 422);
             }
 
-            // Validar horas vendidas + aportes do subprojeto
-            $subProjectSoldHours = $validated['sold_hours'] ?? 0;
-            $subProjectHourContribution = $validated['hour_contribution'] ?? 0;
-            $subProjectTotalHours = $subProjectSoldHours + $subProjectHourContribution;
+            // Validar horas vendidas + aportes do subprojeto.
+            // On Demand não controla saldo — não faz sentido validar limite de horas.
+            $parentProject?->loadMissing('contractType');
+            $parentIsOnDemand = $parentProject && $parentProject->contractType
+                && strtolower(trim($parentProject->contractType->name)) === 'on demand';
 
-            if ($subProjectTotalHours > 0) {
-                $availableHours = $this->calculateAvailableHours($parentProject);
+            if (!$parentIsOnDemand) {
+                $subProjectSoldHours = $validated['sold_hours'] ?? 0;
+                $subProjectHourContribution = $validated['hour_contribution'] ?? 0;
+                $subProjectTotalHours = $subProjectSoldHours + $subProjectHourContribution;
 
-                if ($subProjectTotalHours > $availableHours) {
-                    return response()->json([
-                        'code' => 'INVALID_SOLD_HOURS',
-                        'type' => 'error',
-                        'message' => 'Horas inválidas',
-                        'detailMessage' => "O subprojeto não pode ter mais horas (vendidas + aportes: {$subProjectTotalHours}h) do que as horas disponíveis no projeto pai ({$availableHours}h)."
-                    ], 422);
+                if ($subProjectTotalHours > 0) {
+                    $availableHours = $this->calculateAvailableHours($parentProject);
+
+                    if ($subProjectTotalHours > $availableHours) {
+                        return response()->json([
+                            'code' => 'INVALID_SOLD_HOURS',
+                            'type' => 'error',
+                            'message' => 'Horas inválidas',
+                            'detailMessage' => "O subprojeto não pode ter mais horas (vendidas + aportes: {$subProjectTotalHours}h) do que as horas disponíveis no projeto pai ({$availableHours}h)."
+                        ], 422);
+                    }
                 }
             }
         }
@@ -830,6 +927,9 @@ class ProjectController extends Controller
         if (!Schema::hasColumn('projects', 'allow_negative_balance')) {
             unset($validated['allow_negative_balance']);
         }
+        if (!Schema::hasColumn('projects', 'client_follows_timesheets')) {
+            unset($validated['client_follows_timesheets']);
+        }
 
         // Gerar ou validar código do projeto
         $customer = Customer::findOrFail($validated['customer_id']);
@@ -840,7 +940,54 @@ class ProjectController extends Controller
 
         $validated = array_merge($validated, $codeData);
 
-        $project = Project::create($validated);
+        // Movidesk integration flag: garante no máximo 1 projeto por cliente
+        // com a integração ativa. Se conflito sem confirmação, devolve 409.
+        $wantsMovidesk = !empty($validated['movidesk_integration_enabled']);
+        $confirmSwap   = !empty($validated['confirm_movidesk_swap']);
+        unset($validated['confirm_movidesk_swap']);
+        if ($wantsMovidesk) {
+            $existing = Project::where('customer_id', $validated['customer_id'])
+                ->where('movidesk_integration_enabled', true)
+                ->first();
+            if ($existing && !$confirmSwap) {
+                return response()->json([
+                    'code'    => 'MOVIDESK_INTEGRATION_CONFLICT',
+                    'type'    => 'conflict',
+                    'message' => "Cliente já tem integração Movidesk ativa em outro projeto",
+                    'current_project' => ['id' => $existing->id, 'name' => $existing->name, 'code' => $existing->code],
+                ], 409);
+            }
+        }
+
+        $project = \DB::transaction(function () use ($validated, $wantsMovidesk) {
+            $p = Project::create($validated);
+            if ($wantsMovidesk) {
+                Project::where('customer_id', $p->customer_id)
+                    ->where('id', '!=', $p->id)
+                    ->where('movidesk_integration_enabled', true)
+                    ->update(['movidesk_integration_enabled' => false]);
+            }
+            return $p;
+        });
+
+        // Auto-ativação da integração Movidesk para projetos de SUSTENTAÇÃO:
+        // se o usuário NÃO setou a flag explicitamente E o cliente ainda não tem
+        // nenhum projeto flagado, ativa neste recém-criado (respeita "máx 1 por cliente").
+        if (!$request->has('movidesk_integration_enabled')) {
+            $project->loadMissing('serviceType');
+            $svcCode = $project->serviceType?->code;
+            $svcName = strtolower(trim((string) $project->serviceType?->name));
+            $isSustentacao = $svcCode === 'sustentacao' || str_contains($svcName, 'sustenta');
+            if ($isSustentacao) {
+                $hasFlagged = Project::where('customer_id', $project->customer_id)
+                    ->where('id', '!=', $project->id)
+                    ->where('movidesk_integration_enabled', true)
+                    ->exists();
+                if (!$hasFlagged) {
+                    $project->update(['movidesk_integration_enabled' => true]);
+                }
+            }
+        }
 
         // Vincular consultores
         if (!empty($consultantIds)) {
@@ -952,11 +1099,15 @@ class ProjectController extends Controller
         $project->status_display = $project->status_display;
         $project->contract_type_display = $project->contract_type_display;
 
-        // Adicionar saldo de horas geral calculado
+        // Saldo + consumido pela regra da GESTÃO DE PROJETOS (fonte da verdade) — conta os
+        // subprojetos e popula consumed_hours (antes o detalhe mostrava 0). Mantém o detalhe
+        // batendo com a lista/kanban/gestão. NÃO usa initial_hours_balance.
         try {
-            $project->general_hours_balance = $project->getGeneralHoursBalance(false);
+            $b = $project->managementBreakdown();
+            $project->consumed_hours = $b['consumed'];
+            $project->general_hours_balance = $b['balance'];
         } catch (\Throwable $e) {
-            try { \Log::warning('ProjectController@show: falha ao calcular general_hours_balance', ['error' => $e->getMessage(), 'project_id' => $project->id]); } catch (\Throwable $_) {}
+            try { \Log::warning('ProjectController@show: falha ao calcular saldo/consumo', ['error' => $e->getMessage(), 'project_id' => $project->id]); } catch (\Throwable $_) {}
             $project->general_hours_balance = null;
         }
 
@@ -969,10 +1120,33 @@ class ProjectController extends Controller
         // apontadas pelos coordenadores; saldo/%/risco c/ fallback são calculados no front.
         $project->coordination_consumed_hours = $project->getCoordinationConsumedHours();
 
+        // Quebra das HS Vendidas (Projeto + Aporte) — espelha lógica do index()
+        // gestaoMode pra que a Visão Geral do projeto não dependa do cache da lista.
+        // Em BH Mensal usa accumulated_sold_hours já corrigido (cap pelo encerramento).
+        if ($project->isBankHoursMonthly()) {
+            $dbAccum = $project->getRawOriginal('accumulated_sold_hours') ?? $project->accumulated_sold_hours;
+            if ($dbAccum !== null && $dbAccum > 0) {
+                $accumulatedHours = (int) $dbAccum;
+            } else {
+                // Fallback: recalcula respeitando encerramento_date
+                $accumulatedHours = (int) ($project->calculateAccumulatedSoldHours() ?? ($project->sold_hours ?? 0));
+            }
+            $newContribs = (float) ($project->total_available_hours - ($project->sold_hours ?? 0));
+            $project->vendidas_projeto_hours = round($accumulatedHours, 2);
+            $project->vendidas_aporte_hours  = round($newContribs, 2);
+        } else {
+            $project->vendidas_projeto_hours = round((float) ($project->sold_hours ?? 0), 2);
+            $project->vendidas_aporte_hours  = round((float) ($project->total_available_hours - ($project->sold_hours ?? 0)), 2);
+        }
+        // Banco de coordenação (coordination_hours já vem como coluna). Consumo = horas
+        // apontadas pelos coordenadores; saldo/%/risco c/ fallback são calculados no front.
+        $project->coordination_consumed_hours = $project->getCoordinationConsumedHours();
+
         // Adicionar total de minutos apontados (excluindo rejeitados)
         $project->total_logged_minutes = DB::table('timesheets')
             ->where('project_id', $project->id)
-            ->where('status', '!=', 'rejected')
+            ->whereNull('deleted_at')
+            ->whereIn('status', ['approved', 'pending'])
             ->sum('effort_minutes') ?? 0;
 
         $this->invalidateListCache('projects');
@@ -1040,7 +1214,10 @@ class ProjectController extends Controller
             'parent_project_id' => 'nullable|exists:projects,id',
             'service_type_id' => 'sometimes|exists:service_types,id',
             'contract_type_id' => 'sometimes|exists:contract_types,id',
-            'status' => ['sometimes', Rule::in(array_keys(Project::getStatuses()))],
+            // Permite o status ATUAL do projeto mesmo que não esteja em getStatuses() — há
+            // projetos com status legado do Cronograma (ex.: 'liberado_para_testes') que a
+            // FE reenvia ao salvar; sem isso o update falha com validation.in (422).
+            'status' => ['sometimes', Rule::in(array_merge(array_keys(Project::getStatuses()), [$project->status]))],
             'project_value' => 'nullable|numeric|min:0|max:999999999.99',
             'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'sold_hours' => 'nullable|numeric|min:0|max:999999',
@@ -1051,7 +1228,7 @@ class ProjectController extends Controller
             'initial_cost' => 'nullable|numeric|min:0|max:999999999.99',
             'consultant_hours' => 'nullable|integer|min:0|max:999999',
             'coordinator_hours' => 'nullable|integer|min:0|max:999999',
-            'coordination_hours' => 'required|numeric|min:0|max:999999',
+            'coordination_hours' => 'nullable|numeric|min:0|max:999999',
             'additional_hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'start_date' => 'nullable|date',
             'expected_end_date' => 'nullable|date',
@@ -1062,6 +1239,7 @@ class ProjectController extends Controller
             'expense_responsible_party' => ['nullable', Rule::in(['consultancy', 'client'])],
             'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
             'allow_negative_balance' => 'nullable|boolean',
+            'client_follows_timesheets' => 'nullable|boolean',
             'sold_hours_effective_from' => 'nullable|date',
             'hourly_rate_effective_from' => 'nullable|date',
             'consultant_ids' => 'nullable|array',
@@ -1079,6 +1257,11 @@ class ProjectController extends Controller
             'vendedor_id'           => 'nullable|exists:users,id',
             'architect_id'          => 'nullable|exists:users,id',
             'executivo_conta_id'    => 'nullable|exists:users,id',
+            'kanban_coordinator_override_id' => 'nullable|exists:users,id',
+            'categoria_interna' => 'nullable|in:Sustentação,Projeto,Suporte,Comercial',
+            'movidesk_integration_enabled' => 'nullable|boolean',
+            'confirm_movidesk_swap'        => 'nullable|boolean',
+            'migrate_movidesk_timesheets'  => 'nullable|boolean',
         ], [
             'name.max' => 'O nome não pode ter mais de 255 caracteres',
             'name.min' => 'O nome deve ter pelo menos 2 caracteres',
@@ -1091,10 +1274,21 @@ class ProjectController extends Controller
             'timesheet_retroactive_limit_days.max' => 'O prazo não pode ser maior que 365 dias',
         ]);
 
+        // BH Mensal não tem horas de coordenação — força null e pula a validação/guard.
+        // Detecta pelo tipo de contrato (novo, se enviado; senão o atual do projeto).
+        $ctForBhMensal = array_key_exists('contract_type_id', $validated)
+            ? ContractType::find($validated['contract_type_id'])
+            : (function () use ($project) { $project->loadMissing('contractType'); return $project->contractType; })();
+        $isBhMensal = str_contains(strtolower((string) ($ctForBhMensal->name ?? '')), 'mensal');
+
+        if ($isBhMensal) {
+            $validated['coordination_hours'] = null;
+        }
+
         // Horas de coordenação não podem exceder as horas vendidas (contratadas).
         $coordH = array_key_exists('coordination_hours', $validated) ? $validated['coordination_hours'] : null;
         $soldHForCoord = array_key_exists('sold_hours', $validated) ? $validated['sold_hours'] : $project->sold_hours;
-        if ($coordH !== null && $soldHForCoord !== null && (float) $coordH > (float) $soldHForCoord) {
+        if (!$isBhMensal && $coordH !== null && $soldHForCoord !== null && (float) $coordH > (float) $soldHForCoord) {
             return response()->json([
                 'code' => 'INVALID_COORDINATION_HOURS',
                 'type' => 'error',
@@ -1267,8 +1461,99 @@ class ProjectController extends Controller
         if (!Schema::hasColumn('projects', 'allow_negative_balance')) {
             unset($validated['allow_negative_balance']);
         }
+        if (!Schema::hasColumn('projects', 'client_follows_timesheets')) {
+            unset($validated['client_follows_timesheets']);
+        }
 
-        $project->update($validated);
+        // Override de coordenador para projetos de sustentação:
+        // - Só admin pode setar/limpar
+        // - Só pra projetos cujo service_type seja sustentação
+        // - Sincroniza com Contract Kanban (migra card pra coluna do coord ou
+        //   devolve pra fila de sustentação correta).
+        $overrideKey = 'kanban_coordinator_override_id';
+        $overrideInValidated = array_key_exists($overrideKey, $validated);
+        if ($overrideInValidated) {
+            if (!auth()->user()->isAdmin()) {
+                unset($validated[$overrideKey]);
+                $overrideInValidated = false;
+            } else {
+                $project->loadMissing('serviceType');
+                $svcCode = $project->serviceType?->code;
+                $svcName = strtolower(trim((string) $project->serviceType?->name));
+                $isSustentacao = $svcCode === 'sustentacao' || str_contains($svcName, 'sustenta');
+                if (!$isSustentacao && !empty($validated[$overrideKey])) {
+                    return response()->json([
+                        'code' => 'OVERRIDE_NOT_ALLOWED',
+                        'message' => 'Override de coordenador só é permitido em projetos de sustentação.',
+                    ], 422);
+                }
+            }
+        }
+
+        // Movidesk integration flag (mesma regra do store): no máximo 1 por cliente.
+        // Conflito sem confirm_movidesk_swap → 409.
+        $confirmSwap = !empty($validated['confirm_movidesk_swap']);
+        unset($validated['confirm_movidesk_swap']);
+        $migrateMovideskTimesheets = !empty($validated['migrate_movidesk_timesheets']);
+        unset($validated['migrate_movidesk_timesheets']);
+        if (array_key_exists('movidesk_integration_enabled', $validated)
+            && $validated['movidesk_integration_enabled'] === true
+            && (bool) $project->movidesk_integration_enabled !== true) {
+            $existing = Project::where('customer_id', $validated['customer_id'] ?? $project->customer_id)
+                ->where('id', '!=', $project->id)
+                ->where('movidesk_integration_enabled', true)
+                ->first();
+            if ($existing && !$confirmSwap) {
+                return response()->json([
+                    'code'    => 'MOVIDESK_INTEGRATION_CONFLICT',
+                    'type'    => 'conflict',
+                    'message' => "Cliente já tem integração Movidesk ativa em outro projeto",
+                    'current_project' => ['id' => $existing->id, 'name' => $existing->name, 'code' => $existing->code],
+                ], 409);
+            }
+        }
+
+        // Captura os projetos do cliente que HOJE estão com a flag ativa (os "antigos"),
+        // antes da transação desativá-los — necessário para migrar os apontamentos depois.
+        $oldFlaggedIds = [];
+        if (!empty($validated['movidesk_integration_enabled'])) {
+            $oldFlaggedIds = Project::where('customer_id', $project->customer_id)
+                ->where('id', '!=', $project->id)
+                ->where('movidesk_integration_enabled', true)
+                ->pluck('id')
+                ->all();
+        }
+
+        \DB::transaction(function () use ($project, $validated) {
+            $project->update($validated);
+            if (!empty($validated['movidesk_integration_enabled'])) {
+                Project::where('customer_id', $project->customer_id)
+                    ->where('id', '!=', $project->id)
+                    ->where('movidesk_integration_enabled', true)
+                    ->update(['movidesk_integration_enabled' => false]);
+            }
+        });
+
+        // Migração opcional dos apontamentos de origem Movidesk dos projetos antigos
+        // para o novo projeto flagado. "Origem Movidesk" = tem movidesk_appointment_id
+        // (o origin pode ser 'webhook'/'movidesk_fallback'/etc; o id é o sinal confiável).
+        // Eloquent respeita SoftDeletes automaticamente.
+        if ($migrateMovideskTimesheets && !empty($oldFlaggedIds)) {
+            \App\Models\Timesheet::whereIn('project_id', $oldFlaggedIds)
+                ->whereNotNull('movidesk_appointment_id')
+                ->update(['project_id' => $project->id]);
+        }
+
+        // Idempotente: garante consistência do contract no Kanban sempre que admin envia
+        // o campo num projeto de sustentação, mesmo que o valor não tenha mudado.
+        if ($overrideInValidated && auth()->user()->isAdmin()) {
+            $project->loadMissing('serviceType');
+            $svcCodeS = $project->serviceType?->code;
+            $svcNameS = strtolower(trim((string) $project->serviceType?->name));
+            if ($svcCodeS === 'sustentacao' || str_contains($svcNameS, 'sustenta')) {
+                $this->syncContractKanbanForOverride($project);
+            }
+        }
 
         // Garantir que accumulated_sold_hours está atualizado para Banco de Horas Mensal
         if (!$project->relationLoaded('contractType') && $project->contract_type_id) {
@@ -1363,17 +1648,33 @@ class ProjectController extends Controller
             }
         }
 
-        // Se hourly_rate mudou e foi enviada uma data de vigência, atualizar o change log
-        if ($hourlyRateEffectiveFrom && $project->wasChanged('hourly_rate')) {
+        // Dedup mesmo-dia do change log de hourly_rate: o Observer cria uma nova linha a cada
+        // alteração. Se hourly_rate mudou, colapsamos as linhas de HOJE deste projeto numa só —
+        // mantendo a MAIS ANTIGA (que tem o old_value do início do dia), atualizando seu new_value
+        // para o valor atual e aplicando effective_from quando enviado; as demais de hoje são removidas.
+        if ($project->wasChanged('hourly_rate')) {
             try {
-                ProjectChangeLog::where('project_id', $project->id)
+                $todayLogs = ProjectChangeLog::where('project_id', $project->id)
                     ->where('field_name', 'hourly_rate')
-                    ->where('changed_by', auth()->id())
-                    ->latest()
-                    ->first()
-                    ?->update(['effective_from' => $hourlyRateEffectiveFrom]);
+                    ->whereDate('created_at', now()->toDateString())
+                    ->orderBy('id')
+                    ->get();
+
+                if ($todayLogs->isNotEmpty()) {
+                    $survivor = $todayLogs->first(); // mais antiga = old_value do início do dia
+                    $survivor->new_value = (string) $project->hourly_rate;
+                    if ($hourlyRateEffectiveFrom !== null) {
+                        $survivor->effective_from = $hourlyRateEffectiveFrom;
+                    }
+                    $survivor->save();
+
+                    $duplicateIds = $todayLogs->slice(1)->pluck('id');
+                    if ($duplicateIds->isNotEmpty()) {
+                        ProjectChangeLog::whereIn('id', $duplicateIds)->delete();
+                    }
+                }
             } catch (\Exception $e) {
-                \Log::warning('ProjectController@update: falha ao registrar effective_from no change log de hourly_rate', ['error' => $e->getMessage()]);
+                \Log::warning('ProjectController@update: falha ao consolidar change log de hourly_rate do dia', ['error' => $e->getMessage()]);
             }
         }
 
@@ -1737,12 +2038,12 @@ class ProjectController extends Controller
 
             // Calcular o valor/hora efetivo do consultor:
             // - rate_type = 'hourly': usa hourly_rate diretamente
-            // - rate_type = 'monthly': divide hourly_rate por 180 (horas mensais convencionadas)
+            // - rate_type = 'monthly': divide hourly_rate por 160 (horas mensais convencionadas)
             // - sem hourly_rate: assume 0
             $userHourlyRate = (float) ($user->hourly_rate ?? 0);
             $rateType = $user->rate_type ?? 'hourly';
             $effectiveHourlyRate = ($rateType === 'monthly' && $userHourlyRate > 0)
-                ? round($userHourlyRate / 180, 4)
+                ? round($userHourlyRate / 160, 4)
                 : $userHourlyRate;
 
             $userCost = round($userTotalHours * $effectiveHourlyRate, 2);
@@ -1869,7 +2170,41 @@ class ProjectController extends Controller
 
     public function nextCode(Request $request): JsonResponse
     {
-        $request->validate(['customer_id' => 'required|exists:customers,id']);
+        $request->validate([
+            'customer_id'       => 'required_without:parent_project_id|exists:customers,id',
+            'parent_project_id' => 'nullable|exists:projects,id',
+        ]);
+
+        // Modo subprojeto: próximo sub_seq disponível pro projeto pai informado
+        if ($request->filled('parent_project_id')) {
+            $parent = Project::withTrashed()->findOrFail($request->parent_project_id);
+            $parentCode = $parent->code;
+
+            $childCodes = Project::withTrashed()
+                ->where('parent_project_id', $parent->id)
+                ->pluck('code')
+                ->toArray();
+
+            $maxSub = 0;
+            foreach ($childCodes as $cc) {
+                if ($cc && preg_match('/-(\d{2})$/', $cc, $m)) {
+                    $maxSub = max($maxSub, (int) $m[1]);
+                }
+            }
+
+            $next = $maxSub + 1;
+            do {
+                $padded = str_pad($next, 2, '0', STR_PAD_LEFT);
+                $code   = $parentCode . '-' . $padded;
+                $next++;
+            } while (Project::withTrashed()->where('code', $code)->exists());
+
+            return response()->json([
+                'sub_seq'     => str_pad($next - 1, 2, '0', STR_PAD_LEFT),
+                'parent_code' => $parentCode,
+                'code'        => $code,
+            ]);
+        }
 
         $customer = Customer::findOrFail($request->customer_id);
 
@@ -1889,7 +2224,12 @@ class ProjectController extends Controller
             $nextSeq++;
         } while (Project::withTrashed()->where('code', $code)->exists());
 
-        return response()->json(['code' => $code, 'prefix' => $prefix, 'year' => $year]);
+        return response()->json([
+            'code'   => $code,
+            'prefix' => $prefix,
+            'year'   => $year,
+            'seq'    => str_pad($nextSeq - 1, 3, '0', STR_PAD_LEFT),
+        ]);
     }
 
     /**
@@ -1957,29 +2297,12 @@ class ProjectController extends Controller
 
         $parent = Project::findOrFail($child->parent_project_id);
 
-        // Horas consumidas pelo filho: soma de effort_minutes de timesheets não rejeitados
-        $consumedMinutes = \App\Models\Timesheet::where('project_id', $child->id)
-            ->whereNotIn('status', ['rejected'])
-            ->sum('effort_minutes');
-        $consumedHours = round(((int) $consumedMinutes) / 60, 2);
-
-        // Regra por tipo de contrato:
-        //  - Fechado (closed): pai recupera o sold_hours total do filho;
-        //                      filho fica com sold_hours = consumido
-        //  - Demais (banco de horas etc): pai recupera só o consumido;
-        //                                  filho mantém o sold_hours atual
-        $contractCode = $child->contractType?->code ?? '';
-        $isClosed     = $contractCode === 'closed';
-        $aporte       = $isClosed ? (float) $child->sold_hours : $consumedHours;
-        $newChildSold = $isClosed ? $consumedHours : (float) $child->sold_hours;
-
         try {
-            DB::transaction(function () use ($parent, $child, $aporte, $newChildSold, $providedCode) {
-                $parent->sold_hours = (float) ($parent->sold_hours ?? 0) + $aporte;
-                $parent->save();
-
+            DB::transaction(function () use ($child, $providedCode) {
+                // sold_hours do pai e do filho NÃO são alterados — desvínculo é apenas
+                // estrutural. O consumo do filho deixa de contar no consumed_hours do pai
+                // (cálculo dinâmico em index gestao mode).
                 $child->parent_project_id = null;
-                $child->sold_hours = $newChildSold;
                 $child->code = $providedCode !== ''
                     ? $providedCode
                     : $this->generateNextProjectCode($child->customer_id);
@@ -1991,6 +2314,10 @@ class ProjectController extends Controller
             ], 500);
         }
 
+        // Invalida o cache da listagem — senão a lista (cachedList) continua mostrando
+        // o vínculo antigo e o FE oferece "Desvincular do pai" num projeto já solto (422).
+        $this->invalidateListCache('projects');
+
         return response()->json([
             'message' => 'Projeto desvinculado com sucesso',
             'parent' => [
@@ -1999,13 +2326,10 @@ class ProjectController extends Controller
                 'sold_hours' => (float) $parent->sold_hours,
             ],
             'child' => [
-                'id'              => $child->id,
-                'name'            => $child->name,
-                'code'            => $child->code,
-                'sold_hours'      => (float) $child->sold_hours,
-                'aporte_devolvido'=> $aporte,
-                'horas_consumidas'=> $consumedHours,
-                'is_closed'       => $isClosed,
+                'id'         => $child->id,
+                'name'       => $child->name,
+                'code'       => $child->code,
+                'sold_hours' => (float) $child->sold_hours,
             ],
         ]);
     }
@@ -2044,23 +2368,31 @@ class ProjectController extends Controller
             return response()->json(['error' => 'Pai escolhido já é filho de outro projeto'], 422);
         }
 
-        // Horas consumidas pelo filho
-        $consumedMinutes = \App\Models\Timesheet::where('project_id', $child->id)
-            ->whereNotIn('status', ['rejected'])
-            ->sum('effort_minutes');
-        $consumedHours = round(((int) $consumedMinutes) / 60, 2);
-
-        $contractCode = $child->contractType?->code ?? '';
-        $isClosed     = $contractCode === 'closed';
-        $entrega      = $isClosed ? (float) $child->sold_hours : $consumedHours;
+        // Subprojeto pode ser On Demand quando o pai também é On Demand
+        // Subprojeto On Demand pode ser filho de qualquer tipo de pai
+        // (separa apontamentos visualmente; consumo soma no saldo do pai).
+        // Banco de Horas Mensal continua bloqueado (mensalidade fica no pai).
+        $childCode  = (string) ($child->contractType?->code ?? '');
+        $childName  = strtolower(trim((string) ($child->contractType?->name ?? '')));
+        $isMonthly  = $childCode === 'monthly_hours' || $childName === 'banco de horas mensal';
+        if ($isMonthly) {
+            return response()->json([
+                'error' => 'Projetos do tipo Banco de Horas Mensal não podem ser filhos de outro projeto',
+            ], 422);
+        }
 
         try {
-            DB::transaction(function () use ($parent, $child, $entrega) {
-                // Pai entrega horas pro filho
-                $parent->sold_hours = (float) ($parent->sold_hours ?? 0) - $entrega;
-                $parent->save();
-
+            // Herda o código do pai (XXX000-YY-ZZ) — mesma regra do store ao criar subprojeto.
+            $codeData = (new \App\Services\ProjectCodeService())->generateChildCode($parent);
+            DB::transaction(function () use ($parent, $child, $codeData) {
+                // sold_hours do pai NÃO é alterado por vínculo — o consumo do filho
+                // passa a contar dinamicamente no consumed_hours do pai (ver index gestao).
                 $child->parent_project_id = $parent->id;
+                $child->code           = $codeData['code'];
+                $child->proj_sequence  = $codeData['proj_sequence'];
+                $child->proj_year      = $codeData['proj_year'];
+                $child->child_sequence = $codeData['child_sequence'];
+                $child->is_manual_code = $codeData['is_manual_code'];
                 $child->save();
             });
         } catch (\Throwable $e) {
@@ -2068,6 +2400,9 @@ class ProjectController extends Controller
                 'error' => 'Falha ao vincular projeto: ' . $e->getMessage(),
             ], 500);
         }
+
+        // Invalida o cache da listagem — senão a lista (cachedList) continua sem o vínculo novo.
+        $this->invalidateListCache('projects');
 
         return response()->json([
             'message' => 'Projeto vinculado com sucesso',
@@ -2079,11 +2414,9 @@ class ProjectController extends Controller
             'child' => [
                 'id'                => $child->id,
                 'name'              => $child->name,
+                'code'              => $child->code,
                 'parent_project_id' => $child->parent_project_id,
                 'sold_hours'        => (float) $child->sold_hours,
-                'aporte_entregue'   => $entrega,
-                'horas_consumidas'  => $consumedHours,
-                'is_closed'         => $isClosed,
             ],
         ]);
     }
@@ -2187,33 +2520,15 @@ class ProjectController extends Controller
      */
     private function calculateAvailableHours(Project $parentProject, ?int $excludeProjectId = null): int
     {
-        // Obter o saldo geral do projeto pai (já inclui todos os filhos)
-        $balance = $parentProject->getGeneralHoursBalance();
-
-        // Se há um projeto filho para excluir, adicionar de volta o que foi subtraído dele
-        if ($excludeProjectId) {
-            $excludedProject = $parentProject->childProjects()->find($excludeProjectId);
-
-            if ($excludedProject) {
-                // Carregar contractType se necessário
-                $excludedProject->loadMissing('contractType');
-
-                // Verificar se o projeto excluído tem contract_type com name = "Fechado"
-                $isClosedContract = $excludedProject->contractType &&
-                                    strtolower(trim($excludedProject->contractType->name)) === 'fechado';
-
-                if ($isClosedContract) {
-                    // Para contratos fechados: foi subtraído (horas vendidas + aportes)
-                    // Usar getTotalAvailableHours() que já contempla novos aportes + fallback legado
-                    $excludedTotalHours = $excludedProject->getTotalAvailableHours();
-                    $balance += $excludedTotalHours;
-                } else {
-                    // Para outros tipos: foi subtraído pelas horas apontadas
-                    $excludedLoggedHours = $excludedProject->getTotalLoggedHours(false);
-                    $balance += $excludedLoggedHours;
-                }
-            }
-        }
+        // Disponível do pai p/ comprometer em subprojeto = saldo geral do pai
+        // calculado IGNORANDO por completo o filho em edição. Antes calculava o
+        // saldo cheio e tentava "somar de volta" só as horas APONTADAS do filho —
+        // mas getGeneralHoursBalance subtrai o filho por apontado + initial_consumed
+        // + coordenação, então o estorno divergia (não devolvia o initial_consumed) e
+        // o disponível vinha menor que o real (ex.: filho com consumo histórico
+        // travava a edição com "58h disponíveis"). Excluindo o filho na origem o
+        // cálculo não tem como divergir.
+        $balance = $parentProject->getGeneralHoursBalance(false, null, $excludeProjectId);
 
         // Retornar como int (arredondado) e garantir que não seja negativo
         return max(0, (int) round($balance));
@@ -2403,13 +2718,15 @@ class ProjectController extends Controller
             foreach ($project->childProjects as $childProject) {
                 if ($childProject->isAusterFrozen()) continue;
 
-                // Verificar se o projeto filho é do tipo "Fechado"
+                // Verificar se o projeto filho é "Fechado" ou "Banco de Horas Fixo"
                 $isClosedContract = $childProject->contractType &&
                                     strtolower(trim($childProject->contractType->name)) === 'fechado';
+                $childCode = (string) ($childProject->contractType->code ?? '');
+                $childName = $childProject->contractType ? strtolower(trim($childProject->contractType->name)) : '';
+                $isBhFixoChild = $childCode === 'fixed_hours' || $childName === 'banco de horas fixo';
 
-                if ($isClosedContract) {
-                    // Para contratos fechados: subtrair (horas vendidas + aportes) do projeto filho
-                    // Usar getTotalAvailableHours() que já contempla novos aportes + fallback legado
+                if ($isClosedContract || $isBhFixoChild) {
+                    // Fechado E Banco de Horas Fixo (subprojeto): comprometem sold_hours + aportes
                     $childTotalHours = $childProject->getTotalAvailableHours();
                     $balance -= $childTotalHours;
                 } elseif ($childProject->isBankHoursMonthly()) {
@@ -2438,6 +2755,25 @@ class ProjectController extends Controller
         }
 
         return round($balance, 2);
+    }
+
+    /**
+     * Frontend pré-check: dado um customer_id (e opcionalmente exclude_id),
+     * devolve o projeto que está atualmente com movidesk_integration_enabled=true
+     * (ou null). Permite mostrar modal "X já está ativo, trocar pra este?".
+     */
+    public function movideskIntegrationConflict(Request $request): JsonResponse
+    {
+        $customerId = $request->query('customer_id');
+        $excludeId  = $request->query('exclude_id');
+        if (!$customerId) {
+            return response()->json(['current_project' => null]);
+        }
+        $q = Project::where('customer_id', $customerId)
+            ->where('movidesk_integration_enabled', true);
+        if ($excludeId) $q->where('id', '!=', $excludeId);
+        $existing = $q->first(['id', 'name', 'code']);
+        return response()->json(['current_project' => $existing]);
     }
 
     public function updateStatus(Request $request, Project $project): JsonResponse
@@ -2483,11 +2819,16 @@ class ProjectController extends Controller
         if ($from) $base->where('timesheets.date', '>=', $from);
         if ($to)   $base->where('timesheets.date', '<=', $to);
 
+        // Para consultores com rate_type='monthly', hourly_rate guarda o salário
+        // mensal — converter pra valor/hora dividindo por 160 (mesmo critério usado
+        // em FechamentoConsultorController::effectiveHourlyRate).
+        $costExpr = "SUM(timesheets.effort_minutes / 60.0 * CASE WHEN users.rate_type = 'monthly' AND users.hourly_rate > 0 THEN users.hourly_rate / 160.0 ELSE users.hourly_rate END)";
+
         // ── Por cliente ────────────────────────────────────────────────────────
         $byCustomer = (clone $base)
-            ->selectRaw('customers.id as customer_id, customers.name as customer_name,
+            ->selectRaw("customers.id as customer_id, customers.name as customer_name,
                          SUM(timesheets.effort_minutes) as total_minutes,
-                         SUM(timesheets.effort_minutes / 60.0 * users.hourly_rate) as total_cost')
+                         {$costExpr} as total_cost")
             ->groupBy('customers.id', 'customers.name')
             ->orderByDesc('total_minutes')
             ->get()
@@ -2500,10 +2841,10 @@ class ProjectController extends Controller
 
         // ── Por consultor ──────────────────────────────────────────────────────
         $byConsultant = (clone $base)
-            ->selectRaw('users.id as user_id, users.name as user_name,
+            ->selectRaw("users.id as user_id, users.name as user_name,
                          SUM(timesheets.effort_minutes) as total_minutes,
-                         SUM(timesheets.effort_minutes / 60.0 * users.hourly_rate) as total_cost,
-                         COUNT(DISTINCT customers.id) as num_customers')
+                         {$costExpr} as total_cost,
+                         COUNT(DISTINCT customers.id) as num_customers")
             ->groupBy('users.id', 'users.name')
             ->orderByDesc('total_minutes')
             ->limit(20)
@@ -2520,7 +2861,7 @@ class ProjectController extends Controller
         $monthly = (clone $base)
             ->selectRaw("TO_CHAR(timesheets.date, 'YYYY-MM') as month,
                          SUM(timesheets.effort_minutes) as total_minutes,
-                         SUM(timesheets.effort_minutes / 60.0 * users.hourly_rate) as total_cost")
+                         {$costExpr} as total_cost")
             ->groupByRaw("TO_CHAR(timesheets.date, 'YYYY-MM')")
             ->orderByRaw("TO_CHAR(timesheets.date, 'YYYY-MM')")
             ->get()
@@ -2532,10 +2873,10 @@ class ProjectController extends Controller
 
         // ── Detalhamento consultor × cliente ───────────────────────────────────
         $detail = (clone $base)
-            ->selectRaw('users.id as user_id, users.name as user_name,
+            ->selectRaw("users.id as user_id, users.name as user_name,
                          customers.id as customer_id, customers.name as customer_name,
                          SUM(timesheets.effort_minutes) as total_minutes,
-                         SUM(timesheets.effort_minutes / 60.0 * users.hourly_rate) as total_cost')
+                         {$costExpr} as total_cost")
             ->groupBy('users.id', 'users.name', 'customers.id', 'customers.name')
             ->orderBy('users.name')
             ->get()
@@ -2639,7 +2980,10 @@ class ProjectController extends Controller
             'status'                    => Project::STATUS_STARTED,
             'is_investimento_comercial' => true,
             'is_manual_code'            => true,
+            'categoria_interna'         => $data['categoria'],
         ]);
+
+        $this->invalidateListCache('projects');
 
         return response()->json([
             'message' => 'Projeto interno criado com sucesso.',
@@ -2664,6 +3008,7 @@ class ProjectController extends Controller
         $rows = DB::table('timesheets')
             ->join('users', 'users.id', '=', 'timesheets.user_id')
             ->whereIn('timesheets.project_id', $projectIds)
+            ->whereNull('timesheets.deleted_at')
             ->whereIn('timesheets.status', ['approved', 'pending'])
             ->select(
                 'users.id',
@@ -2682,18 +3027,37 @@ class ProjectController extends Controller
 
     public function listAttachments(Project $project): \Illuminate\Http\JsonResponse
     {
-        $attachments = $project->attachments()->with('contractAttachment')->get()->map(function ($a) {
-            return [
-                'id'            => $a->id,
-                'type'          => $a->type ?? $a->contractAttachment?->type,
-                'original_name' => $a->display_name,
-                'mime_type'     => $a->mime_type ?? $a->contractAttachment?->mime_type,
-                'size'          => $a->size ?? $a->contractAttachment?->size,
-                'source'        => $a->path ? 'project' : 'contract',
-                'created_at'    => $a->created_at,
-            ];
-        });
-        return response()->json($attachments);
+        // FASE 11.7 (PR 7b) — Junta anexos do PROJECT + anexos do CONTRACT
+        // vinculado (substitui a "shadow row" ProjectAttachment que apontava
+        // ContractAttachment.id). Source distingue origem.
+        $contractAtts = collect();
+        if ($project->contract_id) {
+            $contractAtts = \App\Models\Attachment::query()
+                ->forEntity('CONTRACT', $project->contract_id)
+                ->whereNull('deleted_at')
+                ->get();
+        }
+        $projectAtts = $project->attachments;
+
+        $merged = $projectAtts->map(fn ($a) => [
+            'id'            => $a->id,
+            'type'          => $a->type,
+            'original_name' => $a->original_name,
+            'mime_type'     => $a->mime_type,
+            'size'          => $a->size_bytes,
+            'source'        => 'project',
+            'created_at'    => $a->created_at,
+        ])->concat($contractAtts->map(fn ($a) => [
+            'id'            => $a->id,
+            'type'          => $a->type,
+            'original_name' => $a->original_name,
+            'mime_type'     => $a->mime_type,
+            'size'          => $a->size_bytes,
+            'source'        => 'contract',
+            'created_at'    => $a->created_at,
+        ]))->values();
+
+        return response()->json($merged);
     }
 
     public function uploadAttachment(Request $request, Project $project): \Illuminate\Http\JsonResponse
@@ -2706,34 +3070,40 @@ class ProjectController extends Controller
         $file = $request->file('file');
         $path = $file->store("projects/{$project->id}/attachments");
 
-        $attachment = ProjectAttachment::create([
-            'project_id'     => $project->id,
-            'uploaded_by_id' => auth()->id(),
-            'type'           => $request->input('type'),
-            'path'           => $path,
-            'original_name'  => $file->getClientOriginalName(),
-            'mime_type'      => $file->getMimeType(),
-            'size'           => $file->getSize(),
+        // FASE 11.7 (PR 7b) — persistência 100% na camada Attachment.
+        $attachment = app(\App\Attachments\AttachmentService::class)->registerExisting(auth()->user(), [
+            'entity_type'   => 'PROJECT',
+            'entity_id'     => $project->id,
+            'category'      => self::mapAttachmentTypeToCategory($request->input('type')),
+            'storage_path'  => $path,
+            'original_name' => $file->getClientOriginalName(),
+            'mime_type'     => $file->getMimeType() ?: 'application/octet-stream',
+            'metadata'      => ['legacy_type' => $request->input('type')],
         ]);
 
         return response()->json($attachment, 201);
     }
 
-    public function downloadAttachment(Project $project, ProjectAttachment $attachment): \Symfony\Component\HttpFoundation\StreamedResponse
+    public function downloadAttachment(Project $project, \App\Models\Attachment $attachment): \Symfony\Component\HttpFoundation\StreamedResponse
     {
-        abort_if($attachment->project_id !== $project->id, 404);
-        $path = $attachment->effective_path;
-        abort_unless($path && Storage::exists($path), 404, 'Arquivo não encontrado.');
-        return Storage::download($path, $attachment->display_name);
+        // FASE 11.7 (PR 7b) — aceita anexos PROJECT direto OU CONTRACT do contrato vinculado.
+        $isProjectOwn  = $attachment->entity_type === 'PROJECT'  && (int) $attachment->entity_id === (int) $project->id;
+        $isLinkedCont  = $attachment->entity_type === 'CONTRACT' && $project->contract_id !== null
+                         && (int) $attachment->entity_id === (int) $project->contract_id;
+        abort_unless($isProjectOwn || $isLinkedCont, 404);
+        abort_unless(Storage::exists($attachment->storage_path), 404, 'Arquivo não encontrado.');
+        return Storage::download($attachment->storage_path, $attachment->original_name);
     }
 
-    public function deleteAttachment(Project $project, ProjectAttachment $attachment): \Illuminate\Http\JsonResponse
+    public function deleteAttachment(Project $project, \App\Models\Attachment $attachment): \Illuminate\Http\JsonResponse
     {
-        abort_if($attachment->project_id !== $project->id, 404);
-        if ($attachment->path) {
-            Storage::delete($attachment->path);
-        }
-        $attachment->delete();
+        // Só o próprio anexo do projeto pode ser dropado por aqui — anexo do
+        // contrato vinculado é gerenciado em /contracts/{id}/attachments.
+        abort_if(
+            $attachment->entity_type !== 'PROJECT' || (int) $attachment->entity_id !== (int) $project->id,
+            404
+        );
+        $attachment->delete(); // SoftDeletes
         return response()->json(null, 204);
     }
 
@@ -2808,5 +3178,296 @@ class ProjectController extends Controller
             ->get(['id', 'year_month', 'opened_by', 'created_at']);
 
         return response()->json(['data' => $periods]);
+    }
+
+    /**
+     * Sincroniza o card do contract no Kanban quando o `kanban_coordinator_override_id`
+     * do projeto é setado ou limpo.
+     *
+     * - Setando o override → contract muda pra coluna do coord (alocado + kanban_coordinator_id)
+     *   e zera sustentacao_column. Card sai das colunas sust_* do Kanban.
+     * - Limpando o override → recalcula sustentacao_column pelo tipo de contrato e devolve
+     *   o card pra fila correta. Zera kanban_coordinator_id e kanban_status.
+     */
+    private function syncContractKanbanForOverride(Project $project): void
+    {
+        $project->refresh();
+
+        // Busca contract pelos dois lados da relação (alguns vêm com contract.project_id setado,
+        // outros vêm com project.contract_id apontando pro contract).
+        $contract = null;
+        if ($project->contract_id) {
+            $contract = \App\Models\Contract::find($project->contract_id);
+        }
+        if (!$contract) {
+            $contract = \App\Models\Contract::where('project_id', $project->id)->first();
+        }
+        if (!$contract) return;
+
+        $fromColumn = $contract->kanban_status ?: ($contract->sustentacao_column ?: null);
+        $overrideId = $project->kanban_coordinator_override_id;
+
+        if ($overrideId) {
+            $expected = [
+                'kanban_status'         => \App\Models\Contract::KANBAN_ALOCADO,
+                'kanban_coordinator_id' => (int) $overrideId,
+                'sustentacao_column'    => null,
+            ];
+            $needsUpdate = $contract->kanban_status !== $expected['kanban_status']
+                || (int) $contract->kanban_coordinator_id !== $expected['kanban_coordinator_id']
+                || $contract->sustentacao_column !== null;
+            if ($needsUpdate) {
+                $contract->update($expected);
+                \App\Models\ContractKanbanLog::create([
+                    'contract_id'    => $contract->id,
+                    'from_column'    => $fromColumn,
+                    'to_column'      => 'coordinator:' . $overrideId,
+                    'moved_by_id'    => auth()->id(),
+                    'coordinator_id' => $overrideId,
+                ]);
+            }
+            return;
+        }
+
+        // Sem override → devolve pra fila de sustentação correta (recalcula pelo tipo de contrato).
+        $project->loadMissing('contractType');
+        $contractName = strtolower(trim((string) ($project->contractType?->name ?? '')));
+        $sustColumn = null;
+        if (str_contains($contractName, 'banco de horas fixo') || str_contains($contractName, 'banco horas fixo')) {
+            $sustColumn = 'sust_bh_fixo';
+        } elseif (str_contains($contractName, 'banco de horas mensal') || str_contains($contractName, 'banco horas mensal')) {
+            $sustColumn = 'sust_bh_mensal';
+        } elseif (str_contains($contractName, 'on demand')) {
+            $sustColumn = 'sust_on_demand';
+        } elseif (str_contains($contractName, 'cloud')) {
+            $sustColumn = 'sust_cloud';
+        }
+
+        $expectedStatus = $contract->kanban_status === \App\Models\Contract::KANBAN_ALOCADO ? null : $contract->kanban_status;
+        $needsUpdate = $contract->kanban_status !== $expectedStatus
+            || $contract->kanban_coordinator_id !== null
+            || $contract->sustentacao_column !== $sustColumn;
+        if ($needsUpdate) {
+            $contract->update([
+                'kanban_status'         => $expectedStatus,
+                'kanban_coordinator_id' => null,
+                'sustentacao_column'    => $sustColumn,
+            ]);
+            \App\Models\ContractKanbanLog::create([
+                'contract_id'    => $contract->id,
+                'from_column'    => $fromColumn,
+                'to_column'      => $sustColumn ?? 'sustentacao_default',
+                'moved_by_id'    => auth()->id(),
+                'coordinator_id' => null,
+            ]);
+        }
+    }
+
+    /**
+     * Extrato mensal do banco de horas de um projeto Banco de Horas Mensal:
+     * incremento, acumulado, consumo (mensal) e saldo.
+     *
+     * Consumo de meses anteriores ao corte (self::MONTHLY_CONSUMPTION_CUTOFF) é
+     * manual/editável e persistido em project_monthly_consumptions; de 2026-05
+     * em diante vem dos apontamentos (timesheets approved/pending).
+     */
+    public function monthlyStatement(Project $project): JsonResponse
+    {
+        $cutoff = self::MONTHLY_CONSUMPTION_CUTOFF;
+        $hoursPerMonth = (int) $project->sold_hours;
+
+        // Tipo do extrato pelo tipo de contrato:
+        //  • monthly  (BH Mensal): vendidas acumulam mês a mês.
+        //  • fixed    (BH Fixo / Fechado): vendidas = total fixo constante.
+        //  • on_demand: sem vendidas/saldo — só consumo.
+        $project->loadMissing(['contractType', 'hourContributions']);
+        $ctName = strtolower((string) ($project->contractType->name ?? ''));
+        $isOnDemand = str_contains($ctName, 'on demand') || $project->tipo_faturamento === 'on_demand';
+        $isMonthly  = !$isOnDemand && str_contains($ctName, 'mensal');
+        $isFixed    = !$isOnDemand && !$isMonthly && (str_contains($ctName, 'fixo') || $ctName === 'fechado');
+        $statementType = $isOnDemand ? 'on_demand' : ($isMonthly ? 'monthly' : ($isFixed ? 'fixed' : 'none'));
+
+        $empty = [
+            'statement_type' => $statementType,
+            'rows' => [],
+            'total_vendidas_hours' => null,
+            'total_consumption_hours' => 0,
+            'balance_hours' => null,
+            'cutoff' => $cutoff,
+        ];
+
+        // Mensalidade (Cloud/SaaS) não tem extrato de horas.
+        if ($statementType === 'none') {
+            return response()->json($empty);
+        }
+        // Banco Mensal e Fixo/Fechado precisam de horas vendidas > 0; On Demand não.
+        if (($isMonthly || $isFixed) && $hoursPerMonth <= 0) {
+            return response()->json($empty);
+        }
+
+        // Mês inicial: start_date; se vazio, cai pro 1º apontamento; senão created_at.
+        $startStr = $project->start_date
+            ? Carbon::parse($project->start_date)->format('Y-m-d')
+            : (\App\Models\Timesheet::where('project_id', $project->id)
+                    ->whereIn('status', ['approved', 'pending'])->min('date')
+                ?? optional($project->created_at)->format('Y-m-d'));
+        if (!$startStr) {
+            return response()->json($empty);
+        }
+        $startDate = Carbon::parse($startStr)->startOfMonth();
+
+        // Nº de meses. BH Mensal: acumulado/horas-mês (congela no encerramento);
+        // demais tipos: do início até hoje (ou encerramento).
+        $accumulatedSold = (int) ($project->accumulated_sold_hours ?? 0);
+        if ($isMonthly && $accumulatedSold > 0 && $hoursPerMonth > 0) {
+            $months = (int) round($accumulatedSold / $hoursPerMonth);
+        } else {
+            $endDate = $project->encerramento_date
+                ? Carbon::parse($project->encerramento_date)->startOfMonth()
+                : Carbon::now()->startOfMonth();
+            if ($endDate->lt($startDate)) {
+                $endDate = $startDate->copy();
+            }
+            $months = $startDate->diffInMonths($endDate) + 1;
+        }
+
+        if ($months < 1) {
+            return response()->json($empty);
+        }
+
+        // IDs do banco de horas = projeto + filhos.
+        $bankIds = Project::where('parent_project_id', $project->id)->pluck('id')->all();
+        $bankIds[] = $project->id;
+
+        // Consumo real (apontamentos) por mês, status approved/pending.
+        $realMap = \App\Models\Timesheet::query()
+            ->whereIn('project_id', $bankIds)
+            ->whereIn('status', ['approved', 'pending'])
+            ->select(
+                DB::raw("to_char(date, 'YYYY-MM') as ym"),
+                DB::raw('SUM(effort_minutes) as mins')
+            )
+            ->groupBy('ym')
+            ->pluck('mins', 'ym')
+            ->map(fn ($v) => (int) $v)
+            ->all();
+
+        // Consumo manual persistido (apenas do projeto pai).
+        $manualMap = ProjectMonthlyConsumption::where('project_id', $project->id)
+            ->pluck('consumed_minutes', 'year_month')
+            ->map(fn ($v) => (int) $v)
+            ->all();
+
+        // Aportes (hour_contributions) por mês — entram nas "vendidas" no mês aportado.
+        $aporteByYm = [];
+        foreach ($project->hourContributions as $c) {
+            if (!$c->contributed_at) { continue; }
+            $aym = Carbon::parse($c->contributed_at)->format('Y-m');
+            $aporteByYm[$aym] = ($aporteByYm[$aym] ?? 0) + (float) $c->contributed_hours;
+        }
+        $totalAportes = array_sum($aporteByYm);
+        $lastIndex = $months - 1;
+        $prevAccumAporte = 0.0;
+
+        $rows = [];
+        $accumulatedHours = 0.0;
+        $accumulatedConsumptionHours = 0.0;
+        $balanceHours = 0.0;
+
+        $cursor = $startDate->copy();
+        for ($i = 0; $i < $months; $i++) {
+            $ym = $cursor->format('Y-m');
+
+            // Vendidas exibidas: Mensal acumula (incremento/mês); Fixo/Fechado é o
+            // total fixo constante; On Demand não tem vendidas.
+            // Aportes acumulados ATÉ este mês (o último mês absorve aportes futuros p/ fechar o total).
+            $accumAporte = $i === $lastIndex
+                ? $totalAportes
+                : array_sum(array_filter($aporteByYm, fn ($k) => $k <= $ym, ARRAY_FILTER_USE_KEY));
+            // Aporte desta linha (incremento do acumulado) — exibido como "+Xh aporte" na tela.
+            $monthAporte = round($accumAporte - $prevAccumAporte, 2);
+            $prevAccumAporte = $accumAporte;
+
+            if ($isMonthly) {
+                $accumulatedHours += $hoursPerMonth;
+                $vendidasHours = $accumulatedHours + $accumAporte;
+            } elseif ($isFixed) {
+                $vendidasHours = (float) $hoursPerMonth + $accumAporte;
+            } else {
+                $vendidasHours = null; // on_demand
+            }
+
+            $editable = $ym < $cutoff;
+            $consumptionMinutes = $editable
+                ? ($manualMap[$ym] ?? 0)
+                : ($realMap[$ym] ?? 0);
+            $consumptionHours = round($consumptionMinutes / 60, 2);
+            $accumulatedConsumptionHours += $consumptionHours;
+
+            $balanceHours = $vendidasHours === null
+                ? null
+                : round($vendidasHours - $accumulatedConsumptionHours, 2);
+
+            $rows[] = [
+                'year_month' => $ym,
+                'vendidas_hours' => $vendidasHours,
+                'aporte_hours' => $monthAporte,
+                'consumption_hours' => $consumptionHours,
+                'accumulated_consumption_hours' => round($accumulatedConsumptionHours, 2),
+                'balance_hours' => $balanceHours,
+                'editable' => $editable,
+            ];
+
+            $cursor->addMonth();
+        }
+
+        $totalVendidas = $isMonthly ? ($accumulatedHours + $totalAportes) : ($isFixed ? ((float) $hoursPerMonth + $totalAportes) : null);
+
+        return response()->json([
+            'statement_type' => $statementType,
+            'rows' => $rows,
+            'total_vendidas_hours' => $totalVendidas,
+            'total_consumption_hours' => round($accumulatedConsumptionHours, 2),
+            'balance_hours' => $isOnDemand ? null : $balanceHours,
+            'cutoff' => $cutoff,
+        ]);
+    }
+
+    /**
+     * Atualiza (upsert) o consumo manual de um mês anterior ao corte.
+     * Apenas admin/coordenador. Meses >= corte não são editáveis (vêm do sistema).
+     */
+    public function updateMonthlyConsumption(Request $request, Project $project): JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Não autorizado'], 403);
+        }
+
+        $validated = $request->validate([
+            'year_month' => ['required', 'regex:/^\d{4}-\d{2}$/'],
+            'hours' => ['required', 'numeric', 'min:0', 'max:999999'],
+        ]);
+
+        $ym = $validated['year_month'];
+
+        if ($ym >= self::MONTHLY_CONSUMPTION_CUTOFF) {
+            return response()->json([
+                'message' => 'Consumo de 05/2026 em diante vem do sistema e não é editável.',
+            ], 422);
+        }
+
+        $minutes = (int) round($validated['hours'] * 60);
+
+        ProjectMonthlyConsumption::updateOrCreate(
+            ['project_id' => $project->id, 'year_month' => $ym],
+            ['consumed_minutes' => $minutes]
+        );
+
+        return response()->json([
+            'success' => true,
+            'year_month' => $ym,
+            'consumption_hours' => round($minutes / 60, 2),
+        ]);
     }
 }

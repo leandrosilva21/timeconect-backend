@@ -22,5 +22,6 @@ class FechamentoEmailTemplate extends Model
     ];
 
     public const CATEGORIAS = ['consultor', 'parceiro', 'cliente'];
-    public const CONTRACT_TYPES = ['cooperado', 'clt', 'pj'];
+    // 'bizify' é eixo do consultor (User.is_bizify) e tem precedência sobre o contract_type real.
+    public const CONTRACT_TYPES = ['cooperado', 'clt', 'pj', 'bizify'];
 }

@@ -336,6 +336,12 @@ Route::prefix('v1')->group(function () {
         Route::get('/service-types', [ServiceTypeController::class, 'index'])->name('service-types.index');
         Route::get('/service-types/{id}', [ServiceTypeController::class, 'show'])->name('service-types.show');
 
+        // Modelos de e-mail dos fechamentos (cadastro)
+        Route::get('/fechamento-email-templates', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'index']);
+        Route::post('/fechamento-email-templates', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'store']);
+        Route::put('/fechamento-email-templates/{template}', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'update']);
+        Route::delete('/fechamento-email-templates/{template}', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'destroy']);
+
         // Rotas de escrita - protegidas por permissões
         Route::middleware('permission.or.admin:service_types.create')->group(function () {
             Route::post('/service-types', [ServiceTypeController::class, 'store'])->name('service-types.store');

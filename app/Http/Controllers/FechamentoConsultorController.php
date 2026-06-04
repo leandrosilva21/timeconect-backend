@@ -693,6 +693,23 @@ class FechamentoConsultorController extends Controller
         $files        = $this->generateFechamentoFiles($consultant, $yearMonth, $mode);
         $totalValue   = $files['total_value'];
 
+        // Modelo de e-mail do cadastro (por tipo de contrato). Só quando NÃO houve
+        // corpo manual; cai no default acima se não houver modelo ativo. {data_nota} só PJ.
+        if (trim((string) $request->input('mensagem')) === '') {
+            $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
+            $vars = ['nome' => $consultant->name, 'periodo' => $periodo, 'valor' => 'R$ ' . number_format((float) $totalValue, 2, ',', '.')];
+            if ($consultant->contract_type === 'pj') {
+                $vars['data_nota'] = $svc->dataEnvioNotaPj($yearMonth);
+            }
+            $tpl = $svc->resolve('consultor', $consultant->contract_type, $vars);
+            if ($tpl) {
+                $mensagem = $tpl['body'];
+                if (!$isResend && !$request->input('subject') && $tpl['subject'] !== '') {
+                    $subject = $tpl['subject'];
+                }
+            }
+        }
+
         $log = new FechamentoConsultorEmail([
             'sender_user_id'     => $sender->id,
             'consultant_user_id' => $consultant->id,

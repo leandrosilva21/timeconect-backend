@@ -756,6 +756,21 @@ class FechamentoParceiroController extends Controller
         $files      = $this->generateParceiroFiles($partner, $yearMonth, $mode);
         $totalValue = $files['total_value'];
 
+        // Modelo de e-mail do cadastro (por tipo de contrato do parceiro). Só quando
+        // NÃO houve corpo manual; cai no default acima se não houver modelo ativo.
+        if (trim((string) $request->input('mensagem')) === '') {
+            $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
+            $vars = ['nome' => $partner->name, 'periodo' => $periodo, 'valor' => $this->brl($totalValue)];
+            if ($partner->contract_type === 'pj') {
+                $vars['data_nota'] = $svc->dataEnvioNotaPj($yearMonth);
+            }
+            $tpl = $svc->resolve('parceiro', $partner->contract_type, $vars);
+            if ($tpl) {
+                $mensagem = $tpl['body'];
+                if ($tpl['subject'] !== '') $subject = $tpl['subject'];
+            }
+        }
+
         // Envia COMO o remetente (App Password O365) quando configurado; senão, remetente padrão.
         $mc = \App\Services\SenderMailer::for(
             $sender,

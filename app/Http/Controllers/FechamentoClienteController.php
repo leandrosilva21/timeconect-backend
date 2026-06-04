@@ -1612,6 +1612,18 @@ class FechamentoClienteController extends Controller
         $files      = $this->generateClienteFiles($customer, $yearMonth, $mode, $projectId);
         $totalValue = $files['total_value'];
 
+        // Modelo de e-mail do cadastro (cliente é único). Só quando NÃO houve corpo
+        // manual; cai no default acima se não houver modelo ativo.
+        if (trim((string) $request->input('mensagem')) === '') {
+            $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
+            $vars = ['nome' => $customer->name, 'periodo' => $periodo, 'valor' => $this->brl($totalValue)];
+            $tpl  = $svc->resolve('cliente', null, $vars);
+            if ($tpl) {
+                $mensagem = $tpl['body'];
+                if ($tpl['subject'] !== '') $subject = $tpl['subject'];
+            }
+        }
+
         // Anexos extras escolhidos pelo usuário — salvos em pasta única (preserva o
         // nome original p/ exibição) e removidos ao final do envio.
         $extraPaths = [];

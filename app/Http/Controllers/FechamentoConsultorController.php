@@ -698,10 +698,7 @@ class FechamentoConsultorController extends Controller
         if (trim((string) $request->input('mensagem')) === '') {
             $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
             $vars = ['nome' => $consultant->name, 'periodo' => $periodo, 'valor' => 'R$ ' . number_format((float) $totalValue, 2, ',', '.')];
-            if ($consultant->contract_type === 'pj') {
-                $vars['data_nota'] = $svc->dataEnvioNotaPj($yearMonth);
-            }
-            $tpl = $svc->resolve('consultor', $consultant->contract_type, $vars);
+            $tpl  = $svc->resolve('consultor', $consultant->contract_type, $vars, $yearMonth);
             if ($tpl) {
                 $mensagem = $tpl['body'];
                 if (!$isResend && !$request->input('subject') && $tpl['subject'] !== '') {

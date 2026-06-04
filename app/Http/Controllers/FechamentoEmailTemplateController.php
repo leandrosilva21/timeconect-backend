@@ -74,6 +74,7 @@ class FechamentoEmailTemplateController extends Controller
             'nome'          => ['nullable', 'string', 'max:255'],
             'subject'       => ['required', 'string', 'max:255'],
             'body'          => ['required', 'string'],
+            'pay_day'       => ['nullable', 'integer', 'min:1', 'max:31'],
             'active'        => ['nullable', 'boolean'],
         ]);
 

@@ -12,11 +12,13 @@ class FechamentoEmailTemplate extends Model
         'nome',
         'subject',
         'body',
+        'pay_day',
         'active',
     ];
 
     protected $casts = [
-        'active' => 'boolean',
+        'active'  => 'boolean',
+        'pay_day' => 'integer',
     ];
 
     public const CATEGORIAS = ['consultor', 'parceiro', 'cliente'];

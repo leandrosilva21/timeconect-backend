@@ -761,10 +761,7 @@ class FechamentoParceiroController extends Controller
         if (trim((string) $request->input('mensagem')) === '') {
             $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
             $vars = ['nome' => $partner->name, 'periodo' => $periodo, 'valor' => $this->brl($totalValue)];
-            if ($partner->contract_type === 'pj') {
-                $vars['data_nota'] = $svc->dataEnvioNotaPj($yearMonth);
-            }
-            $tpl = $svc->resolve('parceiro', $partner->contract_type, $vars);
+            $tpl  = $svc->resolve('parceiro', $partner->contract_type, $vars, $yearMonth);
             if ($tpl) {
                 $mensagem = $tpl['body'];
                 if ($tpl['subject'] !== '') $subject = $tpl['subject'];

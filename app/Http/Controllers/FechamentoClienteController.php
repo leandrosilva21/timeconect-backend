@@ -1617,7 +1617,7 @@ class FechamentoClienteController extends Controller
         if (trim((string) $request->input('mensagem')) === '') {
             $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
             $vars = ['nome' => $customer->name, 'periodo' => $periodo, 'valor' => $this->brl($totalValue)];
-            $tpl  = $svc->resolve('cliente', null, $vars);
+            $tpl  = $svc->resolve('cliente', null, $vars, $yearMonth);
             if ($tpl) {
                 $mensagem = $tpl['body'];
                 if ($tpl['subject'] !== '') $subject = $tpl['subject'];

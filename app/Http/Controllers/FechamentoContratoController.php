@@ -93,6 +93,13 @@ class FechamentoContratoController extends Controller
                 ($minutesMap[$typeCode][$custId][$rootId] ?? 0) + (int) $ts->effort_minutes;
         }
 
+        // Flag "faturado / NFS-e enviada" por projeto (pai) neste mês (existência da linha).
+        $invoicedSet = \App\Models\OnDemandInvoicedMonth::where('year_month', $yearMonth)
+            ->whereIn('project_id', array_keys($projMeta))
+            ->pluck('project_id')
+            ->flip()
+            ->toArray();
+
         // Para banco de horas: horas consumidas acumuladas (all-time) por projeto raiz
         $bhProjectIds = collect($projMeta)
             ->filter(fn ($p) => in_array($p['type_code'], ['fixed_hours', 'monthly_hours']))
@@ -163,6 +170,7 @@ class FechamentoContratoController extends Controller
                         'excedente_valor' => $excValor,
                         'valor_mensal'    => $mensal,
                         'total_receita'   => $receita,
+                        'invoiced'        => isset($invoicedSet[$projId]),
                     ];
 
                     $custHoras   += $horas;

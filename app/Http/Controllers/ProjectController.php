@@ -717,6 +717,55 @@ class ProjectController extends Controller
             return $project;
         });
 
+        // ── Horas NÃO FATURADAS (informativo) dos projetos On Demand pai ──
+        // Soma das horas de meses ENCERRADOS (anteriores ao mês corrente) ainda não
+        // marcados como faturados (on_demand_invoiced_months). Só p/ pai On Demand.
+        $odParents = $projects->getCollection()->filter(function ($p) {
+            return optional($p->contractType)->code === 'on_demand' && empty($p->parent_project_id);
+        });
+        if ($odParents->isNotEmpty()) {
+            $parentIds   = $odParents->pluck('id')->all();
+            $childToParent = \App\Models\Project::whereIn('parent_project_id', $parentIds)
+                ->pluck('parent_project_id', 'id')->all(); // [childId => parentId]
+            $allIds      = array_merge($parentIds, array_keys($childToParent));
+            $monthStart  = \Carbon\Carbon::now()->startOfMonth()->toDateString();
+
+            $rows = \App\Models\Timesheet::whereIn('project_id', $allIds)
+                ->whereNotIn('status', [\App\Models\Timesheet::STATUS_ADJUSTMENT_REQUESTED, \App\Models\Timesheet::STATUS_REJECTED, \App\Models\Timesheet::STATUS_LATE])
+                ->whereNull('deleted_at')
+                ->whereDate('date', '<', $monthStart) // só meses encerrados
+                ->selectRaw("project_id, to_char(date, 'YYYY-MM') as ym, SUM(effort_minutes) as mins")
+                ->groupBy('project_id', 'ym')
+                ->get();
+
+            $byParent = [];
+            foreach ($rows as $r) {
+                $pid = $childToParent[$r->project_id] ?? $r->project_id; // filho->pai
+                if (!in_array($pid, $parentIds, true)) continue;
+                $byParent[$pid][$r->ym] = ($byParent[$pid][$r->ym] ?? 0) + (int) $r->mins;
+            }
+
+            $invoiced = \App\Models\OnDemandInvoicedMonth::whereIn('project_id', $parentIds)
+                ->get(['project_id', 'year_month'])
+                ->groupBy('project_id')
+                ->map(fn ($g) => $g->pluck('year_month')->flip()->all())
+                ->all();
+
+            foreach ($odParents as $p) {
+                $inv = $invoiced[$p->id] ?? [];
+                $unbilledMin = 0;
+                $unbilledMonths = [];
+                foreach (($byParent[$p->id] ?? []) as $ym => $mins) {
+                    if (isset($inv[$ym])) continue;
+                    $unbilledMin += $mins;
+                    $unbilledMonths[] = $ym;
+                }
+                sort($unbilledMonths);
+                $p->unbilled_hours  = round($unbilledMin / 60, 2);
+                $p->unbilled_months = $unbilledMonths;
+            }
+        }
+
         // Resposta PO-UI
         return [
             'hasNext' => $projects->hasMorePages(),

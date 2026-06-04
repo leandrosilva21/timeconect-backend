@@ -752,6 +752,7 @@ Route::prefix('v1')->group(function () {
         // 📋 FECHAMENTO POR CONTRATO
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/fechamento-contrato', [\App\Http\Controllers\FechamentoContratoController::class, 'index']);
+            Route::post('/on-demand/invoiced', [\App\Http\Controllers\OnDemandInvoicedController::class, 'toggle']);
         });
 
         // 🧾 FECHAMENTO CLIENTE

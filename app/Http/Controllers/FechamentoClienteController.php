@@ -1502,8 +1502,6 @@ class FechamentoClienteController extends Controller
             : null;
         $periodo        = $this->periodoExtenso($yearMonth);
         $mensagemPadrao = $this->defaultMensagem($periodo, $mode);
-        $mensagem       = trim((string) $request->input('mensagem'));
-        $mensagem       = $mensagem !== '' ? $mensagem : $mensagemPadrao;
 
         $projetosList = [];
         $valorTotal   = $this->brl($this->despesaTotal((int) $customer->id, $yearMonth));
@@ -1521,6 +1519,15 @@ class FechamentoClienteController extends Controller
                 $valorTotal   = $this->brl($this->clienteTotal((int) $customer->id, $yearMonth));
             }
         }
+
+        // Semeia a partir do modelo do cadastro (cliente é único), se houver ativo.
+        $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
+        $vars = ['nome' => $customer->name, 'periodo' => $periodo, 'valor' => $valorTotal];
+        if ($tpl = $svc->resolve('cliente', null, $vars, $yearMonth)) {
+            $mensagemPadrao = $tpl['body'];
+        }
+        $mensagem = trim((string) $request->input('mensagem'));
+        $mensagem = $mensagem !== '' ? $mensagem : $mensagemPadrao;
 
         $html = view('emails.fechamento.cliente', [
             'clienteName'     => $customer->name,

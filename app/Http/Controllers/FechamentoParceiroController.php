@@ -672,6 +672,12 @@ class FechamentoParceiroController extends Controller
         $totalDesp      = round(collect($this->despesasData((int) $partner->id, $yearMonth))->where('is_paid', false)->sum('valor'), 2);
         $valorPreview   = $mode === 'despesa' ? $totalDesp : ($mode === 'servicos' ? $totalAll - $totalDesp : $totalAll);
         $mensagemPadrao = $this->defaultMensagem($periodo, $yearMonth, $mode);
+        // Semeia a partir do modelo do cadastro (por tipo de contrato), se houver ativo.
+        $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
+        $vars = ['nome' => $partner->name, 'periodo' => $periodo, 'valor' => $this->brl($valorPreview)];
+        if ($tpl = $svc->resolve('parceiro', $partner->contract_type, $vars, $yearMonth)) {
+            $mensagemPadrao = $tpl['body'];
+        }
         $mensagem       = trim((string) $request->input('mensagem'));
         $mensagem       = $mensagem !== '' ? $mensagem : $mensagemPadrao;
 

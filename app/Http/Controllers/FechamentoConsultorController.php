@@ -878,6 +878,12 @@ class FechamentoConsultorController extends Controller
             ? (float) $closing['total_despesas']
             : ($mode === 'servicos' ? (float) $closing['total_servico'] : (float) $closing['total_geral']);
         $mensagemPadrao = $this->defaultMensagem($periodo, $yearMonth, $mode);
+        // Semeia a partir do modelo do cadastro (por tipo de contrato), se houver ativo.
+        $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
+        $vars = ['nome' => $consultant->name, 'periodo' => $periodo, 'valor' => $this->brl($valorPreview)];
+        if ($tpl = $svc->resolve('consultor', $consultant->contract_type, $vars, $yearMonth)) {
+            $mensagemPadrao = $tpl['body'];
+        }
         $mensagem       = trim((string) $request->input('mensagem'));
         $mensagem       = $mensagem !== '' ? $mensagem : $mensagemPadrao;
 

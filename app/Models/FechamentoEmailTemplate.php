@@ -9,6 +9,7 @@ class FechamentoEmailTemplate extends Model
     protected $fillable = [
         'categoria',
         'contract_type',
+        'empresa',
         'nome',
         'subject',
         'body',
@@ -22,6 +23,7 @@ class FechamentoEmailTemplate extends Model
     ];
 
     public const CATEGORIAS = ['consultor', 'parceiro', 'cliente'];
-    // 'bizify' é eixo do consultor (User.is_bizify) e tem precedência sobre o contract_type real.
-    public const CONTRACT_TYPES = ['cooperado', 'clt', 'pj', 'bizify'];
+    public const CONTRACT_TYPES = ['cooperado', 'clt', 'pj'];
+    // Eixo independente do consultor (User.is_bizify). Parceiro/cliente sempre 'erpserv'.
+    public const EMPRESAS = ['erpserv', 'bizify'];
 }

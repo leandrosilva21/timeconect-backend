@@ -16,7 +16,7 @@ class FechamentoEmailTemplateService
     /**
      * @return array{subject: string, body: string}|null  null = sem modelo ativo (usa o default do controller).
      */
-    public function resolve(string $categoria, ?string $contractType, array $vars, ?string $yearMonth = null): ?array
+    public function resolve(string $categoria, ?string $contractType, array $vars, ?string $yearMonth = null, ?string $empresa = null): ?array
     {
         $q = FechamentoEmailTemplate::where('categoria', $categoria)->where('active', true);
         if ($categoria === 'cliente') {
@@ -27,6 +27,8 @@ class FechamentoEmailTemplateService
             }
             $q->where('contract_type', $contractType);
         }
+        // Empresa é eixo do consultor (erpserv|bizify); parceiro/cliente → sempre erpserv.
+        $q->where('empresa', $empresa ?: 'erpserv');
         $tpl = $q->orderByDesc('id')->first();
         if (!$tpl) {
             return null;

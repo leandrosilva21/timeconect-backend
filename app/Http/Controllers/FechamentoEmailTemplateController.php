@@ -71,6 +71,7 @@ class FechamentoEmailTemplateController extends Controller
         $data = $request->validate([
             'categoria'     => ['required', Rule::in(FechamentoEmailTemplate::CATEGORIAS)],
             'contract_type' => ['nullable', Rule::in(FechamentoEmailTemplate::CONTRACT_TYPES)],
+            'empresa'       => ['nullable', Rule::in(FechamentoEmailTemplate::EMPRESAS)],
             'nome'          => ['nullable', 'string', 'max:255'],
             'subject'       => ['required', 'string', 'max:255'],
             'body'          => ['required', 'string'],
@@ -88,15 +89,18 @@ class FechamentoEmailTemplateController extends Controller
                 'errors'  => ['contract_type' => ['Obrigatório para consultor/parceiro.']],
             ], 422));
         }
+        // Empresa Bizify só faz sentido p/ consultor; demais → erpserv.
+        $data['empresa'] = ($categoria === 'consultor' && ($data['empresa'] ?? null) === 'bizify') ? 'bizify' : 'erpserv';
         $data['active'] = (bool) ($data['active'] ?? false);
 
         return $data;
     }
 
-    /** Garante só 1 ativo por (categoria, contract_type). */
+    /** Garante só 1 ativo por (categoria, contract_type, empresa). */
     private function deactivateSiblings(FechamentoEmailTemplate $tpl): void
     {
         FechamentoEmailTemplate::where('categoria', $tpl->categoria)
+            ->where('empresa', $tpl->empresa)
             ->where(function ($q) use ($tpl) {
                 $tpl->contract_type === null
                     ? $q->whereNull('contract_type')

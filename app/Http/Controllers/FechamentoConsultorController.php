@@ -698,8 +698,8 @@ class FechamentoConsultorController extends Controller
         if (trim((string) $request->input('mensagem')) === '') {
             $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
             $vars = ['nome' => $consultant->name, 'periodo' => $periodo, 'valor' => 'R$ ' . number_format((float) $totalValue, 2, ',', '.')];
-            $tipoTpl = $consultant->is_bizify ? 'bizify' : $consultant->contract_type;
-            $tpl  = $svc->resolve('consultor', $tipoTpl, $vars, $yearMonth);
+            $empresaTpl = $consultant->is_bizify ? 'bizify' : 'erpserv';
+            $tpl  = $svc->resolve('consultor', $consultant->contract_type, $vars, $yearMonth, $empresaTpl);
             if ($tpl) {
                 $mensagem = $tpl['body'];
                 if (!$isResend && !$request->input('subject') && $tpl['subject'] !== '') {
@@ -882,8 +882,8 @@ class FechamentoConsultorController extends Controller
         // Semeia a partir do modelo do cadastro (por tipo de contrato), se houver ativo.
         $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
         $vars = ['nome' => $consultant->name, 'periodo' => $periodo, 'valor' => $this->brl($valorPreview)];
-        $tipoTpl = $consultant->is_bizify ? 'bizify' : $consultant->contract_type;
-        if ($tpl = $svc->resolve('consultor', $tipoTpl, $vars, $yearMonth)) {
+        $empresaTpl = $consultant->is_bizify ? 'bizify' : 'erpserv';
+        if ($tpl = $svc->resolve('consultor', $consultant->contract_type, $vars, $yearMonth, $empresaTpl)) {
             $mensagemPadrao = $tpl['body'];
         }
         $mensagem       = trim((string) $request->input('mensagem'));

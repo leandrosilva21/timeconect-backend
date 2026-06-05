@@ -294,8 +294,11 @@ class BankHoursFixedController extends Controller
             if ($newContributions > 0) {
                 $contributedHours += $newContributions;
             } else {
-                // Fallback: usar aporte legado para projetos antigos
-                $contributedHours += $project->hour_contribution ?? 0;
+                // Aporte LEGADO só se o projeto NUNCA usou o sistema novo (senão aporte excluído ressuscita).
+                $legacy = (float) ($project->hour_contribution ?? 0);
+                if ($legacy > 0 && !$project->hourContributions()->withTrashed()->exists()) {
+                    $contributedHours += $legacy;
+                }
             }
         }
         $contributedHours = (int) $contributedHours;

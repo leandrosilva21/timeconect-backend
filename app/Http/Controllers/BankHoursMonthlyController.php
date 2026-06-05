@@ -326,8 +326,12 @@ class BankHoursMonthlyController extends Controller
             if ($newContributions > 0) {
                 $contributedHours += $newContributions;
             } else {
-                // Fallback: usar aporte legado para projetos antigos
-                $contributedHours += $project->hour_contribution ?? 0;
+                // Aporte LEGADO só se o projeto NUNCA usou o sistema novo. Se já teve aporte e
+                // foi excluído (soft-delete), o legado é stale → ignora (senão ressuscita no perfil).
+                $legacy = (float) ($project->hour_contribution ?? 0);
+                if ($legacy > 0 && !$project->hourContributions()->withTrashed()->exists()) {
+                    $contributedHours += $legacy;
+                }
             }
         }
         $contributedHours = (int) $contributedHours;

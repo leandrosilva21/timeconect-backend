@@ -190,7 +190,9 @@ class FechadoController extends Controller
                 : $p->hourContributions()->get();
             $contributionHours = (float) $contributions->sum('contributed_hours');
             if ($contributionHours <= 0) {
-                $contributionHours = (float) ($p->hour_contribution ?? 0);
+                // Aporte LEGADO só se o projeto NUNCA usou o sistema novo (senão aporte excluído ressuscita).
+                $legacy = (float) ($p->hour_contribution ?? 0);
+                $contributionHours = ($legacy > 0 && !$p->hourContributions()->withTrashed()->exists()) ? $legacy : 0.0;
             }
             return [
                 'id'                 => $p->id,

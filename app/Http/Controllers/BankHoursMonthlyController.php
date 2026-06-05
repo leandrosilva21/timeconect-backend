@@ -183,6 +183,21 @@ class BankHoursMonthlyController extends Controller
         // TODOS os projetos pais em escopo permitirem (chave extrato_visivel_cliente).
         $extratoVisivelCliente = $parentProjects->every(fn ($p) => (bool) ($p->extrato_visivel_cliente ?? true));
 
+        // Extrato mês a mês (Vendidas/Consumo/Saldo) p/ o perfil do cliente — calculado
+        // server-side (o endpoint /monthly-statement é admin-only). Só quando há exatamente
+        // um projeto pai em escopo e a chave está ligada; senão o FE cai na tabela simples.
+        $monthlyStatement = null;
+        if ($extratoVisivelCliente && $parentProjects->count() === 1) {
+            try {
+                $monthlyStatement = json_decode(
+                    app(ProjectController::class)->monthlyStatement($parentProjects->first())->getContent(),
+                    true
+                );
+            } catch (\Throwable $e) {
+                $monthlyStatement = null; // fallback p/ tabela simples; nunca quebra o dashboard
+            }
+        }
+
         // Calcular horas acumuladas (mesma lógica de contracted_hours, mas usando accumulated_sold_hours quando disponível)
         // Para projetos "Banco de Horas Mensal": usa accumulated_sold_hours se existir, senão usa sold_hours
         // Para outros projetos: usa sold_hours normalmente
@@ -610,6 +625,7 @@ class BankHoursMonthlyController extends Controller
             'data' => [
                 'contracted_hours' => $contractedHours,
                 'extrato_visivel_cliente' => $extratoVisivelCliente,
+                'monthly_statement' => $monthlyStatement,
                 'accumulated_contracted_hours' => $accumulatedContractedHours,
                 'contributed_hours' => $contributedHours,
                 'consumed_hours' => $consumedHours,

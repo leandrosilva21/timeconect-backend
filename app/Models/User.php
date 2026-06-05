@@ -69,6 +69,8 @@ class User extends Authenticatable
         'is_executive',
         'can_timesheet_sustentacao',
         'extra_permissions',
+        // Funcionário Bizify (separa do resultado ERPSERV no fechamento de consultores)
+        'is_bizify',
         // Capacity (módulo skills)
         'capacity_hours',
         'allocated_hours',
@@ -123,6 +125,7 @@ class User extends Authenticatable
             'has_temporary_password' => 'boolean',
             'temporary_password_expires_at' => 'datetime',
             'is_executive' => 'boolean',
+            'is_bizify' => 'boolean',
             'can_timesheet_sustentacao' => 'boolean',
             'bank_hours_start_date' => 'date:Y-m-d',
             'guaranteed_hours'      => 'decimal:2',

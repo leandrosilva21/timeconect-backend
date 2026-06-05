@@ -39,6 +39,7 @@ class Expense extends Model
     protected $fillable = [
         'user_id',
         'project_id',
+        'real_project_id',
         'expense_category_id',
         'expense_date',
         'description',
@@ -49,6 +50,7 @@ class Expense extends Model
         'rejection_reason',
         'charge_client',
         'is_paid',
+        'pagar_no_fechamento',
         'paid_by',
         'paid_at',
         'reviewed_by',
@@ -60,6 +62,7 @@ class Expense extends Model
         'amount' => 'decimal:2',
         'charge_client' => 'boolean',
         'is_paid' => 'boolean',
+        'pagar_no_fechamento' => 'boolean',
         'paid_at' => 'datetime',
         'reviewed_at' => 'datetime',
         'created_at' => 'datetime',
@@ -96,6 +99,12 @@ class Expense extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    /** Projeto REAL da despesa de investimento (referência). */
+    public function realProject(): BelongsTo
+    {
+        return $this->belongsTo(Project::class, 'real_project_id');
     }
 
     /**
@@ -216,7 +225,17 @@ class Expense extends Model
             return true;
         }
 
-        if (!$user->isCoordenador() || !$this->project) {
+        if (!$this->project) {
+            return false;
+        }
+
+        // Investimento COMERCIAL: o EXECUTIVO do cliente aprova (cliente via projeto).
+        if ($this->project->is_investimento_comercial && $this->project->categoria_interna === 'Comercial') {
+            return (bool) \App\Models\Customer::where('id', $this->project->customer_id)
+                ->where('executive_id', $user->id)->exists();
+        }
+
+        if (!$user->isCoordenador()) {
             return false;
         }
 
@@ -226,6 +245,13 @@ class Expense extends Model
                 \App\Models\ServiceType::where('id', $this->project->service_type_id)
                     ->where('code', 'sustentacao')
                     ->exists();
+        }
+
+        // Despesa de INVESTIMENTO (Suporte/Projeto): aprova o coordenador do PROJETO REAL.
+        if ($this->project->is_investimento_comercial && $this->real_project_id) {
+            return \App\Models\Project::where('id', $this->real_project_id)
+                ->whereHas('coordinators', fn($q) => $q->where('users.id', $user->id))
+                ->exists();
         }
 
         // Coordenador de projetos aprova projetos onde está vinculado como coordenador

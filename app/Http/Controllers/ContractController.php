@@ -25,6 +25,11 @@ use App\Listeners\ContractEventListener;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use App\Mail\ReajusteClienteMail;
+use App\Models\ContractValueChange;
+use App\Services\EconomicIndexService;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Mail;
 
 class ContractController extends Controller
 {
@@ -75,13 +80,12 @@ class ContractController extends Controller
 
             foreach ($paginated->items() as $contract) {
                 if ($contract->project) {
-                    $logged  = (float) ($timesheetSums[$contract->project_id] ?? 0);
-                    $consumed = round($logged / 60, 1);
-                    $contract->project->setAttribute('consumed_hours', $consumed);
-                    $contract->project->setAttribute('general_hours_balance', round(
-                        ($contract->project->sold_hours ?? 0) + ($contract->project->hour_contribution ?? 0) - $consumed,
-                        1
-                    ));
+                    // Saldo + consumido pela regra da GESTÃO DE PROJETOS (fonte da verdade) — conta os
+                    // subprojetos (Fechado/BH-Fixo pelas contratadas, On Demand pelo apontado).
+                    // Antes ignorava filhos (saldo inflado, ex.: AUSTER 9602 vs 1957 real).
+                    $b = $contract->project->managementBreakdown();
+                    $contract->project->setAttribute('consumed_hours', round($b['consumed'], 1));
+                    $contract->project->setAttribute('general_hours_balance', round($b['balance'], 1));
                 }
             }
         }
@@ -124,10 +128,14 @@ class ContractController extends Controller
         ]);
 
         $contract = DB::transaction(function () use ($validated, $request) {
+            // Subprojeto (tem parent_project_id): regra antiga — nasce em "Início Autorizado",
+            // não em "Novo Contrato" (o contrato pai já está aprovado; o filho não passa pela
+            // revisão de novo contrato). Demais contratos nascem em rascunho/backlog.
+            $isSubproject = !empty($validated['parent_project_id']);
             $data = collect($validated)->except('contacts')->merge([
                 'created_by_id' => auth()->id(),
-                'status'        => Contract::STATUS_RASCUNHO,
-                'kanban_status' => Contract::KANBAN_BACKLOG,
+                'status'        => $isSubproject ? Contract::STATUS_INICIO_AUTORIZADO : Contract::STATUS_RASCUNHO,
+                'kanban_status' => $isSubproject ? Contract::KANBAN_INICIO_AUTORIZADO : Contract::KANBAN_BACKLOG,
             ])->toArray();
 
             if (empty($data['executivo_conta_id'])) {
@@ -1500,8 +1508,10 @@ class ContractController extends Controller
 
     private function formatProjectCard(\App\Models\Project $project, float $loggedMinutes = 0): array
     {
-        $consumed = round($loggedMinutes / 60, 1);
-        $saldo    = round(($project->sold_hours ?? 0) - $consumed, 1);
+        // Saldo + consumido pela regra da GESTÃO DE PROJETOS (fonte da verdade) — conta os subprojetos.
+        $b        = $project->managementBreakdown();
+        $consumed = round($b['consumed'], 1);
+        $saldo    = round($b['balance'], 1);
 
         return [
             'card_type'             => 'project',
@@ -1717,4 +1727,712 @@ class ContractController extends Controller
             'failed_jobs_last_24h'        => $failedLast24,
         ]);
     }
+
+    public function recorrentes(Request $request): JsonResponse
+    {
+        $rows = Contract::query()
+            ->whereNotNull('data_assinatura')
+            ->whereNotNull('data_vencimento')
+            ->with(['customer:id,name', 'contractType:id,name', 'project:id,code'])
+            ->orderBy('data_vencimento')
+            ->get()
+            ->map(function (Contract $c) {
+                $isOnDemand   = $c->tipo_faturamento === 'on_demand';
+                $valorAtual   = $isOnDemand ? $c->valor_hora : $c->valor_projeto;
+                // Base do reajuste: valor_inicial salvo, ou o valor atual do contrato como ponto de partida.
+                $valorInicial = $c->valor_inicial !== null ? (float) $c->valor_inicial : (float) ($valorAtual ?? 0);
+                $pct          = $c->pct_reajuste !== null ? (float) $c->pct_reajuste : 0.0;
+                $valorAjustado = round($valorInicial * (1 + $pct / 100), 2);
+
+                // Período explícito do reajuste (início = último reajuste/base, fim = mês fechado).
+                [$ps, $pe] = $this->reajustePeriodo($c);
+
+                return [
+                    'id'              => $c->id,
+                    'cliente'         => $c->customer?->name,
+                    'codigo'          => $c->project?->code ?? $c->project_code_preview,
+                    'tipo'            => $c->contractType?->name ?? $c->tipo_faturamento,
+                    'valor_field'     => $isOnDemand ? 'valor_hora' : 'valor_projeto',
+                    'valor_inicial'   => $valorInicial,
+                    'taxa_reajuste'   => $c->taxa_reajuste,
+                    'pct_reajuste'    => $pct,
+                    'valor_ajustado'  => $valorAjustado,
+                    'data_assinatura' => optional($c->data_assinatura)->toDateString(),
+                    'data_vencimento' => optional($c->data_vencimento)->toDateString(),
+                    'data_ultimo_reajuste' => optional($c->data_ultimo_reajuste)->toDateString(),
+                    'status'          => $c->status,
+                    'periodo'         => [
+                        'inicio' => $ps->toDateString(),
+                        'fim'    => $pe->toDateString(),
+                        'label'  => $this->periodoFormatado($ps, $pe),
+                    ],
+                ];
+            })
+            ->values();
+
+        return response()->json(['data' => $rows]);
+    }
+
+    /** Atualização parcial pela tela de recorrentes (gestão/reajuste). Reflete no contrato. */
+    public function updateRecorrente(Request $request, Contract $contract): JsonResponse
+    {
+        $validated = $request->validate([
+            'data_assinatura'      => 'nullable|date',
+            'data_vencimento'      => 'nullable|date',
+            'data_ultimo_reajuste' => 'nullable|date',
+            'valor_inicial'        => 'nullable|numeric|min:0',
+            'taxa_reajuste'        => 'nullable|string|in:IPCA,IGPM,IGP-M',
+            'pct_reajuste'         => 'nullable|numeric',
+        ]);
+
+        // Normaliza a taxa para o rótulo canônico (IPCA | IGPM) — o FE manda IGPM.
+        if (!empty($validated['taxa_reajuste'])) {
+            $validated['taxa_reajuste'] = EconomicIndexService::canonical($validated['taxa_reajuste']);
+        }
+
+        $contract->update($validated);
+
+        return response()->json(['ok' => true]);
+    }
+
+    /**
+     * Amarra a planilha "ANIVERSÁRIO - CLIENTES.xlsx" aos contratos cadastrados:
+     * casa pelo CÓDIGO extraído da coluna "Contrato" (ex.: NRC001-24) contra
+     * projects.code OU contracts.project_code_preview e popula data_assinatura,
+     * data_vencimento, valor_inicial. Quando há "Valor Reajustado", deriva o
+     * percentual = (reajustado/inicial − 1)×100 (valor ajustado recompõe o reajustado).
+     * A taxa (IPCA/IGP-M) não está na planilha → fica para preencher na tela.
+     */
+    public function importAniversario(Request $request): JsonResponse
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:xlsx,xls,csv,txt|max:8192',
+        ]);
+
+        $ss    = \PhpOffice\PhpSpreadsheet\IOFactory::load($request->file('file')->getRealPath());
+        $sheet = $ss->getSheetByName('Planilha1') ?? $ss->getActiveSheet();
+        $data  = $sheet->toArray(null, true, false, false);
+
+        // Localiza a linha de cabeçalho (que tem "contrato" e "valor") e mapeia colunas.
+        $norm = function ($s) {
+            $s = mb_strtolower(trim((string) $s));
+            return strtr($s, ['á'=>'a','â'=>'a','ã'=>'a','à'=>'a','é'=>'e','ê'=>'e','í'=>'i','ó'=>'o','ô'=>'o','õ'=>'o','ú'=>'u','ç'=>'c']);
+        };
+        $headerIdx = null;
+        $col = [];
+        foreach ($data as $i => $row) {
+            $names = array_map($norm, $row);
+            if (in_array('contrato', $names, true) && in_array('valor', $names, true)) {
+                $headerIdx = $i;
+                foreach ($names as $ci => $n) {
+                    $col[$n] = $ci;
+                }
+                break;
+            }
+        }
+        if ($headerIdx === null) {
+            return response()->json(['message' => 'Cabeçalho não encontrado (colunas "Contrato"/"Valor").'], 422);
+        }
+
+        $cContrato = $col['contrato'] ?? null;
+        $cCliente  = $col['cliente'] ?? 0;
+        $cValor    = $col['valor'] ?? null;
+        $cAss      = $col['dt assinatura'] ?? ($col['assinatura'] ?? null);
+        $cVenc     = $col['dt vencimento'] ?? ($col['vencimento'] ?? null);
+        $cReaj     = $col['valor reajustado'] ?? null;
+        $cUltReaj  = $col['ultimo reajuste'] ?? ($col['ult reaj'] ?? null);
+
+        $toDate = function ($v) {
+            if ($v === null || $v === '') return null;
+            if (is_numeric($v)) {
+                try { return \Carbon\Carbon::instance(\PhpOffice\PhpSpreadsheet\Shared\Date::excelToDateTimeObject((float) $v))->startOfDay(); }
+                catch (\Throwable $e) { return null; }
+            }
+            foreach (['d/m/Y', 'Y-m-d', 'd-m-Y'] as $fmt) {
+                try { return \Carbon\Carbon::createFromFormat($fmt, trim((string) $v))->startOfDay(); } catch (\Throwable $e) {}
+            }
+            return null;
+        };
+        $toNum = function ($v) {
+            if ($v === null || $v === '') return null;
+            if (is_numeric($v)) return (float) $v;
+            $v = str_replace(['R$', ' ', '.'], '', (string) $v);
+            $v = str_replace(',', '.', $v);
+            return is_numeric($v) ? (float) $v : null;
+        };
+
+        $matched = 0;
+        $unmatched = [];
+        $semData = [];
+
+        foreach (array_slice($data, $headerIdx + 1) as $row) {
+            $contratoRaw = trim((string) ($row[$cContrato] ?? ''));
+            $cliente     = trim((string) ($row[$cCliente] ?? ''));
+            if ($contratoRaw === '' || !preg_match('/([A-Z]{3}\d{3}-\d{2})/', strtoupper($contratoRaw), $m)) {
+                continue;
+            }
+            $code = $m[1];
+
+            $contract = Contract::whereHas('project', fn ($q) => $q->where('code', $code))->first()
+                ?? Contract::where('project_code_preview', $code)->first();
+            if (!$contract) {
+                $unmatched[] = "{$code} · {$cliente}";
+                continue;
+            }
+
+            $ass     = $cAss  !== null ? $toDate($row[$cAss] ?? null) : null;
+            $venc    = $cVenc !== null ? $toDate($row[$cVenc] ?? null) : null;
+            $valor   = $cValor !== null ? $toNum($row[$cValor] ?? null) : null;
+            $reaj    = $cReaj !== null ? $toNum($row[$cReaj] ?? null) : null;
+            $ultReaj = $cUltReaj !== null ? $toDate($row[$cUltReaj] ?? null) : null;
+
+            if (!$ass && !$venc) {
+                $semData[] = "{$code} · {$cliente}";
+            }
+
+            $upd = [];
+            if ($ass)     $upd['data_assinatura'] = $ass->toDateString();
+            if ($venc)    $upd['data_vencimento'] = $venc->toDateString();
+            if ($ultReaj) $upd['data_ultimo_reajuste'] = $ultReaj->toDateString();
+            if ($valor !== null) $upd['valor_inicial'] = $valor;
+            // % derivado do "Valor Reajustado" (taxa/índice fica para preencher na tela).
+            if ($valor !== null && $valor > 0 && $reaj !== null && $reaj > 0) {
+                $upd['pct_reajuste'] = round(($reaj / $valor - 1) * 100, 3);
+            }
+
+            if (!empty($upd)) {
+                $contract->update($upd);
+                $matched++;
+            }
+        }
+
+        return response()->json([
+            'matched'        => $matched,
+            'unmatched'      => $unmatched,
+            'unmatched_count'=> count($unmatched),
+            'sem_data'       => $semData,
+        ]);
+    }
+
+    /**
+     * Prévia do reajuste: busca o índice (IPCA/IGP-M) no BCB para o período do
+     * contrato e sugere o novo valor. NÃO aplica nada (regra: sempre mostrar antes).
+     * GET /contracts/{id}/adjustment-preview?index_type=IPCA[&start_date&end_date]
+     */
+    public function adjustmentPreview(Request $request, Contract $contract): JsonResponse
+    {
+        $validated = $request->validate([
+            'index_type' => 'required|string',
+            'start_date' => 'nullable|date',
+            'end_date'   => 'nullable|date',
+        ]);
+        if (!EconomicIndexService::supports($validated['index_type'])) {
+            return response()->json(['message' => 'Índice não suportado. Use IPCA ou IGP-M.'], 422);
+        }
+
+        [$start, $end] = $this->reajustePeriodo($contract, $validated['start_date'] ?? null, $validated['end_date'] ?? null);
+
+        $base = $this->valorBaseReajuste($contract);
+        if ($base <= 0) {
+            return response()->json(['message' => 'Contrato sem valor-base para reajuste. Preencha o valor inicial.'], 422);
+        }
+
+        try {
+            $idx = app(EconomicIndexService::class)->accumulated($validated['index_type'], $start, $end);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => $e->getMessage()], 502);
+        }
+
+        $pct        = (float) $idx['percentual_total'];
+        $valorNovo  = round($base * (1 + $pct / 100), 2);
+        $isOnDemand = $contract->tipo_faturamento === 'on_demand';
+        $periodoFmt = $this->periodoFormatado($start, $end);
+
+        return response()->json([
+            'indice'            => $idx['index_type'],
+            'percentual'        => $pct,
+            'percentual_total'  => $pct,
+            'meses_utilizados'  => $idx['meses_utilizados'],
+            'valor_atual'       => round($base, 2),
+            'valor_novo'        => $valorNovo,
+            'valor_field'       => $isOnDemand ? 'valor_hora' : 'valor_projeto',
+            'cliente_emails'    => $this->clienteEmailsContrato($contract),
+            'periodo_inicio'    => $start->toDateString(),
+            'periodo_fim'       => $end->toDateString(),
+            'periodo_formatado' => $periodoFmt,
+            'periodo'           => [
+                'inicio' => $start->toDateString(),
+                'fim'    => $end->toDateString(),
+                'label'  => $periodoFmt,
+            ],
+        ]);
+    }
+
+    /**
+     * Aplica o reajuste (ação MANUAL do usuário): atualiza o valor do contrato,
+     * recalcula o outro campo monetário, avança o vencimento e GRAVA histórico.
+     * POST /contracts/{id}/apply-adjustment
+     */
+    public function applyAdjustment(Request $request, Contract $contract): JsonResponse
+    {
+        $validated = $request->validate([
+            'indice'         => 'required|string',
+            'percentual'     => 'required|numeric',
+            'periodo_inicio' => 'nullable|date',
+            'periodo_fim'    => 'nullable|date',
+        ]);
+        if (!EconomicIndexService::supports($validated['indice'])) {
+            return response()->json(['message' => 'Índice não suportado. Use IPCA ou IGP-M.'], 422);
+        }
+
+        $base = $this->valorBaseReajuste($contract);
+        if ($base <= 0) {
+            return response()->json(['message' => 'Contrato sem valor-base para reajuste.'], 422);
+        }
+
+        $pct        = (float) $validated['percentual'];
+        $valorNovo  = round($base * (1 + $pct / 100), 2);
+        $isOnDemand = $contract->tipo_faturamento === 'on_demand';
+        $field      = $isOnDemand ? 'valor_hora' : 'valor_projeto';
+        $other      = $isOnDemand ? 'valor_projeto' : 'valor_hora';
+
+        $pInicio = $validated['periodo_inicio'] ?? null;
+        $pFim    = $validated['periodo_fim'] ?? null;
+        $pLabel  = ($pInicio && $pFim)
+            ? $this->periodoFormatado(Carbon::parse($pInicio), Carbon::parse($pFim))
+            : null;
+
+        DB::transaction(function () use ($contract, $field, $other, $valorNovo, $pct, $validated, $base, $request, $pInicio, $pFim, $pLabel) {
+            $updates = [
+                $field          => $valorNovo,
+                'valor_inicial' => $valorNovo, // nova base p/ o próximo reajuste
+                'taxa_reajuste' => EconomicIndexService::canonical($validated['indice']),
+                'pct_reajuste'  => null,       // reajuste consumido (sem pendência)
+            ];
+            // Recalcula o outro campo monetário (se houver) pelo mesmo percentual.
+            if ($contract->{$other} !== null) {
+                $updates[$other] = round((float) $contract->{$other} * (1 + $pct / 100), 2);
+            }
+            // Marca o fim do período como "último reajuste" → próximo período continua daqui.
+            if ($pFim) {
+                $updates['data_ultimo_reajuste'] = $pFim;
+            }
+            // Avança o vencimento p/ o próximo aniversário.
+            if ($contract->data_vencimento) {
+                $updates['data_vencimento'] = Carbon::parse($contract->data_vencimento)->addYear()->toDateString();
+            }
+            $contract->update($updates);
+
+            ContractValueChange::create([
+                'contract_id'       => $contract->id,
+                'valor_anterior'    => round($base, 2),
+                'valor_novo'        => $valorNovo,
+                'percentual'        => $pct,
+                'indice'            => EconomicIndexService::canonical($validated['indice']),
+                'periodo_inicio'    => $pInicio,
+                'periodo_fim'       => $pFim,
+                'periodo_formatado' => $pLabel,
+                'user_id'           => $request->user()?->id,
+            ]);
+        });
+
+        return response()->json([
+            'ok'             => true,
+            'valor_anterior' => round($base, 2),
+            'valor_novo'     => $valorNovo,
+            'percentual'     => $pct,
+        ]);
+    }
+
+    /**
+     * Renovação SEM reajuste: avança a data de vencimento em +1 ano, mantendo
+     * o valor inalterado. Registra na história dos reajustes (indice='RENOVACAO')
+     * pra ficar auditável. POST /contracts/{id}/renew-no-adjustment.
+     */
+    public function renewWithoutAdjustment(Request $request, Contract $contract): JsonResponse
+    {
+        if (!$contract->data_vencimento) {
+            return response()->json(['message' => 'Contrato sem data de vencimento para renovar.'], 422);
+        }
+
+        $novoVencimento = Carbon::parse($contract->data_vencimento)->addYear()->toDateString();
+
+        DB::transaction(function () use ($contract, $novoVencimento, $request) {
+            $contract->update([
+                'data_vencimento' => $novoVencimento,
+                'pct_reajuste'    => null,
+            ]);
+
+            // Auditoria: registra na MESMA história dos reajustes que houve uma
+            // renovação SEM reajuste (valor inalterado). indice='RENOVACAO' é o
+            // marcador (a história trata esse caso com rótulo próprio).
+            $isOnDemand = $contract->tipo_faturamento === 'on_demand';
+            $valorAtual = $isOnDemand ? $contract->valor_hora : $contract->valor_projeto;
+            $valorAtual = $valorAtual !== null ? round((float) $valorAtual, 2) : 0;
+            ContractValueChange::create([
+                'contract_id'       => $contract->id,
+                'valor_anterior'    => $valorAtual,
+                'valor_novo'        => $valorAtual,
+                'percentual'        => 0,
+                'indice'            => 'RENOVACAO',
+                'periodo_formatado' => 'Renovado sem reajuste (+1 ano)',
+                'user_id'           => $request->user()?->id,
+            ]);
+        });
+
+        return response()->json([
+            'ok'              => true,
+            'data_vencimento' => $novoVencimento,
+        ]);
+    }
+
+    /**
+     * Comunica o cliente sobre o reajuste aplicado (último registro do histórico).
+     * POST /contracts/{id}/notify-client-adjustment  (body: email? p/ sobrescrever).
+     */
+    public function notifyClientAdjustment(Request $request, Contract $contract): JsonResponse
+    {
+        $validated = $request->validate([
+            'emails'   => 'nullable|array',
+            'emails.*' => 'email',
+            'email'    => 'nullable|email', // compat (envio único)
+            'salvar'   => 'nullable|boolean', // grava os e-mails na lista do cliente
+        ]);
+
+        $change = $contract->valueChanges()->latest('created_at')->first();
+        if (!$change) {
+            return response()->json(['message' => 'Nenhum reajuste aplicado para comunicar.'], 422);
+        }
+
+        $emails = $validated['emails'] ?? ($validated['email'] ? [$validated['email']] : $this->clienteEmailsContrato($contract));
+        $emails = collect($emails)->map(fn ($e) => trim((string) $e))->filter()->unique()->values()->all();
+        if (!$emails) {
+            return response()->json(['message' => 'Informe ao menos um e-mail de destino.'], 422);
+        }
+
+        $contract->loadMissing(['customer:id,name', 'project:id,code']);
+
+        // Salva os e-mails na lista administrativa do cliente (mesma usada no fechamento).
+        if (!empty($validated['salvar']) && $contract->customer) {
+            $merged = array_values(array_unique(array_merge($contract->customer->adminEmails(), $emails)));
+            $contract->customer->setAdminEmails($merged);
+            $contract->customer->save();
+        }
+        $mail = new ReajusteClienteMail(
+            cliente: $contract->customer?->name ?? 'Cliente',
+            contrato: $contract->project?->code ?? $contract->project_code_preview,
+            valorAnterior: (float) $change->valor_anterior,
+            valorNovo: (float) $change->valor_novo,
+            percentual: (float) $change->percentual,
+            indice: $change->indice,
+            periodoFormatado: $change->periodo_formatado,
+            vigencia: optional($change->created_at)->format('d/m/Y') ?? now()->format('d/m/Y'),
+        );
+
+        // Envia pelo Microsoft Graph (canal que entrega de fato, igual ao fechamento);
+        // fallback p/ o mailer default só se o Graph não estiver configurado.
+        $graphFrom = config('services.graph.mailbox');
+        if (\App\Services\GraphMailer::enabled() && $graphFrom) {
+            \App\Services\GraphMailer::sendAs($graphFrom, $emails, [], $mail->envelope()->subject, $mail->render());
+        } else {
+            Mail::to($emails)->send($mail);
+        }
+
+        return response()->json(['ok' => true, 'emails' => $emails, 'salvos' => !empty($validated['salvar'])]);
+    }
+
+    /** E-mails administrativos do cliente p/ comunicados (lista). Fallback: contatos do contrato. */
+    private function clienteEmailsContrato(Contract $c): array
+    {
+        $c->loadMissing('customer');
+        $list = $c->customer ? $c->customer->adminEmails() : [];
+        if (!$list) {
+            $list = $c->contacts()->whereNotNull('email')->where('email', '!=', '')
+                ->pluck('email')->map(fn ($e) => trim((string) $e))->filter()->unique()->values()->all();
+        }
+        return $list;
+    }
+
+    /** Valor-base do reajuste: valor_inicial salvo, ou o valor atual do contrato. */
+    private function valorBaseReajuste(Contract $c): float
+    {
+        if ($c->valor_inicial !== null) {
+            return (float) $c->valor_inicial;
+        }
+        $field = $c->tipo_faturamento === 'on_demand' ? 'valor_hora' : 'valor_projeto';
+        return (float) ($c->{$field} ?? 0);
+    }
+
+    /**
+     * Período EXPLÍCITO do reajuste:
+     *  - Início: dia seguinte ao ÚLTIMO reajuste (continua de onde parou); na falta,
+     *            a data-base (data_assinatura). Ancorado no 1º dia do mês.
+     *  - Fim:    último mês FECHADO (fim do mês anterior ao atual).
+     * Ex.: assinatura 02/07/2024, hoje Jul/2025 → Jul/2024 → Jun/2025.
+     *
+     * @return array{0:\Carbon\Carbon,1:\Carbon\Carbon}
+     */
+    private function reajustePeriodo(Contract $c, ?string $start = null, ?string $end = null): array
+    {
+        if ($start && $end) {
+            return [Carbon::parse($start)->startOfMonth(), Carbon::parse($end)->endOfMonth()];
+        }
+
+        if ($c->data_ultimo_reajuste) {
+            // Continua no mês SEGUINTE ao do último reajuste (sem reincidir o mês já contado).
+            $startM = Carbon::parse($c->data_ultimo_reajuste)->startOfMonth()->addMonthNoOverflow();
+        } elseif ($c->data_assinatura) {
+            $startM = Carbon::parse($c->data_assinatura)->startOfMonth();
+        } else {
+            $startM = Carbon::now()->subMonthsNoOverflow(12)->startOfMonth();
+        }
+
+        $endM = Carbon::now()->subMonthNoOverflow()->endOfMonth(); // último mês fechado
+
+        // Reajuste recente: ainda não há mês fechado novo → período = o próprio mês de início.
+        if ($startM->greaterThan($endM)) {
+            $endM = $startM->copy()->endOfMonth();
+        }
+
+        return [$startM, $endM];
+    }
+
+    /** Rótulo do período "Mmm/AAAA → Mmm/AAAA". */
+    private function periodoFormatado(Carbon $start, Carbon $end): string
+    {
+        return $this->mesAno($start) . ' → ' . $this->mesAno($end);
+    }
+
+    private function mesAno(Carbon $d): string
+    {
+        $m = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'][$d->month - 1];
+        return $m . '/' . $d->year;
+    }
+
+    // ─── Dashboard de reajustes ──────────────────────────────────────────────
+
+    /** Dados de reajuste (linhas) — reusado por summary, list e pelo comando de alerta. */
+    public function reajustesData(?int $clienteId = null, ?string $indexType = null): \Illuminate\Support\Collection
+    {
+        [$ipca, $igpm] = [$this->estimativaIndice('IPCA'), $this->estimativaIndice('IGPM')];
+        return $this->reajusteElegiveis($clienteId, $indexType)
+            ->map(fn (Contract $c) => $this->reajusteRow($c, $ipca, $igpm))
+            ->values();
+    }
+
+    /** GET /contracts/reajustes/summary — KPIs do dashboard de reajustes. */
+    public function reajustesSummary(Request $request): JsonResponse
+    {
+        $rows = $this->reajustesData();
+
+        $venc  = $rows->where('status_reajuste', 'vencido');
+        $prox  = $rows->where('status_reajuste', 'proximo');
+        $emDia = $rows->whereIn('status_reajuste', ['em_dia', 'recente']);
+
+        return response()->json([
+            'total_contratos'       => $rows->count(),
+            'contratos_em_dia'      => $emDia->count(),
+            'contratos_vencidos'    => $venc->count(),
+            'contratos_proximos'    => $prox->count(),
+            'valor_total_reajustar' => round($venc->sum('valor_estimado_reajuste') + $prox->sum('valor_estimado_reajuste'), 2),
+            'valor_total_contratos' => round($rows->sum('valor_atual'), 2),
+            // Acumulado desde a assinatura (toda a vida dos contratos).
+            'valor_total_acumulado' => round($rows->sum(fn ($r) => $r['valor_acumulado'] ?? $r['valor_atual']), 2),
+            'defasagem_acumulada'   => round($rows->sum(fn ($r) => $r['valor_acumulado'] !== null ? $r['valor_acumulado'] - $r['valor_atual'] : 0), 2),
+            'indices'               => ['IPCA' => $this->estimativaIndice('IPCA'), 'IGPM' => $this->estimativaIndice('IGPM')],
+        ]);
+    }
+
+    /** GET /contracts/reajustes — lista priorizada (vencidos → próximos → maior impacto). */
+    public function reajustesList(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'status'     => 'nullable|in:em_dia,proximo,vencido,recente',
+            'index_type' => 'nullable|string',
+            'cliente_id' => 'nullable|integer',
+        ]);
+
+        $rows = $this->reajustesData($validated['cliente_id'] ?? null, $validated['index_type'] ?? null);
+
+        if (!empty($validated['status'])) {
+            $rows = $rows->where('status_reajuste', $validated['status']);
+        }
+
+        // Ordenação: vencido → proximo → em_dia/recente; dentro do grupo, mais urgente; depois maior impacto.
+        $ordem = ['vencido' => 0, 'proximo' => 1, 'em_dia' => 2, 'recente' => 3];
+        $rows = $rows->sort(function ($a, $b) use ($ordem) {
+            $oa = $ordem[$a['status_reajuste']] ?? 9;
+            $ob = $ordem[$b['status_reajuste']] ?? 9;
+            if ($oa !== $ob) return $oa <=> $ob;
+            $da = $a['dias_para_vencimento'] ?? 99999;
+            $db = $b['dias_para_vencimento'] ?? 99999;
+            if ($da !== $db) return $da <=> $db;
+            return $b['valor_estimado_reajuste'] <=> $a['valor_estimado_reajuste'];
+        })->values();
+
+        return response()->json(['data' => $rows]);
+    }
+
+    /** GET /contracts/{id}/value-changes — histórico de reajustes (Ver histórico). */
+    public function valueChanges(Request $request, Contract $contract): JsonResponse
+    {
+        $rows = $contract->valueChanges()->with('user:id,name')->latest('created_at')->get()
+            ->map(fn ($h) => [
+                'id'                => $h->id,
+                'valor_anterior'    => (float) $h->valor_anterior,
+                'valor_novo'        => (float) $h->valor_novo,
+                'percentual'        => (float) $h->percentual,
+                'indice'            => $h->indice,
+                'periodo_formatado' => $h->periodo_formatado,
+                'usuario'           => $h->user?->name,
+                'data'              => optional($h->created_at)->toDateTimeString(),
+            ]);
+
+        return response()->json(['data' => $rows]);
+    }
+
+    /** Contratos sujeitos a reajuste (recorrentes): com assinatura + vencimento. */
+    private function reajusteElegiveis(?int $clienteId = null, ?string $indexType = null): \Illuminate\Support\Collection
+    {
+        $q = Contract::query()
+            ->whereNotNull('data_assinatura')
+            ->whereNotNull('data_vencimento')
+            ->with(['customer:id,name', 'project:id,code']);
+
+        if ($clienteId) {
+            $q->where('customer_id', $clienteId);
+        }
+        if ($indexType && EconomicIndexService::supports($indexType)) {
+            $q->where('taxa_reajuste', EconomicIndexService::canonical($indexType));
+        }
+
+        return $q->get();
+    }
+
+    /** Linha de reajuste de um contrato (status, prazos, impacto estimado). */
+    private function reajusteRow(Contract $c, float $ipca, float $igpm): array
+    {
+        $valorAtual = $this->valorBaseReajuste($c);
+        $hoje       = Carbon::today();
+        $prox       = $c->data_vencimento ? Carbon::parse($c->data_vencimento)->startOfDay() : null;
+        $dias       = $prox ? $hoje->diffInDays($prox, false) : null; // >0 futuro, <0 vencido
+
+        $taxaCanon = $c->taxa_reajuste ? EconomicIndexService::canonical($c->taxa_reajuste) : 'IPCA';
+        $pctEst    = $c->pct_reajuste !== null ? (float) $c->pct_reajuste : ($taxaCanon === 'IGPM' ? $igpm : $ipca);
+        $impacto   = round($valorAtual * $pctEst / 100, 2);
+
+        // recém-reajustado (últimos 30 dias) → não alertar.
+        $recente = $c->data_ultimo_reajuste && Carbon::parse($c->data_ultimo_reajuste)->gte($hoje->copy()->subDays(30));
+        if ($recente) {
+            $status = 'recente';
+        } elseif ($dias === null) {
+            $status = 'em_dia';
+        } elseif ($dias < 0) {
+            $status = 'vencido';
+        } elseif ($dias <= 30) {
+            $status = 'proximo';
+        } else {
+            $status = 'em_dia';
+        }
+
+        [$ps, $pe] = $this->reajustePeriodo($c);
+
+        // Acumulado "desde o início": índice do contrato da assinatura até o último mês fechado.
+        $pctAcum   = $this->acumuladoDesdeInicio($c, $taxaCanon);
+        $valorIni  = $c->valor_inicial !== null ? (float) $c->valor_inicial : $valorAtual;
+        $valorAcum = $pctAcum !== null ? round($valorIni * (1 + $pctAcum / 100), 2) : null;
+        $aIni      = $c->data_assinatura ? Carbon::parse($c->data_assinatura)->startOfMonth() : null;
+        $aFim      = Carbon::now()->subMonthNoOverflow()->endOfMonth();
+
+        return [
+            'id'                      => $c->id,
+            'cliente_nome'            => $c->customer?->name,
+            'codigo'                  => $c->project?->code ?? $c->project_code_preview,
+            'valor_atual'             => round($valorAtual, 2),
+            // Campos editáveis (cadastro) — usados pelo modal "Editar" na dashboard.
+            'data_assinatura'         => optional($c->data_assinatura)->toDateString(),
+            'valor_inicial'           => $c->valor_inicial !== null ? (float) $c->valor_inicial : round($valorAtual, 2),
+            'pct_reajuste'            => $c->pct_reajuste !== null ? (float) $c->pct_reajuste : null,
+            'data_ultimo_reajuste'    => optional($c->data_ultimo_reajuste)->toDateString(),
+            'data_proximo_reajuste'   => optional($prox)->toDateString(),
+            'dias_para_vencimento'    => $dias,
+            'status_reajuste'         => $status,
+            'taxa_reajuste'           => $taxaCanon,
+            'percentual_estimado'     => round($pctEst, 4),
+            'valor_estimado_reajuste' => $impacto,
+            'periodo'                 => [
+                'inicio' => $ps->toDateString(),
+                'fim'    => $pe->toDateString(),
+                'label'  => $this->periodoFormatado($ps, $pe),
+            ],
+            // Reajuste acumulado desde a assinatura (toda a vida do contrato).
+            'percentual_acumulado'    => $pctAcum,
+            'valor_acumulado'         => $valorAcum,
+            'periodo_acumulado'       => ($pctAcum !== null && $aIni) ? [
+                'inicio' => $aIni->toDateString(),
+                'fim'    => $aFim->toDateString(),
+                'label'  => $this->periodoFormatado($aIni, $aFim),
+            ] : null,
+        ];
+    }
+
+    /** Estimativa do índice = acumulado dos últimos 12 meses fechados (cache 12h). */
+    private function estimativaIndice(string $tipo): float
+    {
+        $canon = EconomicIndexService::canonical($tipo);
+        return cache()->remember("reajuste_idx_{$canon}_12m", now()->addHours(12), function () use ($canon) {
+            try {
+                $end   = Carbon::now()->subMonthNoOverflow()->endOfMonth();
+                $start = $end->copy()->subMonthsNoOverflow(11)->startOfMonth();
+                return (float) app(EconomicIndexService::class)->accumulated($canon, $start, $end)['percentual_total'];
+            } catch (\Throwable $e) {
+                return 0.0;
+            }
+        });
+    }
+
+    /** Série mensal do índice (map 'AAAA-MM' => variação %), cacheada 12h (1 chamada BCB por índice). */
+    private function serieMensal(string $canon): array
+    {
+        return cache()->remember("reajuste_serie_{$canon}", now()->addHours(12), function () use ($canon) {
+            try {
+                $end   = Carbon::now()->subMonthNoOverflow()->endOfMonth();
+                $start = Carbon::create(2010, 1, 1);
+                $res   = app(EconomicIndexService::class)->accumulated($canon, $start, $end);
+                $map = [];
+                foreach ($res['meses'] as $m) {
+                    if (!empty($m['mes'])) {
+                        [, $mo, $y] = explode('/', $m['mes']);
+                        $map["{$y}-{$mo}"] = $m['valor'];
+                    }
+                }
+                return $map;
+            } catch (\Throwable $e) {
+                return [];
+            }
+        });
+    }
+
+    /** % acumulado do índice do contrato da assinatura até o último mês fechado (composto). */
+    private function acumuladoDesdeInicio(Contract $c, string $canon): ?float
+    {
+        if (!$c->data_assinatura) {
+            return null;
+        }
+        $serie = $this->serieMensal($canon);
+        if (!$serie) {
+            return null;
+        }
+        $startYm = Carbon::parse($c->data_assinatura)->format('Y-m');
+        $endYm   = Carbon::now()->subMonthNoOverflow()->format('Y-m');
+        $fator = 1.0; $achou = false;
+        foreach ($serie as $ym => $v) {
+            if (strcmp($ym, $startYm) >= 0 && strcmp($ym, $endYm) <= 0) {
+                $fator *= (1 + $v / 100);
+                $achou = true;
+            }
+        }
+        return $achou ? round(($fator - 1) * 100, 4) : null;
+    }
+
 }

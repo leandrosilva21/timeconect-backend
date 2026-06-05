@@ -22,7 +22,7 @@ class GraphMailer
     private const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
     /** Anexos inline (contentBytes) só valem até ~3 MB no total num único sendMail. */
-    private const MAX_INLINE_ATTACHMENTS_BYTES = 3 * 1024 * 1024;
+    public const MAX_INLINE_ATTACHMENTS_BYTES = 3 * 1024 * 1024;
 
     /** true só quando as 3 credenciais estão preenchidas. */
     public static function enabled(): bool

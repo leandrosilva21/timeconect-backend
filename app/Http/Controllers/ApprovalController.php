@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Traits\ListCacheable;
 use App\Models\Expense;
 use App\Models\Timesheet;
 use App\Models\User;
@@ -19,6 +20,8 @@ use Illuminate\Validation\ValidationException;
  */
 class ApprovalController extends Controller
 {
+    use ListCacheable;
+
     /**
      * @OA\Get(
      *     path="/api/v1/approvals/pending",
@@ -190,12 +193,37 @@ class ApprovalController extends Controller
                     $ticketTotalsMap[$key] = ($ticketTotalsMap[$key] ?? 0) + (int) $r->initial_minutes;
                 }
             }
-            $items = collect($timesheets->items())->map(function ($ts) use ($ticketTotalsMap) {
+            // Coordenadores de sustentação (fallback p/ projetos sem override/coordenadores).
+            $sustentacaoCoordNames = \App\Models\User::where('coordinator_type', 'sustentacao')
+                ->where('enabled', true)->pluck('name')->all();
+
+            $items = collect($timesheets->items())->map(function ($ts) use ($ticketTotalsMap, $sustentacaoCoordNames) {
                 $arr = $ts->toArray();
                 $tk = (string) ($ts->ticket ?? '');
                 $arr['ticket_total_minutes'] = ($tk !== '' && preg_match('/^\d{5}$/', $tk) && $ts->customer_id)
                     ? ($ticketTotalsMap[$ts->customer_id . ':' . $tk] ?? null)
                     : null;
+                // Aprovador exibido: Investimento Comercial → executivo do cliente; Investimento
+                // (Suporte/Projeto) → coordenador do projeto real; senão override > (sustentação)
+                // coordenador de sustentação (Anderson) > coordenadores do projeto.
+                $proj = $ts->project;
+                $coordLabel = null;
+                if ($proj) {
+                    $isSustentacao = optional($proj->serviceType)->code === 'sustentacao';
+                    if ($proj->is_investimento_comercial && $proj->categoria_interna === 'Comercial') {
+                        $coordLabel = $proj->customer?->executive?->name ?: ($ts->customer?->executive?->name ?: null);
+                    } elseif ($proj->is_investimento_comercial && $ts->realProject && $ts->realProject->coordinators && $ts->realProject->coordinators->count()) {
+                        $coordLabel = $ts->realProject->coordinators->pluck('name')->implode(', ');
+                    } elseif ($proj->kanbanOverrideCoordinator) {
+                        $coordLabel = $proj->kanbanOverrideCoordinator->name;
+                    } elseif ($isSustentacao && !empty($sustentacaoCoordNames)) {
+                        $coordLabel = implode(', ', $sustentacaoCoordNames);
+                    } elseif ($proj->coordinators && $proj->coordinators->count()) {
+                        $coordLabel = $proj->coordinators->pluck('name')->implode(', ');
+                    }
+                }
+                $arr['coordinator_label'] = $coordLabel;
+                $arr['real_project'] = $ts->realProject ? ['id' => $ts->realProject->id, 'name' => $ts->realProject->name] : null;
                 return $arr;
             })->all();
 
@@ -384,6 +412,7 @@ class ApprovalController extends Controller
             }
 
             DB::commit();
+            $this->invalidateListCache('timesheets');
 
             return response()->json([
                 'success' => true,
@@ -442,6 +471,7 @@ class ApprovalController extends Controller
             }
 
             DB::commit();
+            $this->invalidateListCache('timesheets');
             return response()->json([
                 'success' => true,
                 'message' => sprintf('%d rejeitados, %d falharam', count($results['rejected']), count($results['failed'])),
@@ -483,6 +513,7 @@ class ApprovalController extends Controller
                 }
             }
             DB::commit();
+            $this->invalidateListCache('timesheets');
             return response()->json([
                 'success' => true,
                 'message' => sprintf('%d ajustes solicitados, %d falharam', count($results['requested']), count($results['failed'])),
@@ -615,13 +646,15 @@ class ApprovalController extends Controller
         $query = Timesheet::with([
             'user:id,name,email',
             'customer:id,name',
-            'project:id,name,customer_id,service_type_id',
-            'project.customer:id,name',
-            'project.serviceType:id,name'
+            'project:id,name,customer_id,service_type_id,kanban_coordinator_override_id,is_investimento_comercial,categoria_interna',
+            'project.customer:id,name,executive_id',
+            'project.customer.executive:id,name',
+            'project.serviceType:id,name,code',
+            'project.coordinators:id,name',
+            'project.kanbanOverrideCoordinator:id,name',
+            'realProject:id,name',
         ])
-        ->where('status', Timesheet::STATUS_PENDING)
-        ->orderBy('date', 'desc')
-        ->orderBy('created_at', 'desc');
+        ->where('status', Timesheet::STATUS_PENDING);
 
         // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
         if ($request && $request->get('scope') === 'sustentacao') {
@@ -633,15 +666,22 @@ class ApprovalController extends Controller
             }
         }
 
-        // Se não é admin, filtrar apenas timesheets dos projetos que pode aprovar
-        if (!$user->isAdmin()) {
-            $isSustentacao = $user->isCoordenador() && $user->coordinator_type === 'sustentacao';
-            $query->whereHas('project', function ($q) use ($user, $isSustentacao) {
-                $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id));
-                if ($isSustentacao) {
-                    $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'));
-                }
-            });
+        // Coordenador de SUSTENTAÇÃO: regra de perfil — só vê fila de sustentacao/cloud
+        // (não é flexível, é definição do perfil). Para coord-projetos (default) NÃO
+        // forçamos filtro: o FE controla o escopo via chip "Meus projetos / Todos"
+        // mandando `coordinator_id` quando o coord quer ver só os dele — mesmo padrão
+        // que Apontamentos/Despesas (PRs #36 / #33). Middleware
+        // `permission.or.admin:timesheets.approve` continua bloqueando perfis sem acesso.
+        if (!$user->isAdmin() && $user->isCoordenador() && $user->coordinator_type === 'sustentacao') {
+            $query->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
+        }
+
+        // Executivo de conta que NÃO é coordenador/administrativo: o acesso a Aprovações foi
+        // concedido SÓ pra aprovar investimento Comercial dos seus clientes — restringe a isso.
+        if (!$user->isAdmin() && !$user->isCoordenador() && $user->type !== 'administrativo'
+            && \App\Models\Customer::where('executive_id', $user->id)->exists()) {
+            $query->whereHas('project', fn ($pq) => $pq->where('is_investimento_comercial', true)->where('categoria_interna', 'Comercial'))
+                  ->whereHas('customer', fn ($cq) => $cq->where('executive_id', $user->id));
         }
 
         // Aplicar filtros se fornecidos
@@ -649,7 +689,48 @@ class ApprovalController extends Controller
             $this->applyTimesheetFilters($query, $request);
         }
 
+        $this->applyTimesheetOrder($query, $request);
+
         return $query;
+    }
+
+    /**
+     * Ordenação configurável da fila de apontamentos (param `order`, prefixo "-" = desc).
+     * Relações ordenadas por subquery (sem join — evita ambiguidade com os filtros whereHas).
+     * Sem `order` = comportamento atual (data desc, depois inclusão desc).
+     */
+    private function applyTimesheetOrder($query, ?Request $request): void
+    {
+        $order = $request?->get('order');
+        if (!$order) {
+            $query->orderBy('date', 'desc')->orderBy('created_at', 'desc');
+            return;
+        }
+        $dir   = str_starts_with($order, '-') ? 'desc' : 'asc';
+        $field = ltrim($order, '-');
+        $direct = [
+            'date'           => 'date',
+            'start_time'     => 'start_time',
+            'end_time'       => 'end_time',
+            'effort_minutes' => 'effort_minutes',
+            'created_at'     => 'created_at',
+            'ticket'         => 'ticket',
+            'status'         => 'status',
+            'title'          => 'title',
+        ];
+        if (isset($direct[$field])) {
+            $query->orderBy($direct[$field], $dir);
+        } elseif ($field === 'user.name') {
+            $query->orderBy(\App\Models\User::select('name')->whereColumn('users.id', 'timesheets.user_id')->limit(1), $dir);
+        } elseif ($field === 'customer.name') {
+            $query->orderBy(\App\Models\Customer::select('name')->whereColumn('customers.id', 'timesheets.customer_id')->limit(1), $dir);
+        } elseif ($field === 'project.name') {
+            $query->orderBy(\App\Models\Project::withoutGlobalScopes()->select('name')->whereColumn('projects.id', 'timesheets.project_id')->limit(1), $dir);
+        } else {
+            $query->orderBy('date', 'desc')->orderBy('created_at', 'desc');
+            return;
+        }
+        $query->orderBy('created_at', 'desc'); // desempate estável
     }
 
     /**
@@ -659,14 +740,14 @@ class ApprovalController extends Controller
     {
         $query = Expense::with([
             'user:id,name,email',
-            'project:id,name,customer_id,service_type_id',
-            'project.customer:id,name',
+            'project:id,name,customer_id,service_type_id,is_investimento_comercial,categoria_interna',
+            'project.customer:id,name,executive_id',
+            'project.customer.executive:id,name',
             'project.serviceType:id,name',
+            'realProject:id,name',
             'category:id,name,parent_id'
         ])
-        ->where('status', Expense::STATUS_PENDING)
-        ->orderBy('expense_date', 'desc')
-        ->orderBy('created_at', 'desc');
+        ->where('status', Expense::STATUS_PENDING);
 
         // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
         if ($request && $request->get('scope') === 'sustentacao') {
@@ -678,15 +759,19 @@ class ApprovalController extends Controller
             }
         }
 
-        // Se não é admin, filtrar apenas despesas dos projetos que pode aprovar
-        if (!$user->isAdmin()) {
-            $isSustentacao = $user->isCoordenador() && $user->coordinator_type === 'sustentacao';
-            $query->whereHas('project', function ($q) use ($user, $isSustentacao) {
-                $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id));
-                if ($isSustentacao) {
-                    $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'));
-                }
-            });
+        // Coordenador de SUSTENTAÇÃO: ver comentário em buildTimesheetQuery (mesmo padrão).
+        // Coord-projetos sem filtro forçado; FE controla via chip "Meus projetos / Todos".
+        if (!$user->isAdmin() && $user->isCoordenador() && $user->coordinator_type === 'sustentacao') {
+            $query->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
+        }
+
+        // Executivo de conta que NÃO é coordenador/administrativo: só vê despesas de investimento
+        // Comercial dos seus clientes (cliente via projeto).
+        if (!$user->isAdmin() && !$user->isCoordenador() && $user->type !== 'administrativo'
+            && \App\Models\Customer::where('executive_id', $user->id)->exists()) {
+            $query->whereHas('project', fn ($pq) => $pq
+                ->where('is_investimento_comercial', true)->where('categoria_interna', 'Comercial')
+                ->whereHas('customer', fn ($cq) => $cq->where('executive_id', $user->id)));
         }
 
         // Aplicar filtros se fornecidos
@@ -694,7 +779,44 @@ class ApprovalController extends Controller
             $this->applyExpenseFilters($query, $request);
         }
 
+        $this->applyExpenseOrder($query, $request);
+
         return $query;
+    }
+
+    /**
+     * Ordenação configurável da fila de despesas (param `order`, prefixo "-" = desc).
+     * Sem `order` = comportamento atual (data da despesa desc, depois inclusão desc).
+     */
+    private function applyExpenseOrder($query, ?Request $request): void
+    {
+        $order = $request?->get('order');
+        if (!$order) {
+            $query->orderBy('expense_date', 'desc')->orderBy('created_at', 'desc');
+            return;
+        }
+        $dir   = str_starts_with($order, '-') ? 'desc' : 'asc';
+        $field = ltrim($order, '-');
+        $direct = [
+            'date'         => 'expense_date',
+            'expense_date' => 'expense_date',
+            'amount'       => 'amount',
+            'created_at'   => 'created_at',
+            'status'       => 'status',
+        ];
+        if (isset($direct[$field])) {
+            $query->orderBy($direct[$field], $dir);
+        } elseif ($field === 'user.name') {
+            $query->orderBy(\App\Models\User::select('name')->whereColumn('users.id', 'expenses.user_id')->limit(1), $dir);
+        } elseif ($field === 'project.name') {
+            $query->orderBy(\App\Models\Project::withoutGlobalScopes()->select('name')->whereColumn('projects.id', 'expenses.project_id')->limit(1), $dir);
+        } elseif ($field === 'category.name') {
+            $query->orderBy(\App\Models\ExpenseCategory::select('name')->whereColumn('expense_categories.id', 'expenses.expense_category_id')->limit(1), $dir);
+        } else {
+            $query->orderBy('expense_date', 'desc')->orderBy('created_at', 'desc');
+            return;
+        }
+        $query->orderBy('created_at', 'desc'); // desempate estável
     }
 
     /**
@@ -731,10 +853,23 @@ class ApprovalController extends Controller
             $query->where('user_id', $request->get('user_id'));
         }
 
-        // Filtro por coordenador do projeto
-        if ($request->filled('coordinator_id')) {
-            $query->whereHas('project.coordinators', function ($q) use ($request) {
-                $q->where('users.id', $request->get('coordinator_id'));
+        // Filtro por coordenador — espelha a regra do coordinator_label:
+        //   override > (se sustentação) coordenador de sustentação > coordenadores do projeto.
+        $coordinatorIds = array_values(array_filter((array) $request->input('coordinator_id', [])));
+        if (!empty($coordinatorIds)) {
+            $sustSelected = \App\Models\User::whereIn('id', $coordinatorIds)
+                ->where('coordinator_type', 'sustentacao')->exists();
+            $query->where(function ($q) use ($coordinatorIds, $sustSelected) {
+                $q->whereHas('project', fn($pq) => $pq->whereIn('kanban_coordinator_override_id', $coordinatorIds));
+                $q->orWhere(function ($q2) use ($coordinatorIds) {
+                    $q2->whereHas('project', fn($pq) => $pq->whereNull('kanban_coordinator_override_id')
+                            ->whereDoesntHave('serviceType', fn($sq) => $sq->where('code', 'sustentacao')))
+                       ->whereHas('project.coordinators', fn($cq) => $cq->whereIn('users.id', $coordinatorIds));
+                });
+                if ($sustSelected) {
+                    $q->orWhereHas('project', fn($pq) => $pq->whereNull('kanban_coordinator_override_id')
+                        ->whereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao')));
+                }
             });
         }
 
@@ -797,10 +932,23 @@ class ApprovalController extends Controller
             $query->where('user_id', $request->get('user_id'));
         }
 
-        // Filtro por coordenador do projeto
-        if ($request->filled('coordinator_id')) {
-            $query->whereHas('project.coordinators', function ($q) use ($request) {
-                $q->where('users.id', $request->get('coordinator_id'));
+        // Filtro por coordenador — espelha a regra do coordinator_label:
+        //   override > (se sustentação) coordenador de sustentação > coordenadores do projeto.
+        $coordinatorIds = array_values(array_filter((array) $request->input('coordinator_id', [])));
+        if (!empty($coordinatorIds)) {
+            $sustSelected = \App\Models\User::whereIn('id', $coordinatorIds)
+                ->where('coordinator_type', 'sustentacao')->exists();
+            $query->where(function ($q) use ($coordinatorIds, $sustSelected) {
+                $q->whereHas('project', fn($pq) => $pq->whereIn('kanban_coordinator_override_id', $coordinatorIds));
+                $q->orWhere(function ($q2) use ($coordinatorIds) {
+                    $q2->whereHas('project', fn($pq) => $pq->whereNull('kanban_coordinator_override_id')
+                            ->whereDoesntHave('serviceType', fn($sq) => $sq->where('code', 'sustentacao')))
+                       ->whereHas('project.coordinators', fn($cq) => $cq->whereIn('users.id', $coordinatorIds));
+                });
+                if ($sustSelected) {
+                    $q->orWhereHas('project', fn($pq) => $pq->whereNull('kanban_coordinator_override_id')
+                        ->whereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao')));
+                }
             });
         }
 

@@ -119,9 +119,6 @@ Schedule::job(new CleanupContractEventsJob)
   ->description('Remove eventos de contrato com mais de 180 dias')
   ->withoutOverlapping();
 
-// (Removido) Fase 2 — leitura de respostas via Graph. Modelo simplificado: a resposta
-// do consultor volta pro Reply-To (quem enviou) e é tratada no Outlook, sem leitura no app.
-
 // Alerta de reajustes vencidos ao Financeiro — roda todo dia às 08:00, mas o comando
 // só envia de fato no 1º DIA ÚTIL do mês (pula fim de semana). Não aplica reajuste.
 Schedule::command('reajustes:alerta-vencidos')

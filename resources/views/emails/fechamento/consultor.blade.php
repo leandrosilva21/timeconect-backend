@@ -50,12 +50,16 @@
             <td class="pd-header" align="left" bgcolor="#FFFFFF"
               style="padding:36px 40px 28px;background-color:#FFFFFF;border-bottom:1px solid #E5E7EB;">
 
-              {{-- Logo ERPSERV (centralizado, maior, com dark-mode swap) --}}
+              {{-- Logo (ERPSERV ou Bizify conforme o consultor; ERPSERV tem dark-mode swap) --}}
               <div style="text-align:center;">
-                <img src="https://app.minutor.com.br/logo.png" alt="ERPSERV Consultoria" width="200" class="erp-light" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
-                <div class="erp-dark" style="display:none;mso-hide:all;max-height:0;overflow:hidden;">
-                  <img src="https://app.minutor.com.br/logo-white.png" alt="ERPSERV Consultoria" width="200" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
-                </div>
+                @if(($isBizify ?? false))
+                  <img src="https://app.minutor.com.br/logo-bizify.png" alt="Bizify" width="180" style="display:inline-block;width:180px;max-width:58%;height:auto;border:0;" />
+                @else
+                  <img src="https://app.minutor.com.br/logo.png" alt="ERPSERV Consultoria" width="200" class="erp-light" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
+                  <div class="erp-dark" style="display:none;mso-hide:all;max-height:0;overflow:hidden;">
+                    <img src="https://app.minutor.com.br/logo-white.png" alt="ERPSERV Consultoria" width="200" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
+                  </div>
+                @endif
               </div>
 
               {{-- Marca Minutor (secundária, menor, alinhada à esquerda abaixo do logo) --}}
@@ -85,7 +89,7 @@
           <tr>
             <td class="pd-main" align="left" bgcolor="#FFFFFF" style="padding:36px 40px 0;background-color:#FFFFFF;">
               @if(($isContinuation ?? false))
-                <div style="font-size:11px;letter-spacing:.18em;color:#0E7490;font-weight:700;text-transform:uppercase;">Fechamento de Consultores</div>
+                <div style="font-size:11px;letter-spacing:.18em;color:#0E7490;font-weight:700;text-transform:uppercase;">{{ ($mode ?? 'ambos') === 'despesa' ? 'Apuração de Despesas' : 'Fechamento de Consultores' }}</div>
                 <h1 class="h1" style="margin:10px 0 4px;font-size:24px;font-weight:700;color:#111827;line-height:1.3;">
                   Olá, {{ $consultantName }}.
                 </h1>
@@ -99,7 +103,7 @@
           @if(!($isContinuation ?? false))
           <tr>
             <td class="pd-main" align="left" bgcolor="#FFFFFF" style="padding:36px 40px 0;background-color:#FFFFFF;">
-              <div style="font-size:11px;letter-spacing:.18em;color:#0E7490;font-weight:700;text-transform:uppercase;">Fechamento de Consultores</div>
+              <div style="font-size:11px;letter-spacing:.18em;color:#0E7490;font-weight:700;text-transform:uppercase;">{{ ($mode ?? 'ambos') === 'despesa' ? 'Apuração de Despesas' : 'Fechamento de Consultores' }}</div>
               <h1 class="h1" style="margin:10px 0 4px;font-size:24px;font-weight:700;color:#111827;line-height:1.3;">
                 Olá, {{ $consultantName }}.
               </h1>
@@ -118,7 +122,7 @@
                 <tr>
                   <td style="padding:18px 22px;">
                     <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#5EEAD4;">
-                      Valor total do fechamento
+                      {{ ($mode ?? 'ambos') === 'despesa' ? 'Valor total das despesas' : 'Valor total do fechamento' }}
                     </div>
                     <div style="margin-top:6px;font-size:28px;font-weight:800;color:#FFFFFF;letter-spacing:-0.01em;">
                       {{ $valorTotal }}

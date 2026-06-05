@@ -74,6 +74,25 @@ class FolhaPagamentoController extends Controller
         $folhaByUser  = $all->whereNotNull('user_id')->keyBy('user_id');
         $folhaBySocio = $all->whereNotNull('socio_key')->keyBy('socio_key');
 
+        // Reembolso AUTO (read-only): soma das despesas marcadas como "pagar no
+        // fechamento" (pagar_no_fechamento=true, status=approved) com expense_date
+        // no mês da folha. Indexado por user_id. Sócios manuais não têm user_id
+        // -> não recebem reemb_auto (continuam só com reemb manual).
+        // Soma com $reemb (manual) -> $total_rend.
+        $rangeFrom = "{$yearMonth}-01";
+        $rangeTo   = \Carbon\Carbon::parse($rangeFrom)->endOfMonth()->toDateString();
+        $reembAutoByUser = \App\Models\Expense::query()
+            ->where('status', \App\Models\Expense::STATUS_APPROVED)
+            ->where('pagar_no_fechamento', true)
+            ->whereBetween('expense_date', [$rangeFrom, $rangeTo])
+            ->selectRaw('user_id, SUM(amount) AS total')
+            ->groupBy('user_id')
+            ->pluck('total', 'user_id');
+
+        // Ajustes do fechamento do consultor (desconto/adiantamento/adicional) por user_id —
+        // usados pra calcular o "valor total do fechamento" das linhas do Raho cooperado.
+        $ajustesMap = \App\Models\FechamentoConsultorAjuste::where('year_month', $yearMonth)->get()->keyBy('user_id');
+
         // Parceiro "Raho": fechamento vai INDIVIDUALMENTE pra cooperativa — cada usuário
         // do Raho vira uma linha própria (azul, identificada, 100% editável), fora da
         // lista normal de cooperados (sem duplicar). Hardcoded por nome.
@@ -83,34 +102,50 @@ class FolhaPagamentoController extends Controller
 
         // ── Cooperados: TODO usuário (qualquer perfil exceto cliente) marcado cooperado.
         // Exclui os sócios (entram como linha própria). Produção/horas vêm do fechamento
-        // do consultor quando houver apontamentos; senão 0 / 180.
+        // do consultor quando houver apontamentos; senão 0 / 160.
         $cooperados = User::where('contract_type', 'cooperado')->where('enabled', true)
             ->whereNotIn('type', ['cliente'])->orderBy('name')->get();
         foreach ($cooperados as $u) {
-            if ($rahoId && (int) $u->partner_id === $rahoId) {
-                continue; // usuário do Raho entra na seção própria (azul), não como cooperado
+            if ($u->partner_id) {
+                // Usuários de PARCEIRO não entram como cooperado individual:
+                //  • Raho → linha própria (seção azul abaixo);
+                //  • demais parceiros → consolidados numa única linha no admin (seção parceiros).
+                continue;
             }
             $uid = $u->id;
             $c   = $byUser[$uid] ?? []; // dados do fechamento (se for consultor com apontamento)
+            $aj  = $ajustesMap[$uid] ?? null; // ajustes do fechamento do consultor (desconto/adiantamento/adicional)
 
             $f = $folhaByUser[$uid] ?? null;
 
-            $apontHoras = round((float) ($c['horas_trabalhadas'] ?? 0), 2);
-            $producao   = round((float) ($c['total'] ?? 0), 2);
-            $horas      = 180.0; // horas FIXAS (não via apontamento); Produção segue do fechamento
+            $apontHoras   = round((float) ($c['horas_trabalhadas'] ?? 0), 2);
+            $reembAuto    = round((float) ($reembAutoByUser[$uid] ?? 0), 2);
+            // Produção = VALOR TOTAL DO FECHAMENTO (recebimento), AGORA INCLUINDO a despesa:
+            //   recebimento = serviço + despesa − desconto − adiantamento + adicional.
+            // Como a despesa já está dentro da produção, NÃO somamos reembAuto de novo
+            // (senão contaria a despesa em dobro). Linhas sem fechamento mantêm reembAuto.
+            $hasFech      = array_key_exists('recebimento', $c) || array_key_exists('total', $c);
+            $fechDesp     = $hasFech ? round((float) ($c['total_despesas'] ?? 0), 2) : 0.0;
+            $producaoCalc = $hasFech
+                ? round((float) ($c['recebimento'] ?? $c['total'] ?? 0), 2)  // recebimento (com despesa)
+                : 0.0;
+            $producao     = ($f && $f->producao !== null) ? round((float) $f->producao, 2) : $producaoCalc;
+            $horas        = 160.0; // horas FIXAS (não via apontamento); Produção segue do fechamento
 
             // Valor hora só p/ vínculo por hora; fixo/mensal NÃO traz valor.
             $valorHora = ($u && $u->rate_type === 'hourly') ? round((float) $u->hourly_rate, 4) : 0.0;
 
             $variavel     = $f ? (float) $f->variavel : 0.0;
             $reemb        = $f ? (float) $f->reemb : 0.0;
+            // Cooperado com fechamento: despesa já está na produção → não soma reembAuto.
+            $reembAutoCalc = $hasFech ? 0.0 : $reembAuto;
             $descontos    = $f ? (float) $f->descontos_diversos : 0.0;
             $adiantamento = $f ? (float) $f->adiantamento : 0.0;
             $hm           = $f && $f->horista_mensalista
                 ? $f->horista_mensalista
                 : (($c['consultant_type'] ?? $u->consultant_type) === 'horista' ? 'Horista' : 'Mensalista');
 
-            $totalRend    = round($producao + $variavel + $reemb, 2);
+            $totalRend    = round($producao + $variavel + $reemb + $reembAutoCalc, 2);
             $totalDebitos = round($descontos + $adiantamento, 2);
 
             $rows[] = [
@@ -129,8 +164,16 @@ class FolhaPagamentoController extends Controller
                 'horas_apontamentos' => $apontHoras,
                 'valor_hora'         => $valorHora,
                 'producao'           => $producao,
+                'producao_calc'      => $producaoCalc, // valor calculado do fechamento (legenda no FE)
+                // Componentes do fechamento do consultor (legenda: serv − desc − adiant + adic + desp = produção).
+                'fech_serv'          => round((float) ($c['total'] ?? 0), 2),
+                'fech_desconto'      => $aj ? (float) $aj->desconto : 0.0,
+                'fech_adiantamento'  => $aj ? (float) $aj->adiantamento : 0.0,
+                'fech_adicional'     => $aj ? (float) $aj->adicional : 0.0,
+                'fech_desp'          => $fechDesp, // despesa já incorporada à produção
                 'variavel'           => $variavel,
                 'reemb'              => $reemb,
+                'reemb_auto'         => $reembAutoCalc, // 0 p/ cooperado c/ fechamento (despesa já na produção)
                 'descontos'          => $descontos,
                 'adiantamento'       => $adiantamento,
                 'horista_mensalista' => $hm,
@@ -155,11 +198,25 @@ class FolhaPagamentoController extends Controller
                 $uid  = $u->id;
                 $f    = $folhaByUser[$uid] ?? null;
                 $calc = $rahoCalc[$uid] ?? [];
+                $aj   = $ajustesMap[$uid] ?? null; // ajustes do fechamento do consultor
 
                 // Original (calculado do mês): horas/taxa/produção do fechamento do parceiro.
                 $horasCalc     = round((float) ($calc['horas'] ?? 0), 2);
                 $valorHoraCalc = round((float) ($calc['valor_hora'] ?? 0), 2);
                 $producaoCalc  = round((float) ($calc['total'] ?? 0), 2);
+                $fechServ      = $producaoCalc; // base de serviço (antes dos ajustes do fechamento)
+                $reembAuto     = round((float) ($reembAutoByUser[$uid] ?? 0), 2);
+                $isCoop        = $u->contract_type === 'cooperado';
+                // Cooperado: Produção = VALOR TOTAL DO FECHAMENTO, INCLUINDO a despesa:
+                //   total − desconto − adiantamento + adicional + despesa.
+                // A despesa entra na produção, então NÃO soma reembAuto de novo (evita duplicar).
+                $fechDesp      = $isCoop ? $reembAuto : 0.0;
+                if ($isCoop) {
+                    if ($aj) {
+                        $producaoCalc = round($producaoCalc - (float) $aj->desconto - (float) $aj->adiantamento + (float) $aj->adicional, 2);
+                    }
+                    $producaoCalc = round($producaoCalc + $reembAuto, 2); // + despesa
+                }
 
                 // Atual = salvo (editado) quando houver; senão o calculado (prefill).
                 $horas        = ($f && $f->horas_trabalhadas !== null) ? (float) $f->horas_trabalhadas : $horasCalc;
@@ -167,10 +224,11 @@ class FolhaPagamentoController extends Controller
                 $producao     = ($f && $f->producao !== null) ? (float) $f->producao : $producaoCalc;
                 $variavel     = $f ? (float) $f->variavel : 0.0;
                 $reemb        = $f ? (float) $f->reemb : 0.0;
+                $reembAutoCalc = $isCoop ? 0.0 : $reembAuto; // cooperado: despesa já está na produção
                 $descontos    = $f ? (float) $f->descontos_diversos : 0.0;
                 $adiantamento = $f ? (float) $f->adiantamento : 0.0;
 
-                $totalRend    = round($producao + $variavel + $reemb, 2);
+                $totalRend    = round($producao + $variavel + $reemb + $reembAutoCalc, 2);
                 $totalDebitos = round($descontos + $adiantamento, 2);
 
                 $rows[] = [
@@ -195,8 +253,15 @@ class FolhaPagamentoController extends Controller
                     'horas_calc'         => $horasCalc,
                     'valor_hora_calc'    => $valorHoraCalc,
                     'producao_calc'      => $producaoCalc,
+                    // Componentes do fechamento do consultor (legenda: serv − desc − adiant + adic + desp = produção).
+                    'fech_serv'          => round((float) $fechServ, 2),
+                    'fech_desconto'      => ($isCoop && $aj) ? (float) $aj->desconto : 0.0,
+                    'fech_adiantamento'  => ($isCoop && $aj) ? (float) $aj->adiantamento : 0.0,
+                    'fech_adicional'     => ($isCoop && $aj) ? (float) $aj->adicional : 0.0,
+                    'fech_desp'          => $fechDesp, // despesa já incorporada à produção (cooperado)
                     'variavel'           => $variavel,
                     'reemb'              => $reemb,
+                    'reemb_auto'         => $reembAutoCalc, // 0 p/ cooperado (despesa já na produção)
                     'descontos'          => $descontos,
                     'adiantamento'       => $adiantamento,
                     'horista_mensalista' => $f && $f->horista_mensalista ? $f->horista_mensalista
@@ -206,6 +271,83 @@ class FolhaPagamentoController extends Controller
                     'liquido'            => round($totalRend - $totalDebitos, 2),
                 ];
             }
+        }
+
+        // ── Parceiros (exceto Raho): consolida o parceiro numa ÚNICA linha, no parceiro
+        //    admin (is_executive), com a APURAÇÃO TOTAL do parceiro (soma do fechamento de
+        //    TODOS os membros: horas somadas + valor total). Membros comuns NÃO aparecem.
+        //    Parceiro SEM admin is_executive é ignorado (não entra na folha). ──
+        $partners = \App\Models\Partner::query()
+            ->when($rahoId, fn ($q) => $q->where('id', '!=', $rahoId))
+            ->orderBy('name')->get();
+        foreach ($partners as $partner) {
+            $admin = User::where('partner_id', $partner->id)
+                ->where('is_executive', true)
+                ->orderBy('id')->first();
+            if (!$admin) {
+                continue; // sem parceiro admin (is_executive) → parceiro fora da folha
+            }
+
+            $parceiroCtrl  = app(FechamentoParceiroController::class);
+            $calc = collect($parceiroCtrl->consultoresData($partner, $yearMonth));
+            $totalHoras    = round((float) $calc->sum(fn ($r) => (float) ($r['horas'] ?? 0)), 2);
+            $totalServicos = round((float) $calc->sum(fn ($r) => (float) ($r['total'] ?? 0)), 2);
+            // Despesas a reembolsar no fechamento (não-pagas) entram na PRODUÇÃO — igual cooperado.
+            $totalDespesas = round((float) collect($parceiroCtrl->despesasData((int) $partner->id, $yearMonth))
+                ->where('is_paid', false)->sum('valor'), 2);
+            $totalApuracao = round($totalServicos + $totalDespesas, 2); // recebimento = serviços + despesas
+
+            $uid = $admin->id;
+            $f   = $folhaByUser[$uid] ?? null;
+
+            // Atual = salvo (editado) quando houver; senão o calculado (prefill).
+            $horas        = ($f && $f->horas_trabalhadas !== null) ? (float) $f->horas_trabalhadas : $totalHoras;
+            $producao     = ($f && $f->producao !== null) ? (float) $f->producao : $totalApuracao;
+            $variavel     = $f ? (float) $f->variavel : 0.0;
+            $reemb        = $f ? (float) $f->reemb : 0.0;
+            $descontos    = $f ? (float) $f->descontos_diversos : 0.0;
+            $adiantamento = $f ? (float) $f->adiantamento : 0.0;
+
+            $totalRend    = round($producao + $variavel + $reemb, 2);
+            $totalDebitos = round($descontos + $adiantamento, 2);
+
+            $rows[] = [
+                'row_key'            => 'u:' . $uid,
+                'is_socio'           => false,
+                'is_raho'            => false,
+                'is_parceiro_total'  => true,
+                'partner_label'      => $partner->name,
+                'inativo'            => !$admin->enabled,
+                'cancelado'          => $f ? (bool) $f->cancelado : false,
+                'user_id'            => $uid,
+                'socio_key'          => null,
+                'cpf'                => $admin->cpf ?? '',
+                'matricula'          => $admin->matricula ?? '',
+                'status'             => $admin->payroll_status ?? '',
+                'nome'               => $admin->full_name ?: $admin->name,
+                'dias'               => $f ? (float) $f->dias_trabalhados : 0.0,
+                'horas'              => $horas,
+                'horas_apontamentos' => $totalHoras,
+                'valor_hora'         => 0.0, // consolidado: sem valor/hora (FE mostra "—")
+                'producao'           => $producao,
+                'horas_calc'         => $totalHoras,
+                'valor_hora_calc'    => 0.0,
+                'producao_calc'      => $totalApuracao,
+                'fech_serv'          => $totalServicos,
+                'fech_desconto'      => 0.0,
+                'fech_adiantamento'  => 0.0,
+                'fech_adicional'     => 0.0,
+                'fech_desp'          => $totalDespesas,
+                'variavel'           => $variavel,
+                'reemb'              => $reemb,
+                'reemb_auto'         => 0.0,
+                'descontos'          => $descontos,
+                'adiantamento'       => $adiantamento,
+                'horista_mensalista' => $f && $f->horista_mensalista ? $f->horista_mensalista : 'Mensalista',
+                'total_rend'         => $totalRend,
+                'total_debitos'      => $totalDebitos,
+                'liquido'            => round($totalRend - $totalDebitos, 2),
+            ];
         }
 
         // ── Linhas manuais ("Nova linha editável") — inclui os sócios (migrados p/ manual). ──
@@ -230,12 +372,13 @@ class FolhaPagamentoController extends Controller
                 'status'             => $f->status ?? '',
                 'nome'               => $f->nome ?? '',
                 'dias'               => (float) $f->dias_trabalhados,
-                'horas'              => $f->horas_trabalhadas !== null ? (float) $f->horas_trabalhadas : 180.0,
+                'horas'              => $f->horas_trabalhadas !== null ? (float) $f->horas_trabalhadas : 160.0,
                 'horas_apontamentos' => 0.0,
                 'valor_hora'         => $f->valor_hora !== null ? (float) $f->valor_hora : 0.0,
                 'producao'           => $producao,
                 'variavel'           => $variavel,
                 'reemb'              => $reemb,
+                'reemb_auto'         => 0.0, // sócios manuais não têm user_id pra rastrear despesas
                 'descontos'          => $descontos,
                 'adiantamento'       => $adiantamento,
                 'horista_mensalista' => $f->horista_mensalista ?: 'Horista',
@@ -259,9 +402,10 @@ class FolhaPagamentoController extends Controller
             $producao     = $f && $f->producao !== null ? (float) $f->producao : 0.0;
             $variavel     = $f ? (float) $f->variavel : 0.0;
             $reemb        = $f ? (float) $f->reemb : 0.0;
+            $reembAuto    = round((float) ($reembAutoByUser[$u->id] ?? 0), 2);
             $descontos    = $f ? (float) $f->descontos_diversos : 0.0;
             $adiantamento = $f ? (float) $f->adiantamento : 0.0;
-            $totalRend    = round($producao + $variavel + $reemb, 2);
+            $totalRend    = round($producao + $variavel + $reemb + $reembAuto, 2);
             $totalDebitos = round($descontos + $adiantamento, 2);
 
             $rows[] = [
@@ -276,12 +420,13 @@ class FolhaPagamentoController extends Controller
                 'status'             => $u->payroll_status ?? '',
                 'nome'               => $u->full_name ?: $u->name,
                 'dias'               => $f ? (float) $f->dias_trabalhados : 0.0,
-                'horas'              => $f && $f->horas_trabalhadas !== null ? (float) $f->horas_trabalhadas : 180.0,
+                'horas'              => $f && $f->horas_trabalhadas !== null ? (float) $f->horas_trabalhadas : 160.0,
                 'horas_apontamentos' => 0.0,
                 'valor_hora'         => $valorHora,
                 'producao'           => $producao,
                 'variavel'           => $variavel,
                 'reemb'              => $reemb,
+                'reemb_auto'         => $reembAuto, // despesas pagas no fechamento do mês (read-only no FE)
                 'descontos'          => $descontos,
                 'adiantamento'       => $adiantamento,
                 'horista_mensalista' => $f && $f->horista_mensalista ? $f->horista_mensalista : 'Mensalista',
@@ -415,11 +560,12 @@ class FolhaPagamentoController extends Controller
                 );
                 $saved++;
             } elseif (!empty($e['user_id'])) {
-                // Raho: VALORES editáveis (valor_hora/produção) salvos; cpf/nome/status seguem do cadastro do usuário.
-                $extra = in_array((int) $e['user_id'], $rahoUserIds, true) ? [
-                    'valor_hora' => $e['valor_hora'] ?? null,
-                    'producao'   => $e['producao'] ?? null,
-                ] : [];
+                // Produção é editável p/ TODOS os cooperados (override salvo na folha);
+                // valor_hora segue editável só p/ usuários do Raho.
+                $extra = ['producao' => $e['producao'] ?? null];
+                if (in_array((int) $e['user_id'], $rahoUserIds, true)) {
+                    $extra['valor_hora'] = $e['valor_hora'] ?? null;
+                }
                 FechamentoFolha::updateOrCreate(
                     ['user_id' => $e['user_id'], 'year_month' => $yearMonth, 'empresa' => 'erpserv'],
                     array_merge($comum, $extra)

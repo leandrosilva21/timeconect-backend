@@ -424,6 +424,12 @@ Route::prefix('v1')->group(function () {
         Route::get('/service-types', [ServiceTypeController::class, 'index'])->name('service-types.index');
         Route::get('/service-types/{id}', [ServiceTypeController::class, 'show'])->name('service-types.show');
 
+        // Modelos de e-mail dos fechamentos (cadastro)
+        Route::get('/fechamento-email-templates', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'index']);
+        Route::post('/fechamento-email-templates', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'store']);
+        Route::put('/fechamento-email-templates/{template}', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'update']);
+        Route::delete('/fechamento-email-templates/{template}', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'destroy']);
+
         // Rotas de escrita - protegidas por permissões
         Route::middleware('permission.or.admin:service_types.create')->group(function () {
             Route::post('/service-types', [ServiceTypeController::class, 'store'])->name('service-types.store');
@@ -491,6 +497,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
             Route::get('/projects/{project}/change-history', [ProjectController::class, 'changeHistory'])->name('projects.change-history');
             Route::get('/projects/{project}/contract-request', [ProjectController::class, 'contractRequest'])->name('projects.contract-request');
+            Route::get('/projects/{project}/monthly-statement', [ProjectController::class, 'monthlyStatement'])->name('projects.monthly-statement');
         });
 
         Route::middleware('permission.or.admin:projects.view_costs')->group(function () {
@@ -512,6 +519,7 @@ Route::prefix('v1')->group(function () {
             Route::patch('/projects/{project}', [ProjectController::class, 'update'])->name('projects.patch');
             Route::put('/projects/{project}/sold-hours-history/{history}', [ProjectController::class, 'updateSoldHoursHistory'])->name('projects.sold-hours-history.update');
             Route::delete('/projects/{project}/sold-hours-history/{history}', [ProjectController::class, 'destroySoldHoursHistory'])->name('projects.sold-hours-history.destroy');
+            Route::put('/projects/{project}/monthly-consumption', [ProjectController::class, 'updateMonthlyConsumption'])->name('projects.monthly-consumption');
             Route::put('/projects/{project}/change-history/{log}', [ProjectController::class, 'updateChangeHistory'])->name('projects.change-history.update');
             Route::delete('/projects/{project}/change-history/{log}', [ProjectController::class, 'destroyChangeHistory'])->name('projects.change-history.destroy');
             Route::post('/projects/{project}/detach-from-parent', [ProjectController::class, 'detachFromParent'])->name('projects.detach-from-parent');
@@ -581,6 +589,13 @@ Route::prefix('v1')->group(function () {
             Route::patch('/projects/{project}/hour-contributions/{contribution}/move', [HourContributionController::class, 'moveKanban'])->name('hour-contributions.move');
         });
 
+        // Mover aporte no Kanban (transição comercial novo_contrato ↔ aporte) — admin,
+        // coordenador (auto-pass do middleware) e administrativo (via contracts.manage).
+        // Separado do grupo acima pra não permitir editar/deletar aporte ao administrativo.
+        Route::middleware('permission.or.admin:projects.update,contracts.manage')->group(function () {
+            Route::patch('/projects/{project}/hour-contributions/{contribution}/move', [HourContributionController::class, 'moveKanban'])->name('hour-contributions.move');
+        });
+
         // ⏰ TIMESHEETS - Protegido por permissões específicas (Admins sempre têm acesso)
 
         // Rotas que qualquer usuário autenticado pode acessar (com lógica de permissão no controller)
@@ -590,6 +605,7 @@ Route::prefix('v1')->group(function () {
         Route::put('/timesheets/bulk-update-project-customer', [TimesheetController::class, 'bulkUpdateProjectCustomer'])->name('timesheets.bulk-update-project-customer');
         Route::post('/timesheets/reprocess-movidesk', [TimesheetController::class, 'reprocessMovidesk'])->name('timesheets.reprocess-movidesk');
         Route::get('/timesheets/summary-by-ticket', [TimesheetController::class, 'summaryByTicket'])->name('timesheets.summary-by-ticket');
+        Route::get('/timesheets/atrasos', [TimesheetController::class, 'atrasos'])->name('timesheets.atrasos');
 
         // Saldo inicial de ticket (admin/coord) — soma no histórico do ticket
         Route::get   ('/ticket-initial-balances/lookup', [\App\Http\Controllers\TicketInitialBalanceController::class, 'lookup'])->name('ticket-initial-balances.lookup');
@@ -618,6 +634,7 @@ Route::prefix('v1')->group(function () {
         // Aprovação, liberação e rejeição
         Route::middleware('permission.or.admin:hours.approve')->group(function () {
             Route::post('/timesheets/{timesheet}/approve', [TimesheetController::class, 'approve'])->name('timesheets.approve');
+            Route::post('/timesheets/{timesheet}/aprovar-atraso', [TimesheetController::class, 'aprovarAtraso'])->name('timesheets.aprovar-atraso');
             Route::post('/timesheets/{timesheet}/release', [TimesheetController::class, 'release'])->name('timesheets.release');
             Route::post('/timesheets/{timesheet}/reverse-release', [TimesheetController::class, 'reverseRelease'])->name('timesheets.reverse-release');
         });
@@ -639,6 +656,7 @@ Route::prefix('v1')->group(function () {
 
         Route::put('/expenses/{expense}', [ExpenseController::class, 'update'])->name('expenses.update');
         Route::patch('/expenses/{expense}', [ExpenseController::class, 'update'])->name('expenses.patch');
+        Route::post('/expenses/{expense}/set-fechamento', [ExpenseController::class, 'setFechamento'])->name('expenses.set-fechamento');
         Route::delete('/expenses/{expense}', [ExpenseController::class, 'destroy'])->name('expenses.destroy');
 
         Route::middleware('permission.or.admin:expenses.approve')->group(function () {
@@ -885,11 +903,14 @@ Route::prefix('v1')->group(function () {
         // 📋 FECHAMENTO POR CONTRATO
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/fechamento-contrato', [\App\Http\Controllers\FechamentoContratoController::class, 'index']);
+            Route::post('/on-demand/invoiced', [\App\Http\Controllers\OnDemandInvoicedController::class, 'toggle']);
         });
 
         // 🧾 FECHAMENTO CLIENTE
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/fechamento-cliente',                                                      [\App\Http\Controllers\FechamentoClienteController::class, 'index']);
+            Route::get('/fechamento-cliente/despesas-resumo',                                       [\App\Http\Controllers\FechamentoClienteController::class, 'despesasResumo']);
+            Route::get('/fechamento-cliente/apontamentos-geral',                                    [\App\Http\Controllers\FechamentoClienteController::class, 'apontamentosGeral']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/contratos',                   [\App\Http\Controllers\FechamentoClienteController::class, 'contratos']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/por-tipo',                    [\App\Http\Controllers\FechamentoClienteController::class, 'porTipo']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/apontamentos',               [\App\Http\Controllers\FechamentoClienteController::class, 'apontamentos']);
@@ -898,9 +919,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/pendencias',                  [\App\Http\Controllers\FechamentoClienteController::class, 'pendencias']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/pagamento',                   [\App\Http\Controllers\FechamentoClienteController::class, 'pagamento']);
             Route::post('/fechamento-cliente/{customerId}/{yearMonth}/enviar-email',               [\App\Http\Controllers\FechamentoClienteController::class, 'enviarEmail']);
-            Route::get('/fechamento-cliente/{customerId}/{yearMonth}/excel',                        [\App\Http\Controllers\FechamentoClienteController::class, 'excel']);
+            Route::post('/fechamento-cliente/{customerId}/{yearMonth}/limpar-envio',               [\App\Http\Controllers\FechamentoClienteController::class, 'limparEnvio']);
+            Route::get('/fechamento-cliente/{customerId}/{yearMonth}/excel',                       [\App\Http\Controllers\FechamentoClienteController::class, 'excel']);
             Route::post('/fechamento-cliente/{customerId}/{yearMonth}/email-preview',              [\App\Http\Controllers\FechamentoClienteController::class, 'emailPreview']);
-            Route::post('/fechamento-cliente/{customerId}/fechamento-email',                        [\App\Http\Controllers\FechamentoClienteController::class, 'saveFechamentoEmail']);
+            Route::post('/fechamento-cliente/{customerId}/fechamento-email',                       [\App\Http\Controllers\FechamentoClienteController::class, 'saveFechamentoEmail']);
         });
 
         // 🤝 FECHAMENTO PARCEIRO
@@ -909,32 +931,53 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/consultores',                 [\App\Http\Controllers\FechamentoParceiroController::class, 'consultores']);
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/despesas',                    [\App\Http\Controllers\FechamentoParceiroController::class, 'despesas']);
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/apontamentos',               [\App\Http\Controllers\FechamentoParceiroController::class, 'apontamentos']);
+            Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/report-html',                [\App\Http\Controllers\FechamentoParceiroController::class, 'reportHtml']);
             Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/enviar-email',               [\App\Http\Controllers\FechamentoParceiroController::class, 'enviarEmail']);
+            Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/limpar-envio',               [\App\Http\Controllers\FechamentoParceiroController::class, 'limparEnvio']);
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/excel',                       [\App\Http\Controllers\FechamentoParceiroController::class, 'excel']);
             Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/email-preview',              [\App\Http\Controllers\FechamentoParceiroController::class, 'emailPreview']);
             Route::post('/fechamento-parceiro/{partnerId}/fechamento-email',                       [\App\Http\Controllers\FechamentoParceiroController::class, 'saveFechamentoEmail']);
+            // Ajustes do recebimento (desconto/adiantamento/adicional) do parceiro no mês.
+            Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/ajustes',                     [\App\Http\Controllers\FechamentoParceiroController::class, 'salvarAjustes']);
         });
 
         // 👤 FECHAMENTO CONSULTOR
         Route::middleware('auth:sanctum')->group(function () {
+            // 💰 Relatórios novos (pagamentos consultores+parceiros; rentabilidade consultor×projeto)
+            Route::get('/relatorios/pagamentos/{yearMonth}',                             [\App\Http\Controllers\RelatorioPagamentoController::class, 'pagamentos']);
+            Route::get('/relatorios/rentabilidade/clientes/{yearMonth}',                 [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'clientes']);
+            Route::get('/relatorios/rentabilidade/{yearMonth}',                          [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'rentabilidade']);
             Route::get('/fechamento-consultor/{yearMonth}',                              [\App\Http\Controllers\FechamentoConsultorController::class, 'index']);
             Route::get('/fechamento-consultor/{yearMonth}/export-excel',                 [\App\Http\Controllers\FechamentoConsultorController::class, 'exportExcel']);
 
-            // Folha de pagamento (planilha de importação) — grid editável + save + export .xls
+            // 📎 Notas fiscais PJ (NFS-e + Nota de débito) — consultor PJ avulso ou parceiro PJ.
+            Route::get('/fechamento/notas/{type}/{id}/{yearMonth}',                 [\App\Http\Controllers\FechamentoNotaController::class, 'show']);
+            Route::post('/fechamento/notas/{type}/{id}/{yearMonth}',                [\App\Http\Controllers\FechamentoNotaController::class, 'upload']);
+            Route::get('/fechamento/notas/{type}/{id}/{yearMonth}/{tipo}/download',  [\App\Http\Controllers\FechamentoNotaController::class, 'download']);
+            Route::post('/fechamento/notas/{type}/{id}/{yearMonth}/{tipo}/decisao',  [\App\Http\Controllers\FechamentoNotaController::class, 'decisao']);
+            // Admin libera o envio de notas após o prazo (dia 15) para um notable+mês.
+            Route::post('/fechamento/notas/{type}/{id}/{yearMonth}/liberar',         [\App\Http\Controllers\FechamentoNotaController::class, 'liberar']);
+
+            // Folha Cooperativa (planilha de importação)
             Route::get('/fechamento-folha/{yearMonth}',          [\App\Http\Controllers\FolhaPagamentoController::class, 'grid']);
             Route::post('/fechamento-folha/{yearMonth}',         [\App\Http\Controllers\FolhaPagamentoController::class, 'save']);
             Route::get('/fechamento-folha/{yearMonth}/export',   [\App\Http\Controllers\FolhaPagamentoController::class, 'export']);
             Route::delete('/fechamento-folha/{yearMonth}/manual/{socioKey}', [\App\Http\Controllers\FolhaPagamentoController::class, 'deleteRow']);
             Route::post('/fechamento-folha/{yearMonth}/cancel',  [\App\Http\Controllers\FolhaPagamentoController::class, 'cancelRow']);
             Route::post('/fechamento-folha/{yearMonth}/import-bizify', [\App\Http\Controllers\FolhaPagamentoController::class, 'importBizify']);
+
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/apontamentos',        [\App\Http\Controllers\FechamentoConsultorController::class, 'apontamentos']);
+            Route::get('/fechamento-consultor/{userId}/{yearMonth}/report-html',         [\App\Http\Controllers\FechamentoConsultorController::class, 'reportHtml']);
+            Route::get('/fechamento-consultor/{userId}/{yearMonth}/despesas',            [\App\Http\Controllers\FechamentoConsultorController::class, 'despesas']);
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/banco-horas',         [\App\Http\Controllers\FechamentoConsultorController::class, 'bancoHoras']);
             Route::post('/fechamento-consultor/{userId}/{yearMonth}/enviar-email',       [\App\Http\Controllers\FechamentoConsultorController::class, 'enviarEmail']);
+            Route::post('/fechamento-consultor/{userId}/{yearMonth}/limpar-envio',       [\App\Http\Controllers\FechamentoConsultorController::class, 'limparEnvio']);
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/excel',               [\App\Http\Controllers\FechamentoConsultorController::class, 'excel']);
+            // Ajustes do recebimento (desconto/adiantamento/adicional) do consultor no mês.
+            Route::post('/fechamento-consultor/{userId}/{yearMonth}/ajustes',            [\App\Http\Controllers\FechamentoConsultorController::class, 'salvarAjustes']);
+            // Recebimento do próprio usuário (meu-painel / partner-dashboard).
+            Route::get('/my-closing/{yearMonth}',                                        [\App\Http\Controllers\FechamentoConsultorController::class, 'myClosing']);
             Route::post('/fechamento-consultor/{userId}/{yearMonth}/email-preview',      [\App\Http\Controllers\FechamentoConsultorController::class, 'emailPreview']);
-            Route::get('/fechamento-consultor/{userId}/{yearMonth}/thread',              [\App\Http\Controllers\FechamentoConsultorController::class, 'thread']);
-            Route::post('/fechamento-consultor/{userId}/{yearMonth}/sync-inbox',         [\App\Http\Controllers\FechamentoConsultorController::class, 'syncInbox']);
-            Route::post('/fechamento-consultor/{userId}/{yearMonth}/continuar',          [\App\Http\Controllers\FechamentoConsultorController::class, 'continuar']);
         });
 
         // 📅 FERIADOS
@@ -986,6 +1029,19 @@ Route::prefix('v1')->group(function () {
         Route::get('/contracts/{contract}/snapshot',                  [ContractController::class, 'snapshot'])->name('contracts.snapshot');
         Route::post('/contracts/{contract}/snapshot/replay',          [ContractController::class, 'replay'])->name('contracts.snapshot.replay');
         Route::get('/contracts/consistency-report',                   [ContractController::class, 'consistencyReport'])->name('contracts.consistency-report');
+        Route::get('/contracts/recorrentes',                          [ContractController::class, 'recorrentes'])->name('contracts.recorrentes');
+        Route::post('/contracts/recorrentes/import',                  [ContractController::class, 'importAniversario'])->name('contracts.recorrentes-import');
+        Route::patch('/contracts/{contract}/recorrente',              [ContractController::class, 'updateRecorrente'])->name('contracts.recorrente-update');
+        // Reajuste sob demanda (índice IPCA/IGP-M via BCB → prévia → aplicação manual + histórico)
+        Route::get('/economic-index',                                 [\App\Http\Controllers\EconomicIndexController::class, 'show'])->name('economic-index.show');
+        Route::get('/contracts/{contract}/adjustment-preview',        [ContractController::class, 'adjustmentPreview'])->name('contracts.adjustment-preview');
+        Route::post('/contracts/{contract}/apply-adjustment',         [ContractController::class, 'applyAdjustment'])->name('contracts.apply-adjustment');
+        Route::post('/contracts/{contract}/renew-no-adjustment',      [ContractController::class, 'renewWithoutAdjustment'])->name('contracts.renew-no-adjustment');
+        Route::post('/contracts/{contract}/notify-client-adjustment', [ContractController::class, 'notifyClientAdjustment'])->name('contracts.notify-client-adjustment');
+        // Dashboard de reajustes (resumo/KPIs + lista priorizada + histórico)
+        Route::get('/contracts/reajustes/summary',                    [ContractController::class, 'reajustesSummary'])->name('contracts.reajustes-summary');
+        Route::get('/contracts/reajustes',                            [ContractController::class, 'reajustesList'])->name('contracts.reajustes-list');
+        Route::get('/contracts/{contract}/value-changes',             [ContractController::class, 'valueChanges'])->name('contracts.value-changes');
         Route::get('/projects/{project}/kanban-logs',                [\App\Http\Controllers\KanbanLogController::class, 'projectLogs'])->name('projects.kanban-logs');
         Route::get('/contract-requests/{contractRequest}/kanban-logs', [\App\Http\Controllers\KanbanLogController::class, 'requestLogs'])->name('contract-requests.kanban-logs');
 

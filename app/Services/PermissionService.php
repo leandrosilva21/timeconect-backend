@@ -29,6 +29,15 @@ class PermissionService
             $base = array_merge($base, ['users.view_all', 'users.reset_password']);
         }
 
+        // Executivo de conta: aprova apontamentos/despesas de Investimento Comercial dos seus
+        // clientes — precisa acessar a tela de Aprovações. Fonte da verdade é o vínculo
+        // customers.executive_id (não o flag is_executive, que nem sempre está setado).
+        // A visibilidade fica restrita no ApprovalController (só os registros de investimento
+        // Comercial onde ele é o executivo).
+        if ($user->is_executive || \App\Models\Customer::where('executive_id', $user->id)->exists()) {
+            $base = array_merge($base, ['approvals.view', 'timesheets.approve', 'expenses.approve']);
+        }
+
         // Admin já tem tudo — extras são irrelevantes
         if (in_array('*', $base, true)) {
             return $base;
@@ -138,6 +147,8 @@ class PermissionService
             // Clientes — acesso total
             'customers.view', 'customers.create', 'customers.update', 'customers.delete',
             'customers.manage',
+            // Parceiros — acesso total (filtro + dropdown "Empresa parceira" no cadastro de usuários)
+            'partners.view', 'partners.manage',
             // Usuários — acesso total
             'users.view', 'users.view_all', 'users.create', 'users.update', 'users.delete',
             'users.reset_password', 'users.view_own_profile', 'users.update_own_profile',

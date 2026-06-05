@@ -76,7 +76,7 @@ class ClientPortalController extends Controller
 
         // Período para filtrar timesheets
         $tsQuery = Timesheet::whereIn('project_id', $allProjectIds)
-            ->where('status', '!=', Timesheet::STATUS_REJECTED);
+            ->whereIn('status', ['approved', 'pending']);
 
         $this->applyPeriod($tsQuery, $period);
 
@@ -91,7 +91,7 @@ class ClientPortalController extends Controller
         $fYear  = $filterYear  ? (int)$filterYear  : $now->year;
 
         $monthMinutes = Timesheet::whereIn('project_id', $allProjectIds)
-            ->where('status', '!=', Timesheet::STATUS_REJECTED)
+            ->whereIn('status', ['approved', 'pending'])
             ->whereMonth('date', $fMonth)->whereYear('date', $fYear)
             ->sum('effort_minutes');
         $monthConsumed = round($monthMinutes / 60, 1);
@@ -99,7 +99,7 @@ class ClientPortalController extends Controller
         // Mês anterior para tendência
         $prevDate = Carbon::create($fYear, $fMonth, 1)->subMonth();
         $prevMinutes = Timesheet::whereIn('project_id', $allProjectIds)
-            ->where('status', '!=', Timesheet::STATUS_REJECTED)
+            ->whereIn('status', ['approved', 'pending'])
             ->whereMonth('date', $prevDate->month)->whereYear('date', $prevDate->year)
             ->sum('effort_minutes');
         $prevConsumed = round($prevMinutes / 60, 1);
@@ -114,7 +114,7 @@ class ClientPortalController extends Controller
         for ($i = 5; $i >= 0; $i--) {
             $d = Carbon::create($fYear, $fMonth, 1)->subMonths($i);
             $mins = Timesheet::whereIn('project_id', $allProjectIds)
-                ->where('status', '!=', Timesheet::STATUS_REJECTED)
+                ->whereIn('status', ['approved', 'pending'])
                 ->whereMonth('date', $d->month)->whereYear('date', $d->year)
                 ->sum('effort_minutes');
             $monthlyChart[] = [
@@ -385,7 +385,7 @@ class ClientPortalController extends Controller
         }
 
         $tsBase = Timesheet::whereIn('project_id', $sustProjectIds)
-            ->where('status', '!=', Timesheet::STATUS_REJECTED);
+            ->whereIn('status', ['approved', 'pending']);
 
         $this->applyPeriod($tsBase, $period);
 
@@ -419,7 +419,7 @@ class ClientPortalController extends Controller
         // Chamados por mês (últimos 6 meses)
         try {
             $monthlyData = Timesheet::whereIn('project_id', $sustProjectIds)
-                ->where('status', '!=', Timesheet::STATUS_REJECTED)
+                ->whereIn('status', ['approved', 'pending'])
                 ->whereNotNull('ticket')
                 ->where('date', '>=', Carbon::now()->subMonths(5)->startOfMonth())
                 ->selectRaw("strftime('%Y-%m', date) as month, COUNT(DISTINCT ticket) as count")
@@ -431,7 +431,7 @@ class ClientPortalController extends Controller
         } catch (\Throwable $e) {
             try {
                 $monthlyData = Timesheet::whereIn('project_id', $sustProjectIds)
-                    ->where('status', '!=', Timesheet::STATUS_REJECTED)
+                    ->whereIn('status', ['approved', 'pending'])
                     ->whereNotNull('ticket')
                     ->where('date', '>=', Carbon::now()->subMonths(5)->startOfMonth())
                     ->selectRaw("DATE_FORMAT(date, '%Y-%m') as month, COUNT(DISTINCT ticket) as count")
@@ -602,7 +602,7 @@ class ClientPortalController extends Controller
                   ->orWhere('service_types.name', 'ilike', '%sustenta%');
             })
             ->whereNull('timesheets.deleted_at')
-            ->whereNotIn('timesheets.status', ['rejected', 'adjustment_requested', 'conflicted'])
+            ->whereIn('timesheets.status', ['approved', 'pending'])
             ->where('timesheets.date', '>=', $start12)
             ->selectRaw("TO_CHAR(timesheets.date, 'YYYY-MM') as ym, COALESCE(SUM(timesheets.effort_minutes), 0) as m")
             ->groupByRaw("TO_CHAR(timesheets.date, 'YYYY-MM')")
@@ -661,7 +661,10 @@ class ClientPortalController extends Controller
             }
 
             try {
-                $balance = $p->getGeneralHoursBalance(false);
+                // Saldo pela ótica da Gestão de Contratos (fonte da verdade): managementBreakdown
+                // NÃO re-soma initial_hours_balance nem subtrai horas de coordenação, ao contrário
+                // do antigo getGeneralHoursBalance — que inflava o saldo visto pelo cliente.
+                $balance = $p->managementBreakdown()['balance'];
             } catch (\Throwable $e) {
                 $balance = null;
             }

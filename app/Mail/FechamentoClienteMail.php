@@ -46,6 +46,10 @@ class FechamentoClienteMail extends Mailable
         // Null em ambos = mantém o From padrão (NF-e/config-based) — comportamento atual.
         public ?string $fromAddress = null,
         public ?string $fromName = null,
+        // 'servicos' (apontamentos) | 'despesa' (apuração de despesas a cobrar).
+        public string $mode = 'servicos',
+        // Caminhos absolutos de anexos extras (além do PDF+XLSX) escolhidos pelo usuário.
+        public array $extraAttachments = [],
     ) {
     }
 
@@ -89,6 +93,7 @@ class FechamentoClienteMail extends Mailable
                 'clienteName'     => $this->clienteName,
                 'senderName'      => $this->senderName,
                 'periodo'         => $this->periodo,
+                'mode'            => $this->mode,
                 'valorTotal'      => $this->valorTotal,
                 'mensagem'        => $this->mensagem ?? '',
                 'projetos'        => $this->projetos,
@@ -106,7 +111,7 @@ class FechamentoClienteMail extends Mailable
             return [];
         }
 
-        return [
+        $atts = [
             Attachment::fromPath($this->pdfPath)
                 ->as($this->pdfFileName)
                 ->withMime('application/pdf'),
@@ -114,5 +119,14 @@ class FechamentoClienteMail extends Mailable
                 ->as($this->xlsxFileName)
                 ->withMime('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
         ];
+
+        // Anexos extras escolhidos pelo usuário (preserva o nome original).
+        foreach ($this->extraAttachments as $path) {
+            if (is_string($path) && is_file($path)) {
+                $atts[] = Attachment::fromPath($path)->as(basename($path));
+            }
+        }
+
+        return $atts;
     }
 }

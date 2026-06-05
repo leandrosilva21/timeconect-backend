@@ -235,7 +235,7 @@ class ExpenseController extends Controller
         $pageSize = min((int) $request->get('pageSize', 20), 100);
         $page = (int) $request->get('page', 1);
 
-        $query = Expense::with(['user', 'project.customer', 'project.contractType', 'project.serviceType', 'project.coordinators:id,name', 'category', 'reviewedBy']);
+        $query = Expense::with(['user', 'project.customer', 'project.customer.executive:id,name', 'project.contractType', 'project.serviceType', 'project.coordinators:id,name', 'project.kanbanOverrideCoordinator:id,name', 'realProject:id,name', 'category', 'reviewedBy']);
 
         // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
         if ($request->get('scope') === 'sustentacao') {
@@ -390,9 +390,30 @@ class ExpenseController extends Controller
         try {
             $result = $this->cachedList($request, 'expenses', function () use ($query, $pageSize, $page) {
                 $expenses = $query->paginate($pageSize, ['*'], 'page', $page);
+                // Coordenador exibido (tooltip): override > (sustentação) coord de sustentação
+                // (Anderson Arantes) > coordenadores do projeto. Mesma regra dos apontamentos.
+                $sustentacaoCoordNames = \App\Models\User::where('coordinator_type', 'sustentacao')
+                    ->where('enabled', true)->pluck('name')->all();
+                $items = collect($expenses->items())->map(function ($exp) use ($sustentacaoCoordNames) {
+                    $arr = $exp->toArray();
+                    $proj = $exp->project;
+                    $coordLabel = null;
+                    if ($proj) {
+                        $isSustentacao = optional($proj->serviceType)->code === 'sustentacao';
+                        if ($proj->kanbanOverrideCoordinator) {
+                            $coordLabel = $proj->kanbanOverrideCoordinator->name;
+                        } elseif ($isSustentacao && !empty($sustentacaoCoordNames)) {
+                            $coordLabel = implode(', ', $sustentacaoCoordNames);
+                        } elseif ($proj->coordinators && $proj->coordinators->count()) {
+                            $coordLabel = $proj->coordinators->pluck('name')->implode(', ');
+                        }
+                    }
+                    $arr['coordinator_label'] = $coordLabel;
+                    return $arr;
+                })->all();
                 return [
                     'hasNext' => $expenses->hasMorePages(),
-                    'items'   => $expenses->items(),
+                    'items'   => $items,
                 ];
             });
             return response()->json($result);
@@ -445,6 +466,7 @@ class ExpenseController extends Controller
         $validator = Validator::make($request->all(), [
             'user_id' => 'nullable|exists:users,id', // Opcional - apenas para administradores
             'project_id' => 'required|exists:projects,id',
+            'real_project_id' => 'nullable|integer|exists:projects,id',
             'expense_category_id' => 'required|exists:expense_categories,id',
             'expense_date' => 'required|date',
             'description' => 'required|string|max:1000',
@@ -475,7 +497,8 @@ class ExpenseController extends Controller
         }
 
         // Determinar o usuário alvo da despesa
-        $canActAsUser  = $user->isAdmin() || $user->isCoordenador();
+        // Administrativo: back-office que aponta despesas pela equipe (igual admin/coordenador).
+        $canActAsUser  = $user->isAdmin() || $user->isCoordenador() || $user->isAdministrativo();
         $isParceiroAdm = $user->isParceiroAdmin() && $user->partner_id;
 
         if (!empty($request->user_id) && ($canActAsUser || $isParceiroAdm)) {
@@ -506,7 +529,30 @@ class ExpenseController extends Controller
         );
         if ($limitError) return $limitError;
 
+        // Investimento exige o "Projeto Real" (referência). Consumo segue no projeto de investimento.
+        $isInvestimento = (bool) $project->is_investimento_comercial;
+        $realProjectId = $isInvestimento ? ((int) $request->input('real_project_id') ?: null) : null;
+        if ($isInvestimento && !$realProjectId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Projeto Real é obrigatório para despesa de investimento.',
+                'errors'  => ['real_project_id' => ['Selecione o projeto real.']],
+            ], 422);
+        }
+        // Investimento SUPORTE: o projeto real precisa ser de SUSTENTAÇÃO.
+        if ($realProjectId && $project->categoria_interna === 'Suporte') {
+            $realProj = Project::with('serviceType')->find($realProjectId);
+            if (optional(optional($realProj)->serviceType)->code !== 'sustentacao') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Investimento Suporte: o Projeto Real deve ser de Sustentação.',
+                    'errors'  => ['real_project_id' => ['Selecione um projeto de Sustentação.']],
+                ], 422);
+            }
+        }
+
         $expenseData = $validator->validated();
+        $expenseData['real_project_id'] = $realProjectId; // só preenchido em investimento
 
         // Definir o user_id final baseado nas permissões
         $expenseData['user_id'] = $targetUserId;
@@ -563,7 +609,7 @@ class ExpenseController extends Controller
     {
         $user = Auth::user();
 
-        $expense = Expense::with(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover'])->find($id);
+        $expense = Expense::with(['user', 'project.customer', 'realProject:id,name', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover'])->find($id);
 
         if (!$expense) {
             return $this->notFoundResponse('Despesa não encontrada');
@@ -1319,6 +1365,43 @@ class ExpenseController extends Controller
             'message' => $isPaid ? 'Despesa marcada como paga.' : 'Marcação de pago removida.',
             'is_paid' => $expense->is_paid,
             'paid_at' => $expense->paid_at?->toISOString(),
+        ]);
+    }
+
+    // ─── Pagar no fechamento ───────────────────────────────────────────────────
+
+    /** Marca/desmarca a despesa para ser quitada no fechamento do consultor (qualquer tipo). */
+    public function setFechamento(Request $request, int $id): JsonResponse
+    {
+        $user = Auth::user();
+
+        if (!$user->isAdmin() && !$user->isAdministrativo() && !$user->hasAccess('expenses.pay')) {
+            return $this->accessDeniedResponse('Sem permissão para encaminhar despesas ao fechamento.');
+        }
+
+        $expense = Expense::find($id);
+        if (!$expense) {
+            return $this->notFoundResponse('Despesa não encontrada');
+        }
+
+        $flag = $request->boolean('pagar_no_fechamento', true);
+
+        if ($flag && $expense->status !== Expense::STATUS_APPROVED) {
+            return response()->json(['message' => 'Apenas despesas aprovadas podem ir para o fechamento.'], 422);
+        }
+
+        // Ir para o fechamento e estar paga avulso são mutuamente exclusivos.
+        $expense->update([
+            'pagar_no_fechamento' => $flag,
+            'is_paid'             => $flag ? false : $expense->is_paid,
+            'paid_by'             => $flag ? null : $expense->paid_by,
+            'paid_at'             => $flag ? null : $expense->paid_at,
+        ]);
+
+        return response()->json([
+            'success'             => true,
+            'message'             => $flag ? 'Despesa encaminhada ao fechamento do consultor.' : 'Despesa removida do fechamento.',
+            'pagar_no_fechamento' => $expense->pagar_no_fechamento,
         ]);
     }
 

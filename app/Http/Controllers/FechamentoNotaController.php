@@ -56,14 +56,47 @@ class FechamentoNotaController extends Controller
             return response()->json(['error' => 'Sem permissão para enviar a nota'], 403);
         }
 
+        // Prazo de envio: notas não são aceitas após o dia 15 do mês SEGUINTE à competência
+        // (ex.: competência 05/2026 → prazo 15/06/2026), salvo liberação do administrativo
+        // para este notable+mês — admin sempre pode enviar.
+        $deadline = \Carbon\Carbon::parse($yearMonth . '-01')->addMonthNoOverflow()->day(15)->endOfDay();
+        if (now()->greaterThan($deadline) && !auth()->user()->isAdmin()) {
+            $existing = FechamentoNota::where('notable_type', get_class($model))
+                ->where('notable_id', $model->id)
+                ->where('year_month', $yearMonth)
+                ->first();
+            if (!$existing || !$existing->upload_liberado) {
+                return response()->json([
+                    'error' => 'Prazo de envio encerrado (dia 15). Fale com o setor financeiro ou solicite liberação ao administrativo.',
+                ], 422);
+            }
+        }
+
         $validated = $request->validate([
-            'tipo' => 'required|in:nfse,nota_debito',
-            'file' => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120',
+            'tipo'  => 'required|in:nfse,nota_debito',
+            'file'  => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120',
+            'valor' => 'required|numeric|gt:0',
         ], [
-            'tipo.in'     => 'Tipo de documento inválido (use nfse ou nota_debito)',
-            'file.mimes'  => 'Anexo deve ser PDF, JPG ou PNG',
-            'file.max'    => 'Anexo não pode exceder 5MB',
+            'tipo.in'       => 'Tipo de documento inválido (use nfse ou nota_debito)',
+            'file.mimes'    => 'Anexo deve ser PDF, JPG ou PNG',
+            'file.max'      => 'Anexo não pode exceder 5MB',
+            'valor.required'=> 'Informe o valor da nota',
+            'valor.numeric' => 'Valor da nota inválido',
+            'valor.gt'      => 'Valor da nota deve ser maior que zero',
         ]);
+
+        // O valor declarado deve bater com o recebimento do fechamento do mês.
+        $valor = round((float) $validated['valor'], 2);
+        $recebimentoEsperado = $this->recebimentoEsperado($type, (int) $id, $yearMonth);
+        if ($recebimentoEsperado !== null && abs($valor - $recebimentoEsperado) > 0.01) {
+            return response()->json([
+                'error' => sprintf(
+                    'Valor informado (R$ %s) diferente do recebimento do fechamento (R$ %s).',
+                    number_format($valor, 2, ',', '.'),
+                    number_format($recebimentoEsperado, 2, ',', '.'),
+                ),
+            ], 422);
+        }
 
         $tipo = $validated['tipo'];
         $file = $request->file('file');
@@ -82,11 +115,12 @@ class FechamentoNotaController extends Controller
             $this->softDeleteFechamentoNotaByCategory($nota, $tipo);
         }
 
-        // Novo upload reseta o status do documento para pendente.
+        // Novo upload reseta o status do documento para pendente + grava o valor declarado.
         $nota->{$tipo . '_status'}        = FechamentoNota::STATUS_PENDING;
         $nota->{$tipo . '_reject_reason'} = null;
         $nota->{$tipo . '_decided_by'}    = null;
         $nota->{$tipo . '_decided_at'}    = null;
+        $nota->{$tipo . '_valor'}         = $valor;
         $nota->save();
 
         // FASE 11.7 — Persistência 100% na camada Attachment.
@@ -111,7 +145,11 @@ class FechamentoNotaController extends Controller
             ->where('year_month', $yearMonth)
             ->first();
 
-        return response()->json(['notas' => $nota ? $nota->toRowPayload() : FechamentoNota::emptyRowPayload()]);
+        // Sinaliza (sem travar) quando o valor declarado ficou diferente do recebimento atual.
+        $esperado = $this->recebimentoEsperado($type, (int) $id, $yearMonth);
+        return response()->json([
+            'notas' => $nota ? $nota->rowPayloadWithStale($esperado) : FechamentoNota::emptyRowPayload(),
+        ]);
     }
 
     /** GET .../fechamento/notas/{type}/{id}/{yearMonth}/{tipo}/download */
@@ -157,11 +195,13 @@ class FechamentoNotaController extends Controller
         }
 
         $validated = $request->validate([
-            'decisao' => 'required|in:accepted,rejected',
+            // 'revoke' = revogar uma nota já aceita (volta pra pendente, com motivo).
+            'decisao' => 'required|in:accepted,rejected,revoke',
             'motivo'  => 'nullable|string|max:1000',
         ]);
-        if ($validated['decisao'] === FechamentoNota::STATUS_REJECTED && empty(trim($validated['motivo'] ?? ''))) {
-            return response()->json(['error' => 'Motivo é obrigatório ao recusar a nota'], 422);
+        $needsMotivo = in_array($validated['decisao'], [FechamentoNota::STATUS_REJECTED, 'revoke'], true);
+        if ($needsMotivo && empty(trim($validated['motivo'] ?? ''))) {
+            return response()->json(['error' => 'Motivo é obrigatório.'], 422);
         }
 
         [$model] = $this->entity($type, $id);
@@ -184,15 +224,71 @@ class FechamentoNotaController extends Controller
             return response()->json(['error' => 'Não há nota enviada para decidir'], 422);
         }
 
-        $nota->{$tipo . '_status'}        = $validated['decisao'];
-        $nota->{$tipo . '_reject_reason'} = $validated['decisao'] === FechamentoNota::STATUS_REJECTED
-            ? trim($validated['motivo'])
-            : null;
+        // Revogar volta o status para "pendente"; o motivo da revogação fica registrado.
+        $nota->{$tipo . '_status'}        = $validated['decisao'] === 'revoke'
+            ? FechamentoNota::STATUS_PENDING
+            : $validated['decisao'];
+        $nota->{$tipo . '_reject_reason'} = $needsMotivo ? trim($validated['motivo']) : null;
         $nota->{$tipo . '_decided_by'}    = $user->id;
         $nota->{$tipo . '_decided_at'}    = now();
         $nota->save();
 
         return response()->json(['ok' => true, 'notas' => $nota->toRowPayload()]);
+    }
+
+    /** POST .../fechamento/notas/{type}/{id}/{yearMonth}/liberar — admin libera envio após o prazo. */
+    public function liberar(string $type, int $id, string $yearMonth): JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user || !$user->isAdmin()) {
+            return response()->json(['error' => 'Apenas administradores podem liberar o envio'], 403);
+        }
+        [$model, $isPj] = $this->entity($type, $id);
+        if (!$isPj) {
+            return response()->json(['error' => 'Notas fiscais só se aplicam a entidades PJ'], 422);
+        }
+
+        $nota = FechamentoNota::firstOrCreate([
+            'notable_type' => get_class($model),
+            'notable_id'   => $model->id,
+            'year_month'   => $yearMonth,
+        ]);
+        $nota->upload_liberado = true;
+        $nota->liberado_por    = $user->name;
+        $nota->liberado_em     = now();
+        $nota->save();
+
+        return response()->json(['ok' => true, 'notas' => $nota->toRowPayload()]);
+    }
+
+    /**
+     * Recebimento esperado do notable no mês — o MESMO valor que o admin vê no fechamento
+     * (já com desconto/adiantamento/adicional). O valor declarado na nota deve bater.
+     * Retorna null se não conseguir determinar (não bloqueia o upload nesse caso).
+     */
+    private function recebimentoEsperado(string $type, int $id, string $yearMonth): ?float
+    {
+        try {
+            if ($type === 'consultor') {
+                $data = app(FechamentoConsultorController::class)->buildConsultoresData($yearMonth);
+                $row  = collect($data['horistas'] ?? [])
+                    ->merge($data['banco_horas'] ?? [])
+                    ->merge($data['fixos'] ?? [])
+                    ->firstWhere('user_id', $id);
+                return $row ? round((float) ($row['recebimento'] ?? 0), 2) : null;
+            }
+            if ($type === 'parceiro') {
+                $req  = Request::create('', 'GET', ['year_month' => $yearMonth]);
+                $rows = app(FechamentoParceiroController::class)->index($req)->getData(true)['data'] ?? [];
+                $row  = collect($rows)->firstWhere('partner_id', $id);
+                return $row ? round((float) ($row['recebimento'] ?? 0), 2) : null;
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('recebimentoEsperado: falha ao calcular recebimento do fechamento', [
+                'type' => $type, 'id' => $id, 'year_month' => $yearMonth, 'error' => $e->getMessage(),
+            ]);
+        }
+        return null;
     }
 
     // ──────────────────────────────────────────────────────────────────────────

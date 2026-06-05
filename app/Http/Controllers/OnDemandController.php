@@ -295,8 +295,11 @@ class OnDemandController extends Controller
             if ($newContributions > 0) {
                 $contributedHours += $newContributions;
             } else {
-                // Fallback: usar aporte legado para projetos antigos
-                $contributedHours += $project->hour_contribution ?? 0;
+                // Aporte LEGADO só se o projeto NUNCA usou o sistema novo (senão aporte excluído ressuscita).
+                $legacy = (float) ($project->hour_contribution ?? 0);
+                if ($legacy > 0 && !$project->hourContributions()->withTrashed()->exists()) {
+                    $contributedHours += $legacy;
+                }
             }
         }
         $contributedHours = (int) $contributedHours;
@@ -328,7 +331,7 @@ class OnDemandController extends Controller
                 } else {
                     // Para outros tipos: usar horas apontadas (com corte de data se período fornecido)
                     $parentLoggedMinutes = $parentProject->timesheets()
-                        ->where('status', '!=', 'rejected')
+                        ->whereIn('status', ['approved', 'pending'])
                         ->when($periodEndDate, fn($q) => $q->where('date', '<=', $periodEndDate))
                         ->sum('effort_minutes') ?? 0;
                     $parentLoggedHours = round($parentLoggedMinutes / 60, 2);
@@ -355,7 +358,7 @@ class OnDemandController extends Controller
                     } else {
                         // Para outros tipos: usar horas apontadas (com corte de data se período fornecido)
                         $childLoggedMinutes = $childProject->timesheets()
-                            ->where('status', '!=', 'rejected')
+                            ->whereIn('status', ['approved', 'pending'])
                             ->when($periodEndDate, fn($q) => $q->where('date', '<=', $periodEndDate))
                             ->sum('effort_minutes') ?? 0;
                         $childLoggedHours = round($childLoggedMinutes / 60, 2);
@@ -392,7 +395,7 @@ class OnDemandController extends Controller
             if ($includeParent) {
                 // Consumo do mês = sempre apontamentos do mês (independente do tipo de contrato).
                 $parentMonthLoggedMinutes = $parentProject->timesheets()
-                    ->where('status', '!=', 'rejected')
+                    ->whereIn('status', ['approved', 'pending'])
                     ->whereBetween('date', [$monthStart, $monthEnd])
                     ->sum('effort_minutes') ?? 0;
                 $monthConsumedHours += round($parentMonthLoggedMinutes / 60, 2);
@@ -404,7 +407,7 @@ class OnDemandController extends Controller
                         continue;
                     }
                     $childMonthLoggedMinutes = $childProject->timesheets()
-                        ->where('status', '!=', 'rejected')
+                        ->whereIn('status', ['approved', 'pending'])
                         ->whereBetween('date', [$monthStart, $monthEnd])
                         ->sum('effort_minutes') ?? 0;
                     $monthConsumedHours += round($childMonthLoggedMinutes / 60, 2);
@@ -1099,7 +1102,7 @@ class OnDemandController extends Controller
         $timesheets = Timesheet::whereIn('project_id', $maintenanceProjects)
             ->whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', Timesheet::STATUS_REJECTED)
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['project:id,name,code', 'user:id,name,email'])
             ->get();
 
@@ -1378,7 +1381,7 @@ class OnDemandController extends Controller
         // Importante: ignorar timesheets com status "rejected"
         $query = Timesheet::whereIn('project_id', $maintenanceProjects)
             ->where('ticket', $ticketId)
-            ->where('status', '!=', Timesheet::STATUS_REJECTED);
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de intervalo de datas
         if ($request->has('start_date') && $request->has('end_date')) {
@@ -1570,7 +1573,7 @@ class OnDemandController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -1768,7 +1771,7 @@ class OnDemandController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
@@ -1971,7 +1974,7 @@ class OnDemandController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -2166,7 +2169,7 @@ class OnDemandController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
@@ -2354,7 +2357,7 @@ class OnDemandController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -2558,7 +2561,7 @@ class OnDemandController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
@@ -2753,7 +2756,7 @@ class OnDemandController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -2962,7 +2965,7 @@ class OnDemandController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
@@ -3156,7 +3159,7 @@ class OnDemandController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -3360,7 +3363,7 @@ class OnDemandController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
@@ -3547,7 +3550,7 @@ class OnDemandController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -3780,7 +3783,7 @@ class OnDemandController extends Controller
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
             ->where('ticket', $ticketIdStr)
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // NÃO aplicar filtro de mês e ano para tickets específicos
@@ -3939,7 +3942,7 @@ class OnDemandController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de cliente através dos projetos
         if ($customerId) {
@@ -4158,7 +4161,7 @@ class OnDemandController extends Controller
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
             ->whereIn('ticket', $ticketIds->toArray())
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de cliente através dos projetos
@@ -4349,7 +4352,7 @@ class OnDemandController extends Controller
             foreach ($parentProjects as $parentProject) {
                 // Consumo do mês = sempre apontamentos do mês (independente do tipo de contrato).
                 $parentMonthLoggedMinutes = $parentProject->timesheets()
-                    ->where('status', '!=', 'rejected')
+                    ->whereIn('status', ['approved', 'pending'])
                     ->whereBetween('date', [$monthStart, $monthEnd])
                     ->sum('effort_minutes') ?? 0;
                 $monthConsumedHours += round($parentMonthLoggedMinutes / 60, 2);
@@ -4357,7 +4360,7 @@ class OnDemandController extends Controller
                 if ($parentProject->hasChildProjects()) {
                     foreach ($parentProject->childProjects as $childProject) {
                         $childMonthLoggedMinutes = $childProject->timesheets()
-                            ->where('status', '!=', 'rejected')
+                            ->whereIn('status', ['approved', 'pending'])
                             ->whereBetween('date', [$monthStart, $monthEnd])
                             ->sum('effort_minutes') ?? 0;
                         $monthConsumedHours += round($childMonthLoggedMinutes / 60, 2);
@@ -4507,7 +4510,7 @@ class OnDemandController extends Controller
         // Filtramos pela data do timesheet, independentemente do tipo de projeto ou data de criação do ticket
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->whereDate('date', '>=', $startDate)
             ->whereDate('date', '<=', $endDate)
             ->with(['user', 'project', 'reviewedBy']);

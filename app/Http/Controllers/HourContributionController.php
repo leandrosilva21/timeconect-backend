@@ -17,6 +17,8 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 class HourContributionController extends Controller
 {
+    use \App\Http\Traits\ListCacheable;
+
     /**
      * @OA\Get(
      *     path="/api/v1/projects/{project}/hour-contributions",
@@ -285,6 +287,8 @@ class HourContributionController extends Controller
         $contribution->load('contributedBy:id,name,email');
         $contribution->total_value = $contribution->getTotalValue();
         
+        $this->invalidateListCache('projects');
+
         return response()->json($contribution);
     }
     
@@ -330,7 +334,9 @@ class HourContributionController extends Controller
         $this->softDeleteHourContributionPropostas($contribution);
 
         $contribution->delete();
-        
+
+        $this->invalidateListCache('projects');
+
         return response()->json(null, 204);
     }
 

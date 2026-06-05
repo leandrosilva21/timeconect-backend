@@ -40,10 +40,22 @@ return Application::configure(basePath: dirname(__DIR__))
             'permission.or.admin' => \App\Http\Middleware\CheckPermissionOrAdmin::class,
             'block.cliente'       => \App\Http\Middleware\BlockCliente::class,
         ]);
+
+        // Guest em rota /api não tem pra onde redirecionar: devolvendo null aqui, o
+        // middleware Authenticate NÃO avalia route('login') (inexistente nesta API),
+        // então a AuthenticationException chega limpa no handler e vira 401 JSON.
+        // Sem isso, o route('login') estourava RouteNotFoundException dentro do
+        // próprio middleware ("Route [login] not defined." → 500/422 em vez de 401).
+        $middleware->redirectGuestsTo(fn (\Illuminate\Http\Request $request) => $request->is('api/*') ? null : '/login');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {
-            if ($request->expectsJson() && !($e instanceof \Illuminate\Validation\ValidationException)) {
+            // `is('api/*')` força resposta JSON em qualquer rota de API mesmo sem
+            // header Accept: application/json — sem isso, request não-autenticada
+            // sem Accept caía no default do Laravel 11, que tenta redirecionar pra
+            // route('login') (inexistente numa API) e estourava 500
+            // "Route [login] not defined." em vez de um 401 limpo.
+            if (($request->expectsJson() || $request->is('api/*')) && !($e instanceof \Illuminate\Validation\ValidationException)) {
                 if ($e instanceof \Illuminate\Auth\AuthenticationException) {
                     return response()->json(['message' => 'Unauthenticated.'], 401);
                 }

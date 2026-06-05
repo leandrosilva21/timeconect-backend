@@ -25,6 +25,8 @@ class Customer extends Model
         'executive_id',
         'code_prefix',
         'fechamento_email',
+        'emails_administrativos',
+        'secondary_cgcs',
     ];
 
     /**
@@ -34,10 +36,35 @@ class Customer extends Model
      */
     protected $casts = [
         'active' => 'boolean',
+        'emails_administrativos' => 'array',
+        'secondary_cgcs' => 'array',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime',
     ];
+
+    /** Lista de e-mails administrativos (fechamento + comunicados). Fallback p/ fechamento_email legado. */
+    public function adminEmails(): array
+    {
+        $list = is_array($this->emails_administrativos) ? $this->emails_administrativos : [];
+        $list = array_values(array_filter(array_map('trim', $list), fn ($e) => $e !== ''));
+        if (!$list && !empty($this->fechamento_email)) {
+            $list = collect(preg_split('/[,;\s]+/', (string) $this->fechamento_email))
+                ->map(fn ($e) => trim($e))->filter()->values()->all();
+        }
+        return $list;
+    }
+
+    /** Define a lista e mantém o fechamento_email legado sincronizado (= 1º e-mail). */
+    public function setAdminEmails(array $emails): void
+    {
+        $clean = collect($emails)->map(fn ($e) => trim((string) $e))
+            ->filter(fn ($e) => $e !== '' && filter_var($e, FILTER_VALIDATE_EMAIL))
+            ->unique()->values()->all();
+        $this->emails_administrativos = $clean;
+        // Legado: guarda TODOS separados por vírgula (a tela de fechamento lê este campo).
+        $this->fechamento_email = $clean ? implode(', ', $clean) : null;
+    }
 
     /**
      * Valida se o CGC é um CPF ou CNPJ válido

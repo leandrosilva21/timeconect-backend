@@ -45,6 +45,7 @@ class FechamentoParceiroMail extends Mailable
         // Null em ambos = mantém o From padrão (config-based) — comportamento atual.
         public ?string $fromAddress = null,
         public ?string $fromName = null,
+        public string $mode = 'ambos',
     ) {
     }
 
@@ -82,6 +83,7 @@ class FechamentoParceiroMail extends Mailable
                 'parceiroName'    => $this->parceiroName,
                 'senderName'      => $this->senderName,
                 'periodo'         => $this->periodo,
+                'mode'            => $this->mode,
                 'valorTotal'      => $this->valorTotal,
                 'mensagem'        => $this->mensagem ?? '',
                 'withAttachments' => $this->withAttachments,

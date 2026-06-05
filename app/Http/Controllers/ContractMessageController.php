@@ -120,6 +120,11 @@ class ContractMessageController extends Controller
             return response()->json(['message' => 'Anexo não encontrado'], 404);
         }
 
+        // FASE 11.7 (PR 7b) — valida vínculo polimórfico.
+        if ($attachment->entity_type !== 'CONTRACT_MESSAGE' || (int) $attachment->entity_id !== (int) $message->id) {
+            return response()->json(['message' => 'Anexo não encontrado'], 404);
+        }
+
         return Storage::disk('public')->download($attachment->storage_path, $attachment->original_name);
     }
 

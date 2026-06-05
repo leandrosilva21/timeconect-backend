@@ -188,8 +188,10 @@ class BankHoursFixedController extends Controller
         $parentProjects = $query->get();
 
         foreach ($parentProjects as $parentProject) {
-            // getGeneralHoursBalance já subtrai initial_hours_consumed do pai (fix f727001) e exclui filhos frozen
-            $hoursBalance += $parentProject->getGeneralHoursBalance();
+            // Saldo pela ótica da Gestão de Contratos (fonte da verdade): managementBreakdown
+            // (não re-soma initial_hours_balance nem subtrai coordenação). Reconcilia com o card
+            // de consumo, que já usa a mesma regra (filho Fechado/BH-Fixo consome contratadas).
+            $hoursBalance += $parentProject->managementBreakdown()['balance'];
         }
 
         // Arredondar para 2 casas decimais
@@ -292,8 +294,11 @@ class BankHoursFixedController extends Controller
             if ($newContributions > 0) {
                 $contributedHours += $newContributions;
             } else {
-                // Fallback: usar aporte legado para projetos antigos
-                $contributedHours += $project->hour_contribution ?? 0;
+                // Aporte LEGADO só se o projeto NUNCA usou o sistema novo (senão aporte excluído ressuscita).
+                $legacy = (float) ($project->hour_contribution ?? 0);
+                if ($legacy > 0 && !$project->hourContributions()->withTrashed()->exists()) {
+                    $contributedHours += $legacy;
+                }
             }
         }
         $contributedHours = (int) $contributedHours;
@@ -325,7 +330,7 @@ class BankHoursFixedController extends Controller
                 } else {
                     // Para outros tipos: usar horas apontadas normalmente (excluindo rejeitados)
                     $parentLoggedMinutes = $parentProject->timesheets()
-                        ->where('status', '!=', 'rejected')
+                        ->whereIn('status', ['approved', 'pending'])
                         ->sum('effort_minutes') ?? 0;
                     $parentLoggedHours = round($parentLoggedMinutes / 60, 2);
                     $consumedHours += $parentLoggedHours;
@@ -346,19 +351,22 @@ class BankHoursFixedController extends Controller
                         continue;
                     }
 
-                    // Verificar se o projeto filho é do tipo "Fechado"
-                    $isClosedContract = $childProject->contractType &&
-                                        strtolower(trim($childProject->contractType->name)) === 'fechado';
+                    // Regra de negócio: o pai consome as HORAS CONTRATADAS (vendidas + aporte)
+                    // dos filhos Fechado E Banco de Horas Fixo; só On Demand consome pelo apontado.
+                    // Alinhado a Project::getGeneralHoursBalance (fonte da verdade da lista/saldo).
+                    $childName = $childProject->contractType ? strtolower(trim($childProject->contractType->name)) : '';
+                    $childCode = (string) ($childProject->contractType->code ?? '');
+                    $isClosedContract = $childName === 'fechado';
+                    $isBhFixoChild    = $childCode === 'fixed_hours' || $childName === 'banco de horas fixo';
 
-                    if ($isClosedContract) {
-                        // Para projetos fechados: usar total de horas disponíveis (inclui aportes novos + fallback legado)
-                        $childTotalHours = $childProject->getTotalAvailableHours();
-                        $consumedHours += $childTotalHours;
+                    if ($isClosedContract || $isBhFixoChild) {
+                        // Fechado E BH Fixo: comprometem as horas contratadas do filho no saldo do pai,
+                        // independente do apontado.
+                        $consumedHours += $childProject->getTotalAvailableHours();
                     } else {
-                        // Para outros tipos (inclui BH Fixo): apontadas + initial_hours_consumed
-                        // (alinhado com ProjectController::index gestao mode)
+                        // On Demand / demais: apontadas + initial_hours_consumed.
                         $childLoggedMinutes = $childProject->timesheets()
-                            ->where('status', '!=', 'rejected')
+                            ->whereIn('status', ['approved', 'pending'])
                             ->sum('effort_minutes') ?? 0;
                         $childLoggedHours = round($childLoggedMinutes / 60, 2);
                         $consumedHours += $childLoggedHours;
@@ -405,11 +413,10 @@ class BankHoursFixedController extends Controller
             }
 
             if ($includeParent) {
-                // Consumo do mês = sempre apontamentos do mês (independente do tipo de contrato).
-                // Antes: contratos Fechado contavam sold_hours só se start_date caísse no mês,
-                // resultando em 0 sempre que o filtro era um mês ≠ do início.
+                // Consumo do mês = apontamentos do mês, excluindo rejeitado/conflito/ajuste
+                // (só consumo válido). O pai (BH Fixo) sempre conta o que foi apontado nele.
                 $parentMonthLoggedMinutes = $parentProject->timesheets()
-                    ->where('status', '!=', 'rejected')
+                    ->whereIn('status', ['approved', 'pending'])
                     ->whereBetween('date', [$monthStart, $monthEnd])
                     ->sum('effort_minutes') ?? 0;
                 $monthConsumedHours += round($parentMonthLoggedMinutes / 60, 2);
@@ -418,13 +425,23 @@ class BankHoursFixedController extends Controller
             // Processar projetos filhos
             if ($parentProject->hasChildProjects()) {
                 foreach ($parentProject->childProjects as $childProject) {
+                    // Subprojetos congelados (Auster histórico) não contam
+                    if ($childProject->isAusterFrozen()) {
+                        continue;
+                    }
                     // Filtrar por tipo de serviço se especificado
                     if ($serviceTypeId && $childProject->service_type_id !== $serviceTypeId) {
                         continue;
                     }
+                    // Subprojeto Fechado ou Banco de Horas Fixo tem orçamento próprio — não
+                    // consome o banco do pai, então NÃO soma no Consumo do Mês deste card.
+                    $childTypeName = strtolower(trim($childProject->contractType->name ?? ''));
+                    if (in_array($childTypeName, ['fechado', 'banco de horas fixo'])) {
+                        continue;
+                    }
 
                     $childMonthLoggedMinutes = $childProject->timesheets()
-                        ->where('status', '!=', 'rejected')
+                        ->whereIn('status', ['approved', 'pending'])
                         ->whereBetween('date', [$monthStart, $monthEnd])
                         ->sum('effort_minutes') ?? 0;
                     $monthConsumedHours += round($childMonthLoggedMinutes / 60, 2);
@@ -531,19 +548,25 @@ class BankHoursFixedController extends Controller
         $architectureMonthConsumedHours = 0.0;
 
         foreach ($parentProjects as $parentProject) {
-            $processProject = function ($proj, $stId, &$accum, &$accumMonth)
+            $processProject = function ($proj, $stId, &$accum, &$accumMonth, $isChild = false)
                 use ($targetDate, $monthStart, $monthEnd) {
                 if ($proj->service_type_id !== $stId) {
                     return;
                 }
-                $isClosedContract = $proj->contractType &&
-                                    strtolower(trim($proj->contractType->name)) === 'fechado';
+                // Regra: filho Fechado E filho Banco de Horas Fixo comprometem as horas
+                // CONTRATADAS (vendidas + aporte) no saldo do pai; só On Demand (e o próprio
+                // pai) consomem pelo apontado. Alinhado a getGeneralHoursBalance.
+                $name = $proj->contractType ? strtolower(trim($proj->contractType->name)) : '';
+                $code = (string) ($proj->contractType->code ?? '');
+                $isClosedContract = $name === 'fechado';
+                $isBhFixoChild    = $isChild && ($code === 'fixed_hours' || $name === 'banco de horas fixo');
+                $commitsSold      = $isClosedContract || $isBhFixoChild;
 
                 // Consumo acumulado
-                if ($isClosedContract) {
+                if ($commitsSold) {
                     $accum += $proj->getTotalAvailableHours();
                 } else {
-                    $mins = $proj->timesheets()->where('status', '!=', 'rejected')->sum('effort_minutes') ?? 0;
+                    $mins = $proj->timesheets()->whereIn('status', ['approved', 'pending'])->sum('effort_minutes') ?? 0;
                     $accum += round($mins / 60, 2);
                     // Histórico pré-importação (alinhado com ProjectController::index gestao mode)
                     $accum += (float) ($proj->initial_hours_consumed ?? 0);
@@ -551,14 +574,14 @@ class BankHoursFixedController extends Controller
 
                 // Consumo do mês — apontamentos do período (independente do tipo de contrato).
                 $mins = $proj->timesheets()
-                    ->where('status', '!=', 'rejected')
+                    ->whereIn('status', ['approved', 'pending'])
                     ->whereBetween('date', [$monthStart, $monthEnd])
                     ->sum('effort_minutes') ?? 0;
                 $accumMonth += round($mins / 60, 2);
 
-                // Fechado consome o valor vendido na data de início — soma sold_hours
-                // quando o start_date cai dentro do período do filtro.
-                if ($isClosedContract && $proj->start_date) {
+                // Fechado/BH-Fixo (filho) consome o valor vendido na data de início — soma
+                // sold_hours quando o start_date cai dentro do período do filtro.
+                if ($commitsSold && $proj->start_date) {
                     $sd = $proj->start_date->format('Y-m-d');
                     if ($sd >= $monthStart && $sd <= $monthEnd) {
                         $accumMonth += (float) ($proj->sold_hours ?? 0);
@@ -577,12 +600,12 @@ class BankHoursFixedController extends Controller
             if ($parentProject->hasChildProjects()) {
                 foreach ($parentProject->childProjects as $childProject) {
                     if ($childProject->isAusterFrozen()) continue;
-                    $processProject($childProject, $serviceTypeProjetoId, $projectsConsumedHours, $projectsMonthConsumedHours);
+                    $processProject($childProject, $serviceTypeProjetoId, $projectsConsumedHours, $projectsMonthConsumedHours, true);
                     if ($parentProject->service_type_id !== $serviceTypeManutId) {
-                        $processProject($childProject, $serviceTypeManutId, $maintenanceConsumedHours, $maintenanceMonthConsumedHours);
+                        $processProject($childProject, $serviceTypeManutId, $maintenanceConsumedHours, $maintenanceMonthConsumedHours, true);
                     }
                     if ($serviceTypeArqId && $parentProject->service_type_id !== $serviceTypeArqId) {
-                        $processProject($childProject, $serviceTypeArqId, $architectureConsumedHours, $architectureMonthConsumedHours);
+                        $processProject($childProject, $serviceTypeArqId, $architectureConsumedHours, $architectureMonthConsumedHours, true);
                     }
                 }
             }
@@ -614,6 +637,36 @@ class BankHoursFixedController extends Controller
         }
         // ─────────────────────────────────────────────────────────────────────────
 
+        // has_children: o pai tem subprojetos (não-frozen) → habilita a aba "Projetos" pro
+        // cliente drillar nos filhos, independente do tipo de serviço (Fechado/Projeto/etc).
+        $hasChildren = false;
+        foreach ($parentProjects as $proj) {
+            foreach ($proj->childProjects ?? [] as $child) {
+                if (method_exists($child, 'isAusterFrozen') && $child->isAusterFrozen()) continue;
+                $hasChildren = true; break 2;
+            }
+        }
+
+        // BH Fixo individual com "cliente NÃO acompanha apontamento": na visão do CLIENTE,
+        // esconde o detalhe e mostra tudo consumido (saldo 0). Admin/coord seguem vendo o real.
+        $isClienteViewer = $user && method_exists($user, 'isCliente') && $user->isCliente();
+        if ($isClienteViewer && $projectId) {
+            $selProj = Project::find($projectId);
+            if ($selProj && $selProj->client_follows_timesheets === false) {
+                $consumedHours       = round($contractedHours + $contributedHours, 2);
+                $hoursBalance        = 0.0;
+                $monthConsumedHours  = 0.0;
+                $exceededHours       = 0.0;
+                $amountToPay         = null;
+                $projectsConsumedHours          = $consumedHours;
+                $projectsMonthConsumedHours     = 0.0;
+                $maintenanceConsumedHours       = 0.0;
+                $maintenanceMonthConsumedHours  = 0.0;
+                $architectureConsumedHours      = 0.0;
+                $architectureMonthConsumedHours = 0.0;
+            }
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Dados do dashboard obtidos com sucesso',
@@ -636,6 +689,7 @@ class BankHoursFixedController extends Controller
                 'contributed_hours_history' => $contributionHistory,
                 'has_support' => $hasSupport,
                 'has_architecture' => $hasArchitecture,
+                'has_children' => $hasChildren,
                 'customer_id' => $customerId,
                 'project_id' => $projectId ? (int) $projectId : null
             ]
@@ -758,17 +812,18 @@ class BankHoursFixedController extends Controller
             // Coletar projetos para a listagem:
             // - Se o projeto pai for do tipo "Projeto", ele deve aparecer na listagem
             // - Sempre incluir apenas filhos que sejam do tipo "Projeto"
+            // Regra: ao entrar num pai COM filhos, a tabela mostra SÓ OS FILHOS (do tipo
+            // solicitado) — o projeto pai não aparece. Pai SEM filhos (projeto avulso)
+            // mostra o próprio projeto, pra não deixar a aba vazia.
             $projects = collect();
+            $hasAnyChildren = $parentProject->childProjects && $parentProject->childProjects->count() > 0;
 
-            if ($parentProject->service_type_id === $projectServiceType->id) {
-                $projects->push($parentProject);
-            }
-
-            if ($parentProject->childProjects && $parentProject->childProjects->count() > 0) {
-                $filteredChildren = $parentProject->childProjects->filter(function ($child) use ($projectServiceType) {
+            if ($hasAnyChildren) {
+                $projects = $parentProject->childProjects->filter(function ($child) use ($projectServiceType) {
                     return $child->service_type_id === $projectServiceType->id;
-                });
-                $projects = $projects->merge($filteredChildren);
+                })->values();
+            } elseif ($parentProject->service_type_id === $projectServiceType->id) {
+                $projects->push($parentProject);
             }
         } else {
             // Buscar projetos com o service_type solicitado, restritos ao contrato BH Fixo.
@@ -819,11 +874,12 @@ class BankHoursFixedController extends Controller
                 $consumed        = (float) $totalAvailable;
                 $adjustedBalance = 0.0;
             } else {
-                // BH Fixo e outros: consumo = apontamentos + horas iniciais já consumidas
-                $balance         = round($project->getGeneralHoursBalance(), 2);
-                $initialConsumed = (float) ($project->initial_hours_consumed ?? 0);
-                $consumed        = round(max(0, $totalAvailable - $balance) + $initialConsumed, 2);
-                $adjustedBalance = round($balance - $initialConsumed, 2);
+                // BH Fixo e outros: consumo e saldo pela ótica da Gestão de Contratos (fonte da
+                // verdade). managementBreakdown já inclui initial_hours_consumed e o consumo dos
+                // filhos — não re-soma initial_hours_balance nem subtrai coordenação.
+                $b               = $project->managementBreakdown();
+                $consumed        = round($b['consumed'], 2);
+                $adjustedBalance = round($b['balance'], 2);
             }
             return [
                 'id' => $project->id,
@@ -1681,7 +1737,7 @@ class BankHoursFixedController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -1875,7 +1931,7 @@ class BankHoursFixedController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
@@ -2078,7 +2134,7 @@ class BankHoursFixedController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -2269,7 +2325,7 @@ class BankHoursFixedController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
@@ -2457,7 +2513,7 @@ class BankHoursFixedController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -2661,7 +2717,7 @@ class BankHoursFixedController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
@@ -2856,7 +2912,7 @@ class BankHoursFixedController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -3065,7 +3121,7 @@ class BankHoursFixedController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
@@ -3259,7 +3315,7 @@ class BankHoursFixedController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -3463,7 +3519,7 @@ class BankHoursFixedController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
@@ -3650,7 +3706,7 @@ class BankHoursFixedController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de período (suporta range start_month/start_year → month/year)
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -3883,7 +3939,7 @@ class BankHoursFixedController extends Controller
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
             ->where('ticket', $ticketIdStr)
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // NÃO aplicar filtro de mês e ano para tickets específicos
@@ -4042,7 +4098,7 @@ class BankHoursFixedController extends Controller
         // Buscar timesheets com ticket preenchido e status diferente de 'rejected'
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected');
+            ->whereIn('status', ['approved', 'pending']);
 
         // Aplicar filtro de cliente através dos projetos
         if ($customerId) {
@@ -4261,7 +4317,7 @@ class BankHoursFixedController extends Controller
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
             ->whereIn('ticket', $ticketIds->toArray())
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->with(['user', 'project', 'reviewedBy']);
 
         // Aplicar filtro de cliente através dos projetos
@@ -4450,9 +4506,9 @@ class BankHoursFixedController extends Controller
             $monthConsumedHours = 0;
 
             foreach ($parentProjects as $parentProject) {
-                // Consumo do mês = sempre apontamentos do mês (independente do tipo de contrato).
+                // Consumo do mês = apontamentos do mês, só status válido (aprovado/pendente).
                 $parentMonthLoggedMinutes = $parentProject->timesheets()
-                    ->where('status', '!=', 'rejected')
+                    ->whereIn('status', ['approved', 'pending'])
                     ->whereBetween('date', [$monthStart, $monthEnd])
                     ->sum('effort_minutes') ?? 0;
                 $monthConsumedHours += round($parentMonthLoggedMinutes / 60, 2);
@@ -4460,7 +4516,7 @@ class BankHoursFixedController extends Controller
                 if ($parentProject->hasChildProjects()) {
                     foreach ($parentProject->childProjects as $childProject) {
                         $childMonthLoggedMinutes = $childProject->timesheets()
-                            ->where('status', '!=', 'rejected')
+                            ->whereIn('status', ['approved', 'pending'])
                             ->whereBetween('date', [$monthStart, $monthEnd])
                             ->sum('effort_minutes') ?? 0;
                         $monthConsumedHours += round($childMonthLoggedMinutes / 60, 2);
@@ -4610,7 +4666,7 @@ class BankHoursFixedController extends Controller
         // Filtramos pela data do timesheet, independentemente do tipo de projeto ou data de criação do ticket
         $timesheetsQuery = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->whereDate('date', '>=', $startDate)
             ->whereDate('date', '<=', $endDate)
             ->with(['user', 'project', 'reviewedBy']);
@@ -4712,7 +4768,7 @@ class BankHoursFixedController extends Controller
 
         $tsQ = Timesheet::whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->whereRaw("ticket ~ '^[0-9]{5}$'");
 
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -4767,7 +4823,7 @@ class BankHoursFixedController extends Controller
         $tsQ = Timesheet::with(['user', 'project.customer'])
             ->whereNotNull('ticket')
             ->where('ticket', '!=', '')
-            ->where('status', '!=', 'rejected')
+            ->whereIn('status', ['approved', 'pending'])
             ->whereRaw("ticket ~ '^[0-9]{5}$'");
 
         $dateRange = $this->resolveIndicatorDateRange($request);
@@ -4872,8 +4928,21 @@ class BankHoursFixedController extends Controller
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
             ->whereIn('timesheets.project_id', $projectIds)
             ->where('timesheets.status', '!=', 'rejected');
-        if ($dateFrom) $ts->where('timesheets.date', '>=', $dateFrom);
-        if ($dateTo)   $ts->where('timesheets.date', '<=', $dateTo);
+        // date_from/date_to: por serviço (padrão) ou por digitação (created_at).
+        $byDigitacao = $request->get('date_field') === 'digitacao';
+        if ($byDigitacao) {
+            if ($dateFrom) $ts->whereDate('timesheets.created_at', '>=', $dateFrom);
+            if ($dateTo)   $ts->whereDate('timesheets.created_at', '<=', $dateTo);
+        } else {
+            if ($dateFrom) $ts->where('timesheets.date', '>=', $dateFrom);
+            if ($dateTo)   $ts->where('timesheets.date', '<=', $dateTo);
+        }
+        // Competência: trava a data do serviço, independente do date_field.
+        if ($request->filled('competencia_start')) $ts->where('timesheets.date', '>=', $request->competencia_start);
+        if ($request->filled('competencia_end'))   $ts->where('timesheets.date', '<=', $request->competencia_end);
+        // Digitação (range opcional, created_at).
+        if ($request->filled('dig_from')) $ts->whereDate('timesheets.created_at', '>=', $request->dig_from);
+        if ($request->filled('dig_to'))   $ts->whereDate('timesheets.created_at', '<=', $request->dig_to);
         $ts = $ts->orderByDesc('timesheets.date')->orderByDesc('timesheets.id')->limit(500)->get();
 
         $fmtTime = fn ($v) => $v instanceof \DateTimeInterface ? $v->format('H:i') : (is_string($v) && strlen($v) >= 5 ? substr($v, -8, 5) : null);
@@ -4891,6 +4960,7 @@ class BankHoursFixedController extends Controller
             'data' => $ts->map(fn ($t) => [
                 'id'                 => $t->id,
                 'date'               => optional($t->date)->format('Y-m-d'),
+                'created_at'         => optional($t->created_at)->toIso8601String(),
                 'start_time'         => $fmtTime($t->start_time),
                 'end_time'           => $fmtTime($t->end_time),
                 'effort_minutes'     => $t->effort_minutes,
@@ -4929,11 +4999,26 @@ class BankHoursFixedController extends Controller
             return response()->json(['success' => false, 'message' => 'project_id obrigatório'], 422);
         }
 
+        $isClienteViewer = $user && method_exists($user, 'isCliente') && $user->isCliente();
+
+        // BH Fixo individual com "cliente NÃO acompanha apontamento": o cliente não vê
+        // os apontamentos desse projeto (admin/coord seguem vendo).
+        if ($isClienteViewer) {
+            $selProj = Project::find($projectId);
+            if ($selProj && $selProj->client_follows_timesheets === false) {
+                return response()->json(['success' => true, 'data' => []]);
+            }
+        }
+
         $projectIds = Project::where(function ($q) use ($projectId) {
                 $q->where('id', $projectId)->orWhere('parent_project_id', $projectId);
             })
             ->when($customerId, fn ($q) => $q->where('customer_id', $customerId))
             ->whereNull('deleted_at')
+            // Cliente NÃO vê apontamentos de subprojetos Fechado (escopo fechado = horas internas;
+            // o cliente paga pelo escopo, não pelas horas apontadas do Fechado).
+            ->when($isClienteViewer, fn ($q) => $q->whereDoesntHave('contractType', fn ($c) =>
+                $c->where('code', 'closed')->orWhereRaw("lower(trim(name)) = 'fechado'")))
             ->pluck('id');
 
         if ($projectIds->isEmpty()) {
@@ -5122,9 +5207,23 @@ class BankHoursFixedController extends Controller
             ->whereRaw("timesheets.ticket ~ '^[0-9]{5}$'")
             ->where('timesheets.status', '!=', 'rejected');
 
+        // Competência: trava a data do serviço (afeta tickets E agregações via clone).
+        if ($request->filled('competencia_start')) $base->where('timesheets.date', '>=', $request->competencia_start);
+        if ($request->filled('competencia_end'))   $base->where('timesheets.date', '<=', $request->competencia_end);
+
+        // date_from/date_to: por serviço (padrão) ou por digitação (created_at).
+        $byDigitacao = $request->get('date_field') === 'digitacao';
         $periodQ = (clone $base);
-        if ($dateFrom) $periodQ->where('timesheets.date', '>=', $dateFrom);
-        if ($dateTo)   $periodQ->where('timesheets.date', '<=', $dateTo);
+        if ($byDigitacao) {
+            if ($dateFrom) $periodQ->whereDate('timesheets.created_at', '>=', $dateFrom);
+            if ($dateTo)   $periodQ->whereDate('timesheets.created_at', '<=', $dateTo);
+        } else {
+            if ($dateFrom) $periodQ->where('timesheets.date', '>=', $dateFrom);
+            if ($dateTo)   $periodQ->where('timesheets.date', '<=', $dateTo);
+        }
+        // Digitação (range opcional, created_at).
+        if ($request->filled('dig_from')) $periodQ->whereDate('timesheets.created_at', '>=', $request->dig_from);
+        if ($request->filled('dig_to'))   $periodQ->whereDate('timesheets.created_at', '<=', $request->dig_to);
         $ticketsInPeriod = $periodQ->select('timesheets.ticket')->distinct()->pluck('ticket')->toArray();
 
         if (empty($ticketsInPeriod)) return response()->json(['tickets' => []]);
@@ -5136,9 +5235,11 @@ class BankHoursFixedController extends Controller
                 'timesheets.ticket',
                 DB::raw("MAX(movidesk_tickets.titulo) AS ticket_subject"),
                 DB::raw("MAX(movidesk_tickets.solicitante::text) AS ticket_solicitante"),
+                DB::raw("MAX(movidesk_tickets.status) AS ticket_status"),
+                DB::raw("MAX(movidesk_tickets.base_status) AS ticket_base_status"),
                 DB::raw("SUM(timesheets.effort_minutes) AS lifetime_minutes"),
                 DB::raw(
-                    "SUM(CASE WHEN timesheets.date BETWEEN " .
+                    "SUM(CASE WHEN " . ($byDigitacao ? 'timesheets.created_at::date' : 'timesheets.date') . " BETWEEN " .
                     "COALESCE(?, timesheets.date) AND COALESCE(?, timesheets.date) " .
                     "THEN timesheets.effort_minutes ELSE 0 END) AS period_minutes"
                 ),
@@ -5159,6 +5260,8 @@ class BankHoursFixedController extends Controller
                 'ticket'           => $r->ticket,
                 'title'            => $r->ticket_subject,
                 'requester'        => $reqName,
+                'status'           => $r->ticket_status,
+                'base_status'      => $r->ticket_base_status,
                 'period_minutes'   => (int) $r->period_minutes,
                 'lifetime_minutes' => (int) $r->lifetime_minutes,
             ];
@@ -5212,9 +5315,23 @@ class BankHoursFixedController extends Controller
             ->whereRaw("timesheets.ticket ~ '^[0-9]{5}$'")
             ->where('timesheets.status', '!=', 'rejected');
 
+        // Competência: trava a data do serviço (afeta tickets E agregações via clone).
+        if ($request->filled('competencia_start')) $base->where('timesheets.date', '>=', $request->competencia_start);
+        if ($request->filled('competencia_end'))   $base->where('timesheets.date', '<=', $request->competencia_end);
+
+        // date_from/date_to: por serviço (padrão) ou por digitação (created_at).
+        $byDigitacao = $request->get('date_field') === 'digitacao';
         $periodQ = (clone $base);
-        if ($dateFrom) $periodQ->where('timesheets.date', '>=', $dateFrom);
-        if ($dateTo)   $periodQ->where('timesheets.date', '<=', $dateTo);
+        if ($byDigitacao) {
+            if ($dateFrom) $periodQ->whereDate('timesheets.created_at', '>=', $dateFrom);
+            if ($dateTo)   $periodQ->whereDate('timesheets.created_at', '<=', $dateTo);
+        } else {
+            if ($dateFrom) $periodQ->where('timesheets.date', '>=', $dateFrom);
+            if ($dateTo)   $periodQ->where('timesheets.date', '<=', $dateTo);
+        }
+        // Digitação (range opcional, created_at).
+        if ($request->filled('dig_from')) $periodQ->whereDate('timesheets.created_at', '>=', $request->dig_from);
+        if ($request->filled('dig_to'))   $periodQ->whereDate('timesheets.created_at', '<=', $request->dig_to);
         $ticketsInPeriod = $periodQ->select('timesheets.ticket')->distinct()->pluck('ticket')->toArray();
 
         if (empty($ticketsInPeriod)) return response()->json(['tickets' => []]);
@@ -5226,9 +5343,11 @@ class BankHoursFixedController extends Controller
                 'timesheets.ticket',
                 DB::raw("MAX(movidesk_tickets.titulo) AS ticket_subject"),
                 DB::raw("MAX(movidesk_tickets.solicitante::text) AS ticket_solicitante"),
+                DB::raw("MAX(movidesk_tickets.status) AS ticket_status"),
+                DB::raw("MAX(movidesk_tickets.base_status) AS ticket_base_status"),
                 DB::raw("SUM(timesheets.effort_minutes) AS lifetime_minutes"),
                 DB::raw(
-                    "SUM(CASE WHEN timesheets.date BETWEEN " .
+                    "SUM(CASE WHEN " . ($byDigitacao ? 'timesheets.created_at::date' : 'timesheets.date') . " BETWEEN " .
                     "COALESCE(?, timesheets.date) AND COALESCE(?, timesheets.date) " .
                     "THEN timesheets.effort_minutes ELSE 0 END) AS period_minutes"
                 ),
@@ -5251,6 +5370,8 @@ class BankHoursFixedController extends Controller
                 'ticket'           => $r->ticket,
                 'title'            => $r->ticket_subject,
                 'requester'        => $reqName,
+                'status'           => $r->ticket_status,
+                'base_status'      => $r->ticket_base_status,
                 'period_minutes'   => (int) $r->period_minutes,
                 'lifetime_minutes' => (int) $r->lifetime_minutes,
             ];

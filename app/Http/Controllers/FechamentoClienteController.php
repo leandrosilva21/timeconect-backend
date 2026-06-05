@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Exports\FechamentoClienteExport;
+use App\Exports\FechamentoConsultorDespesaExport;
 use App\Mail\FechamentoClienteMail;
 use App\Models\Customer;
 use App\Models\Expense;
@@ -33,7 +34,7 @@ class FechamentoClienteController extends Controller
     private function effectiveHourlyRate(float $hourlyRate, string $rateType): float
     {
         return ($rateType === 'monthly' && $hourlyRate > 0)
-            ? round($hourlyRate / 180, 4)
+            ? round($hourlyRate / 160, 4)
             : $hourlyRate;
     }
 
@@ -47,13 +48,38 @@ class FechamentoClienteController extends Controller
         // de investimento (is_investimento_comercial=true: "Investimento Comercial",
         // "Investimento Suporte", "Investimento Projetos"), que tecnicamente têm
         // contract_type=on_demand mas não são contratos com o cliente.
+        // Além disso, o contrato on_demand precisa ser PAI (parent_project_id null);
+        // projeto FILHO on_demand (sub-contrato de um pai de outro tipo) NÃO habilita
+        // o cliente na rotina de fechamento On Demand.
+        $expFrom = $yearMonth ? "{$yearMonth}-01" : null;
+        $expTo   = $yearMonth ? Carbon::parse("{$yearMonth}-01")->endOfMonth()->toDateString() : null;
+
         $customers = Customer::whereRaw('"active" = true')
-            ->whereHas('projects', function ($q) {
-                $q->where(function ($qq) {
-                        $qq->where('is_investimento_comercial', false)
-                           ->orWhereNull('is_investimento_comercial');
-                    })
-                  ->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand'));
+            ->where(function ($outer) use ($yearMonth, $expFrom, $expTo) {
+                // (1) clientes com projeto On Demand PAI (regra original).
+                $outer->whereHas('projects', function ($q) {
+                    $q->where(function ($qq) {
+                            $qq->where('is_investimento_comercial', false)
+                               ->orWhereNull('is_investimento_comercial');
+                        })
+                      ->whereNull('parent_project_id')
+                      ->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand'));
+                });
+                // (2) OU clientes com DESPESA A COBRAR no mês (qualquer tipo de contrato) —
+                // antes só apareciam clientes On Demand, escondendo quem tem só despesa.
+                if ($yearMonth) {
+                    $outer->orWhereHas('projects', function ($q) use ($expFrom, $expTo) {
+                        $q->where(function ($qq) {
+                                $qq->where('is_investimento_comercial', false)
+                                   ->orWhereNull('is_investimento_comercial');
+                            })
+                          ->whereHas('expenses', function ($qe) use ($expFrom, $expTo) {
+                              $qe->where('charge_client', true)
+                                 ->where('status', Expense::STATUS_APPROVED)
+                                 ->whereBetween('expense_date', [$expFrom, $expTo]);
+                          });
+                    });
+                }
             })
             ->orderBy('name')
             ->get(['id', 'name', 'company_name']);
@@ -86,6 +112,53 @@ class FechamentoClienteController extends Controller
         });
 
         return response()->json(['data' => $data]);
+    }
+
+    /**
+     * GET /fechamento-cliente/despesas-resumo?year_month=AAAA-MM
+     * Todos os clientes com despesa A COBRAR no mês (charge_client=true, não pagas),
+     * agregadas por cliente — para a aba de envio de despesas.
+     */
+    public function despesasResumo(Request $request): JsonResponse
+    {
+        $yearMonth = $request->query('year_month');
+        if (!$yearMonth) {
+            return response()->json(['data' => []]);
+        }
+
+        $from = "{$yearMonth}-01";
+        $to   = Carbon::parse("{$yearMonth}-01")->endOfMonth()->toDateString();
+
+        // is_paid (consultor reembolsado) é independente de cobrar o cliente — filtrar por
+        // ele aqui escondia despesas legítimas do fechamento. Mantém só status válidos.
+        $byCustomer = Expense::query()
+            ->where('charge_client', true)
+            ->where('status', Expense::STATUS_APPROVED)
+            ->whereBetween('expense_date', [$from, $to])
+            ->whereHas('project', fn ($q) => $q->where('is_investimento_comercial', false)->whereNotNull('customer_id'))
+            ->with('project:id,customer_id')
+            ->get()
+            ->groupBy(fn ($e) => $e->project?->customer_id)
+            ->filter(fn ($g, $cid) => (bool) $cid);
+
+        $nomes = Customer::whereIn('id', $byCustomer->keys()->map(fn ($k) => (int) $k)->all())
+            ->pluck('name', 'id');
+
+        $data = $byCustomer
+            ->map(fn ($g, $cid) => [
+                'customer_id' => (int) $cid,
+                'nome'        => $nomes[(int) $cid] ?? '—',
+                'qtd'         => $g->count(),
+                'total'       => round($g->sum('amount'), 2),
+            ])
+            ->values()
+            ->sortByDesc('total')
+            ->values();
+
+        return response()->json([
+            'data'        => $data,
+            'total_geral' => round($data->sum('total'), 2),
+        ]);
     }
 
     // ─── Contratos (endpoint legado — mantido para compatibilidade) ───────────
@@ -164,19 +237,114 @@ class FechamentoClienteController extends Controller
         return response()->json(['data' => $data, 'from_snapshot' => false]);
     }
 
-    private function apontamentosData(int $customerId, string $fromMonth, string $toMonth, ?string $contractCode = null): array
+    /**
+     * GET /fechamento-cliente/apontamentos-geral?from=AAAA-MM&to=AAAA-MM
+     * Lista PLANA de todos os apontamentos On Demand do período (todos os clientes),
+     * para a aba Apontamentos. Os filtros de cliente/projeto são aplicados no front
+     * (o conjunto de um mês é pequeno; envia tudo e filtra/agrupa lá).
+     */
+    public function apontamentosGeral(Request $request): JsonResponse
+    {
+        $fromMonth = $request->query('from');
+        $toMonth   = $request->query('to', $fromMonth);
+        if (!$fromMonth) {
+            return response()->json(['data' => []]);
+        }
+
+        $from = "{$fromMonth}-01";
+        $to   = Carbon::parse("{$toMonth}-01")->endOfMonth()->toDateString();
+
+        $rows = Timesheet::query()
+            ->with([
+                'user:id,name',
+                'project:id,name,code,customer_id',
+                'project.customer:id,name',
+            ])
+            ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_titulo', 'movidesk_tickets.solicitante as ticket_solicitante')
+            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+            ->whereBetween('timesheets.date', [$from, $to])
+            ->whereNotIn('timesheets.status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
+            ->whereNull('timesheets.deleted_at')
+            ->whereHas('project', function ($q) {
+                $q->where('is_investimento_comercial', false)
+                  ->whereNotNull('customer_id')
+                  ->where($this->rootOnDemandScope());
+            })
+            ->orderBy('timesheets.date')
+            ->get();
+
+        $data = $rows->map(function ($t) {
+            $solicitanteRaw = $t->ticket_solicitante;
+            if (is_string($solicitanteRaw)) {
+                $solicitanteRaw = json_decode($solicitanteRaw, true);
+            }
+            $solicitante = is_array($solicitanteRaw) ? ($solicitanteRaw['name'] ?? null) : null;
+
+            return [
+                'id'             => $t->id,
+                'data'           => $t->date->format('Y-m-d'),
+                'customer_id'    => $t->project?->customer_id,
+                'cliente'        => $t->project?->customer?->name ?? '—',
+                'projeto_id'     => $t->project_id,
+                'projeto_codigo' => $t->project?->code ?? '—',
+                'projeto_nome'   => $t->project?->name ?? '—',
+                'colaborador'    => $t->user?->name ?? '—',
+                'solicitante'    => $solicitante,
+                'ticket'         => $t->ticket,
+                'titulo'         => $t->ticket_titulo,
+                'horas'          => round($t->effort_minutes / 60, 2),
+            ];
+        })->values();
+
+        return response()->json(['data' => $data]);
+    }
+
+    /**
+     * Escopo "Contrato RAIZ On Demand": restringe uma query de Project (ou um
+     * whereHas('project', ...)) aos projetos cujo CONTRATO PAI é On Demand.
+     *
+     * Um projeto entra se:
+     *   (a) é PAI (parent_project_id null) com contractType.code = on_demand; OU
+     *   (b) é FILHO cujo PAI é On Demand (não-investimento).
+     *
+     * Sem isso, um FILHO On Demand de um PAI de OUTRO tipo (ex.: "Banco de Horas")
+     * puxava o contrato pai NÃO-On-Demand pro fechamento On Demand — porque o
+     * apontamentosData consolida filho→pai. Regra "só On Demand PAI", espelhando
+     * FechamentoClienteController::index e FechamentoContratoController.
+     */
+    private function rootOnDemandScope(): \Closure
+    {
+        return function ($qr) {
+            $qr->where(function ($qp) {
+                    $qp->whereNull('parent_project_id')
+                       ->whereHas('contractType', fn ($c) => $c->where('code', 'on_demand'));
+                })
+              ->orWhereHas('parentProject', function ($pp) {
+                    $pp->where('is_investimento_comercial', false)
+                       ->whereHas('contractType', fn ($c) => $c->where('code', 'on_demand'));
+                });
+        };
+    }
+
+    private function apontamentosData(int $customerId, string $fromMonth, string $toMonth, ?string $contractCode = null, ?int $projectId = null): array
     {
         $from = "{$fromMonth}-01";
         $to   = Carbon::parse("{$toMonth}-01")->endOfMonth()->toDateString();
 
+        // $projectId filtra pelo projeto PAI (escolhido no dropdown "Contrato"); inclui
+        // os filhos via parent_project_id pra que o relatório/PDF respeite a seleção.
         $projectIds = Timesheet::whereBetween('date', [$from, $to])
-            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
             ->whereNull('deleted_at')
-            ->whereHas('project', function ($q) use ($customerId, $contractCode) {
+            ->whereHas('project', function ($q) use ($customerId, $contractCode, $projectId) {
                 $q->where('customer_id', $customerId)
-                  ->where('is_investimento_comercial', false);
+                  ->where('is_investimento_comercial', false)
+                  ->where($this->rootOnDemandScope());
                 if ($contractCode) {
                     $q->whereHas('contractType', fn ($q2) => $q2->where('code', $contractCode));
+                }
+                if ($projectId) {
+                    $q->where(fn ($q2) => $q2->where('id', $projectId)->orWhere('parent_project_id', $projectId));
                 }
             })
             ->distinct()
@@ -209,7 +377,7 @@ class FechamentoClienteController extends Controller
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_titulo', 'movidesk_tickets.solicitante as ticket_solicitante')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
             ->whereBetween('timesheets.date', [$from, $to])
-            ->whereNotIn('timesheets.status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
+            ->whereNotIn('timesheets.status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
             ->whereNull('timesheets.deleted_at')
             ->whereIn('timesheets.project_id', $projectIds)
             ->orderBy('timesheets.project_id')
@@ -238,7 +406,9 @@ class FechamentoClienteController extends Controller
                 }
                 $solicitante = is_array($solicitanteRaw) ? ($solicitanteRaw['name'] ?? null) : null;
 
-                $horas      = $t->effort_minutes / 60;
+                // Horas DECIMAIS arredondadas a 2 casas na origem, p/ o valor a pagar bater com
+                // as horas exibidas no documento de cobrança (49,42h × R$148 = R$7.314,16, não 7.313,67).
+                $horas      = round($t->effort_minutes / 60, 2);
                 // Valoriza cada apontamento pela taxa vigente NO MÊS do apontamento — legado intacto.
                 $hourlyRate = (float) ($project?->hourlyRateForCompetencia($t->date->format('Y-m')) ?? 0);
                 $mult       = 1 + (((float) ($t->client_extra_pct ?? 0)) / 100);
@@ -298,53 +468,93 @@ class FechamentoClienteController extends Controller
 
     // ─── Pendências ──────────────────────────────────────────────────────────
 
-    public function pendencias(string $customerId, string $yearMonth): JsonResponse
+    public function pendencias(Request $request, string $customerId, string $yearMonth): JsonResponse
     {
-        [$from, $to] = $this->period($yearMonth);
+        // Suporta range de meses (filtro da página); default = mês único.
+        $fromMonth = $request->query('from', $yearMonth);
+        $toMonth   = $request->query('to', $yearMonth);
+        $from = "{$fromMonth}-01";
+        $to   = Carbon::parse("{$toMonth}-01")->endOfMonth()->toDateString();
 
-        $timesheets = Timesheet::with(['user:id,name', 'project:id,name,code'])
-            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
+        $tsModels = Timesheet::with(['user:id,name', 'project', 'project.hourlyRateChanges', 'project.coordinators:id,name', 'project.parentProject.coordinators:id,name'])
+            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)
+                ->where('is_investimento_comercial', false)
+                ->where($this->rootOnDemandScope()))
             ->whereBetween('date', [$from, $to])
             ->whereIn('status', [Timesheet::STATUS_PENDING, Timesheet::STATUS_ADJUSTMENT_REQUESTED])
             ->whereNull('deleted_at')
             ->orderBy('date')
-            ->get()
-            ->map(fn ($t) => [
-                'id'          => $t->id,
-                'tipo'        => 'timesheet',
-                'data'        => $t->date->format('Y-m-d'),
-                'colaborador' => $t->user?->name ?? '—',
-                'projeto'     => $t->project?->name ?? '—',
-                'projeto_codigo' => $t->project?->code ?? '—',
-                'horas'       => round($t->effort_minutes / 60, 2),
-                'status'      => $t->status,
-                'ticket'      => $t->ticket,
-                'observacao'  => $t->observation,
-            ]);
+            ->get();
 
-        $despesas = Expense::with(['user:id,name', 'project:id,name,code', 'category:id,name'])
-            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
+        // Executivo (do cliente) e Coordenador (do projeto, com fallback no PAI) — colunas do modal.
+        $executivo = optional(Customer::with('executive:id,name')->find($customerId))->executive?->name ?? '—';
+        $coordNome = function ($project) {
+            if (!$project) return '—';
+            $coords = $project->coordinators;
+            if ($coords->isEmpty() && $project->parentProject) {
+                $coords = $project->parentProject->coordinators;
+            }
+            return $coords->isNotEmpty() ? $coords->pluck('name')->implode(', ') : '—';
+        };
+
+        // Valor pendente do apontamento = horas × valor/hora On Demand × (1 + client_extra_pct).
+        $rateCache = [];
+        $timesheets = $tsModels->map(function ($t) use (&$rateCache, $executivo, $coordNome) {
+            $comp  = $t->date->format('Y-m');
+            $key   = $t->project_id . '|' . $comp;
+            $rate  = $rateCache[$key] ??= (float) ($t->project?->hourlyRateForCompetencia($comp) ?? 0);
+            $horas = round($t->effort_minutes / 60, 2);
+            $mult  = 1 + (((float) ($t->client_extra_pct ?? 0)) / 100);
+            return [
+                'id'             => $t->id,
+                'tipo'           => 'timesheet',
+                'data'           => $t->date->format('Y-m-d'),
+                'colaborador'    => $t->user?->name ?? '—',
+                'projeto'        => $t->project?->name ?? '—',
+                'projeto_codigo' => $t->project?->code ?? '—',
+                'horas'          => $horas,
+                'valor'          => round($horas * $rate * $mult, 2),
+                'status'         => $t->status,
+                'ticket'         => $t->ticket,
+                'observacao'     => $t->observation,
+                'executivo'      => $executivo,
+                'coordenador'    => $coordNome($t->project),
+            ];
+        });
+
+        $despesas = Expense::with(['user:id,name', 'project:id,name,code,parent_project_id', 'project.coordinators:id,name', 'project.parentProject.coordinators:id,name', 'category:id,name'])
+            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)->where('is_investimento_comercial', false))
             ->whereBetween('expense_date', [$from, $to])
             ->whereIn('status', ['pending', 'adjustment_requested'])
             ->orderBy('expense_date')
             ->get()
             ->map(fn ($e) => [
-                'id'          => $e->id,
-                'tipo'        => 'expense',
-                'data'        => $e->expense_date->format('Y-m-d'),
-                'colaborador' => $e->user?->name ?? '—',
-                'projeto'     => $e->project?->name ?? '—',
+                'id'             => $e->id,
+                'tipo'           => 'expense',
+                'data'           => $e->expense_date->format('Y-m-d'),
+                'colaborador'    => $e->user?->name ?? '—',
+                'projeto'        => $e->project?->name ?? '—',
                 'projeto_codigo' => $e->project?->code ?? '—',
-                'descricao'   => $e->description,
-                'categoria'   => $e->category?->name ?? '—',
-                'valor'       => (float) $e->amount,
-                'status'      => $e->status,
+                'descricao'      => $e->description,
+                'categoria'      => $e->category?->name ?? '—',
+                'valor'          => (float) $e->amount,
+                'status'         => $e->status,
+                'executivo'      => $executivo,
+                'coordenador'    => $coordNome($e->project),
             ]);
 
+        $valorTimesheets = round($timesheets->sum('valor'), 2);
+        $valorDespesas   = round($despesas->sum('valor'), 2);
+
         return response()->json([
-            'timesheets'        => $timesheets,
-            'despesas'          => $despesas,
-            'total_pendencias'  => count($timesheets) + count($despesas),
+            'timesheets'        => $timesheets->values(),
+            'despesas'          => $despesas->values(),
+            'qtd_timesheets'    => $timesheets->count(),
+            'qtd_despesas'      => $despesas->count(),
+            'total_pendencias'  => $timesheets->count() + $despesas->count(),
+            'valor_timesheets'  => $valorTimesheets,
+            'valor_despesas'    => $valorDespesas,
+            'valor_pendente'    => round($valorTimesheets + $valorDespesas, 2),
         ]);
     }
 
@@ -453,14 +663,15 @@ class FechamentoClienteController extends Controller
     {
         [$from, $to] = $this->period($yearMonth);
 
-        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE];
 
-        $projectIds = Timesheet::whereBetween('date', [$from, $to])
-            ->whereNotIn('status', $excludeStatuses)
-            ->whereNull('deleted_at')
-            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
-            ->distinct()
-            ->pluck('project_id');
+        // Fechamento de cliente lista APENAS contratos On Demand do cliente.
+        // Base nos PROJETOS On Demand (não em timesheets) para que um contrato
+        // On Demand sem consumo no mês também apareça (= consumo / 0h).
+        $projectIds = Project::where('customer_id', $customerId)
+            ->where('is_investimento_comercial', false)
+            ->where($this->rootOnDemandScope())
+            ->pluck('id');
 
         if ($projectIds->isEmpty()) {
             return [];
@@ -594,19 +805,38 @@ class FechamentoClienteController extends Controller
         return $rows;
     }
 
+    /** Acréscimo fixo por despesa na visão do CLIENTE (só Auster). */
+    private const AUSTER_EXPENSE_SURCHARGE = 30.0;
+
+    /** R$30 por despesa quando o cliente é Auster; 0 para os demais. */
+    private function austerExpenseSurcharge(int $customerId): float
+    {
+        $name = \App\Models\Customer::where('id', $customerId)->value('name');
+        return ($name !== null && stripos($name, 'auster') !== false)
+            ? self::AUSTER_EXPENSE_SURCHARGE
+            : 0.0;
+    }
+
     private function despesasData(int $customerId, string $fromMonth, string $toMonth): array
     {
         $from = "{$fromMonth}-01";
         $to   = Carbon::parse("{$toMonth}-01")->endOfMonth()->toDateString();
 
+        // Particularidade Auster: toda despesa cobrada leva +R$30 SÓ na visão do cliente
+        // (fechamento enviado + perfil). O consultor recebe o valor original (amount), que
+        // fica intacto no banco e na visão interna. Markup puramente de faturamento.
+        $surcharge = $this->austerExpenseSurcharge($customerId);
+
+        // Fechamento do cliente lista as despesas a cobrar (charge_client) APROVADAS.
+        // Pendente/ajuste/rejeitado ficam de fora (a despesa só entra no fechamento depois
+        // de aprovada). is_paid (reembolso ao consultor) é controle interno e não filtra aqui.
         return Expense::with([
             'user:id,name',
             'project:id,name,code',
             'category:id,name',
         ])
             ->where('charge_client', true)
-            ->whereNotIn('status', [Expense::STATUS_REJECTED, Expense::STATUS_ADJUSTMENT_REQUESTED])
-            ->where('is_paid', false)
+            ->where('status', Expense::STATUS_APPROVED)
             ->whereBetween('expense_date', [$from, $to])
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)->where('is_investimento_comercial', false))
             ->get()
@@ -617,7 +847,7 @@ class FechamentoClienteController extends Controller
                 'categoria'   => $e->category?->name ?? '—',
                 'colaborador' => $e->user?->name ?? '—',
                 'projeto'     => $e->project?->name ?? '—',
-                'valor'       => (float) $e->amount,
+                'valor'       => (float) $e->amount + $surcharge,
             ])
             ->toArray();
     }
@@ -632,7 +862,7 @@ class FechamentoClienteController extends Controller
         ])
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)->where('is_investimento_comercial', false))
             ->whereBetween('date', [$from, $to])
-            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
             ->whereNull('deleted_at')
             ->get();
 
@@ -724,10 +954,8 @@ class FechamentoClienteController extends Controller
     /** Formata horas decimais como HHhMM (ex.: 12.5 -> "12h30"). */
     private function fmtHoras(float $h): string
     {
-        $totalMins = abs((int) round($h * 60));
-        $hrs  = intdiv($totalMins, 60);
-        $mins = $totalMins % 60;
-        return sprintf('%dh%02d', $hrs, $mins);
+        // Horas em DECIMAL 2 casas (pt-BR) — total bate com horas × taxa.
+        return number_format($h, 2, ',', '.');
     }
 
     /** Remove acentos/espaços/barras de um nome para uso em filename. */
@@ -742,8 +970,11 @@ class FechamentoClienteController extends Controller
     }
 
     /** Mensagem padrão (corpo) do e-mail de fechamento — editável na tela antes de enviar. */
-    private function defaultMensagem(string $periodo): string
+    private function defaultMensagem(string $periodo, string $mode = 'servicos'): string
     {
+        if ($mode === 'despesa') {
+            return "Segue em anexo a apuração das despesas a cobrar referente ao período de {$periodo}.\n\nEm caso de dúvidas ou divergências, por gentileza entrar em contato.";
+        }
         return "Segue em anexo o fechamento referente ao período de {$periodo}.\n\nEm caso de dúvidas ou divergências, por gentileza entrar em contato.";
     }
 
@@ -795,9 +1026,9 @@ class FechamentoClienteController extends Controller
      *
      * @return array<int,array<string,mixed>>
      */
-    private function clienteApontamentosFlat(int $customerId, string $yearMonth, bool $vedamotors): array
+    private function clienteApontamentosFlat(int $customerId, string $yearMonth, bool $vedamotors, ?int $projectId = null): array
     {
-        $data = $this->apontamentosData($customerId, $yearMonth, $yearMonth, 'on_demand');
+        $data = $this->apontamentosData($customerId, $yearMonth, $yearMonth, 'on_demand', $projectId);
 
         $rows = [];
         foreach (($data['projetos'] ?? []) as $proj) {
@@ -842,12 +1073,12 @@ class FechamentoClienteController extends Controller
     {
         [$from, $to] = $this->period($yearMonth);
 
-        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE];
 
         // Projetos On Demand do cliente (mesma base que apontamentosData usa no fechamento).
         $projectIds = Project::where('customer_id', $customerId)
             ->where('is_investimento_comercial', false)
-            ->whereHas('contractType', fn ($q) => $q->where('code', 'on_demand'))
+            ->where($this->rootOnDemandScope())
             ->pluck('id');
 
         if ($projectIds->isEmpty()) {
@@ -933,12 +1164,34 @@ class FechamentoClienteController extends Controller
             $byContrato[$r['contrato'] ?? ($r['projeto'] ?? '—')][] = $r;
         }
 
+        // Observação → HTML seguro pro PDF/preview: preserva quebras de linha
+        // (tags de bloco/<br> viram \n), remove o resto das tags, decodifica
+        // entidades, colapsa quebras múltiplas, escapa e re-quebra com <br>.
+        $cleanObs = function ($raw): string {
+            $raw = (string) ($raw ?? '');
+            if (trim($raw) === '') return '—';
+            $t = preg_replace('/<\s*(br|\/p|\/div|\/li|\/tr|\/h[1-6])\s*\/?>/i', "\n", $raw);
+            $t = html_entity_decode(strip_tags((string) $t), ENT_QUOTES | ENT_HTML5);
+            // URLs com percent-encoding (%C3%B4…) viram texto legível — tira o "lixo de código".
+            $t = preg_replace_callback('#https?://\S+#u', fn ($m) => rawurldecode($m[0]), (string) $t);
+            // nbsp (&nbsp; → \xC2\xA0) vira espaço normal, senão linhas "em branco" não colapsam.
+            $t = str_replace("\xC2\xA0", ' ', (string) $t);
+            // Remove espaços ao redor de cada quebra → linhas-fantasma (de imagem removida) viram \n contíguos.
+            $t = preg_replace('/[ \t]*\n[ \t]*/u', "\n", (string) $t);
+            // Colapsa o gap deixado pelas imagens: 3+ quebras → 1 linha em branco só.
+            $t = preg_replace('/\n{3,}/u', "\n\n", (string) $t);
+            $t = trim((string) $t);
+            return $t === '' ? '—' : nl2br(e($t));
+        };
+
         $fmtLinha = fn (array $l): array => [
-            'data'      => isset($l['data']) ? Carbon::parse($l['data'])->format('d/m/Y') : '',
-            'consultor' => $l['consultor'] ?? '—',
-            'ticket'    => $l['ticket'] ?? '',
-            'titulo'    => $l['titulo'] ?? '',
-            'horas_fmt' => $this->fmtHoras((float) ($l['horas'] ?? 0)),
+            'data'        => isset($l['data']) ? Carbon::parse($l['data'])->format('d/m/Y') : '',
+            'consultor'   => $l['consultor'] ?? '—',
+            'ticket'      => $l['ticket'] ?? '',
+            'titulo'      => $l['titulo'] ?? '',
+            'horas_fmt'   => $this->fmtHoras((float) ($l['horas'] ?? 0)),
+            'observacao'  => $l['observacao'] ?? null,
+            'observacao_html' => $cleanObs($l['observacao'] ?? null),
         ];
 
         $grupos = [];
@@ -993,23 +1246,71 @@ class FechamentoClienteController extends Controller
      *   pdf_name:string, xlsx_name:string, total_value:float
      * }
      */
-    private function generateClienteFiles(Customer $customer, string $yearMonth): array
+    private function generateClienteFiles(Customer $customer, string $yearMonth, string $mode = 'servicos', ?int $projectId = null): array
     {
+        $safeName = $this->sanitizeFilename($customer->name);
+        $dir      = 'fechamentos';
+        $dirFull  = storage_path("app/{$dir}");
+        if (!is_dir($dirFull)) {
+            mkdir($dirFull, 0775, true);
+        }
+
+        // ── Modo DESPESA — relatório de despesas a cobrar (PDF + XLSX próprios) ──
+        if ($mode === 'despesa') {
+            $pdfFileName  = "Despesas_{$yearMonth}_{$safeName}.pdf";
+            $xlsxFileName = "Despesas_{$yearMonth}_{$safeName}.xlsx";
+            $pdfRelPath   = "{$dir}/{$pdfFileName}";
+            $xlsxRelPath  = "{$dir}/{$xlsxFileName}";
+            $pdfFullPath  = storage_path("app/{$pdfRelPath}");
+            $xlsxFullPath = storage_path("app/{$xlsxRelPath}");
+
+            $pdf = Pdf::loadView('pdf.fechamento-cliente-despesa', $this->buildDespesaViewData($customer, $yearMonth))
+                ->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
+            file_put_contents($pdfFullPath, $pdf->output());
+
+            $despesas = array_map(
+                fn ($d) => $d + ['cliente' => $customer->name, 'is_paid' => false, 'paid_at' => null],
+                $this->despesasData((int) $customer->id, $yearMonth, $yearMonth),
+            );
+            $export = new FechamentoConsultorDespesaExport($despesas, $customer->name, $this->periodoExtenso($yearMonth));
+            file_put_contents($xlsxFullPath, Excel::raw($export, \Maatwebsite\Excel\Excel::XLSX));
+
+            return [
+                'pdf_rel'     => $pdfRelPath,
+                'xlsx_rel'    => $xlsxRelPath,
+                'pdf_full'    => $pdfFullPath,
+                'xlsx_full'   => $xlsxFullPath,
+                'pdf_name'    => $pdfFileName,
+                'xlsx_name'   => $xlsxFileName,
+                'total_value' => $this->despesaTotal((int) $customer->id, $yearMonth),
+                'projetos'    => [],
+            ];
+        }
+
         $periodo    = $this->periodoExtenso($yearMonth);
         $vedamotors = $this->isVedamotors($customer);
-        $rows       = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $vedamotors);
-        $totalValue = $this->clienteTotal((int) $customer->id, $yearMonth);
+        $rows       = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $vedamotors, $projectId);
+        // Total geral: cliente inteiro quando sem filtro; soma dos rows filtrados c/ projectId.
+        $totalValue = $projectId
+            ? round(collect($rows)->sum(fn ($r) => (float) $r['horas'] * (float) ($r['valor_hora'] ?? 0)), 2)
+            : $this->clienteTotal((int) $customer->id, $yearMonth);
 
         // Projeto(s) do fechamento (código + nome) — usado no retorno p/ o caller.
-        $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand');
+        $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand', $projectId);
         $projetosList = array_values(array_map(
             fn ($p) => ['codigo' => $p['projeto_codigo'] ?? '—', 'nome' => $p['projeto_nome'] ?? '—'],
             $apData['projetos'] ?? []
         ));
 
         $safeName     = $this->sanitizeFilename($customer->name);
-        $pdfFileName  = "Fechamento_{$yearMonth}_{$safeName}.pdf";
-        $xlsxFileName = "Fechamento_{$yearMonth}_{$safeName}.xlsx";
+        // Sufixo do projeto no filename quando filtrado, pra não sobrescrever os arquivos
+        // do fechamento completo (mesma pasta storage/app/fechamentos) — mantém ambos.
+        $projSuffix   = '';
+        if ($projectId && !empty($projetosList) && !empty($projetosList[0]['codigo']) && $projetosList[0]['codigo'] !== '—') {
+            $projSuffix = '_' . $this->sanitizeFilename($projetosList[0]['codigo']);
+        }
+        $pdfFileName  = "Fechamento_{$yearMonth}_{$safeName}{$projSuffix}.pdf";
+        $xlsxFileName = "Fechamento_{$yearMonth}_{$safeName}{$projSuffix}.xlsx";
         $dir          = 'fechamentos';
         $pdfRelPath   = "{$dir}/{$pdfFileName}";
         $xlsxRelPath  = "{$dir}/{$xlsxFileName}";
@@ -1023,8 +1324,8 @@ class FechamentoClienteController extends Controller
         }
 
         // ── PDF — MESMA view-data do preview da tela (fonte única = a Blade) ──
-        $pdf = Pdf::loadView('pdf.fechamento-cliente', $this->buildReportViewData($customer, $yearMonth))
-            ->setPaper('a4', 'portrait');
+        $pdf = Pdf::loadView('pdf.fechamento-cliente', $this->buildReportViewData($customer, $yearMonth, $projectId))
+            ->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
         file_put_contents($pdfFullPath, $pdf->output());
 
         // ── XLSX ──
@@ -1050,15 +1351,19 @@ class FechamentoClienteController extends Controller
      *
      * @return array<string, mixed>
      */
-    private function buildReportViewData(Customer $customer, string $yearMonth): array
+    private function buildReportViewData(Customer $customer, string $yearMonth, ?int $projectId = null): array
     {
         $periodo    = $this->periodoExtenso($yearMonth);
         $vedamotors = $this->isVedamotors($customer);
-        $rows       = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $vedamotors);
-        $totalValue = $this->clienteTotal((int) $customer->id, $yearMonth);
+        $rows       = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $vedamotors, $projectId);
+        // Total geral do cliente NÃO usa $projectId (legado intacto) — só os rows do
+        // relatório filtram. Os totais por contrato/projeto exibidos vêm dos rows.
+        $totalValue = $projectId
+            ? round(collect($rows)->sum(fn ($r) => (float) $r['horas'] * (float) ($r['valor_hora'] ?? 0)), 2)
+            : $this->clienteTotal((int) $customer->id, $yearMonth);
         $totalHoras = round(collect($rows)->sum('horas'), 2);
 
-        $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand');
+        $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand', $projectId);
         $projetosList = array_values(array_map(
             fn ($p) => ['codigo' => $p['projeto_codigo'] ?? '—', 'nome' => $p['projeto_nome'] ?? '—'],
             $apData['projetos'] ?? []
@@ -1113,6 +1418,49 @@ class FechamentoClienteController extends Controller
     }
 
     /**
+     * Dados da view do RELATÓRIO DE DESPESAS A COBRAR do cliente — fonte única do
+     * PDF e do preview (mesma Blade), espelhando o relatório de serviços.
+     *
+     * @return array<string, mixed>
+     */
+    private function buildDespesaViewData(Customer $customer, string $yearMonth): array
+    {
+        $periodo  = $this->periodoExtenso($yearMonth);
+        $despesas = $this->despesasData((int) $customer->id, $yearMonth, $yearMonth);
+        $total    = round(collect($despesas)->sum('valor'), 2);
+
+        $logoFile    = public_path('logo-erpserv.png');
+        $logoDataUri = is_file($logoFile)
+            ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($logoFile))
+            : null;
+
+        $linhas = array_map(fn ($d) => [
+            'data'        => Carbon::parse($d['data'])->format('d/m/Y'),
+            'descricao'   => $d['descricao'] ?: '—',
+            'categoria'   => $d['categoria'] ?? '—',
+            'colaborador' => $d['colaborador'] ?? '—',
+            'projeto'     => $d['projeto'] ?? '—',
+            'valor'       => $this->brl((float) $d['valor']),
+        ], $despesas);
+
+        return [
+            'clienteName' => $customer->name,
+            'periodo'     => $periodo,
+            'logoDataUri' => $logoDataUri,
+            'emitidoEm'   => now()->format('d/m/Y'),
+            'despesas'    => $linhas,
+            'qtd'         => count($linhas),
+            'totalFmt'    => $this->brl($total),
+        ];
+    }
+
+    /** Soma das despesas a cobrar do cliente no mês (não pagas). */
+    private function despesaTotal(int $customerId, string $yearMonth): float
+    {
+        return round(collect($this->despesasData($customerId, $yearMonth, $yearMonth))->sum('valor'), 2);
+    }
+
+    /**
      * HTML do relatório de apontamentos (a MESMA Blade do PDF enviado) — consumido
      * pelo preview da tela, garantindo paridade total com o documento anexado.
      */
@@ -1123,7 +1471,11 @@ class FechamentoClienteController extends Controller
             return response()->json(['success' => false, 'message' => 'Cliente não encontrado.'], 404);
         }
 
-        $html = view('pdf.fechamento-cliente', $this->buildReportViewData($customer, $yearMonth))->render();
+        $mode      = $request->query('mode') === 'despesa' ? 'despesa' : 'servicos';
+        $projectId = $request->query('project_id') ? (int) $request->query('project_id') : null;
+        $html = $mode === 'despesa'
+            ? view('pdf.fechamento-cliente-despesa', $this->buildDespesaViewData($customer, $yearMonth))->render()
+            : view('pdf.fechamento-cliente', $this->buildReportViewData($customer, $yearMonth, $projectId))->render();
 
         return response()->json(['html' => $html]);
     }
@@ -1142,22 +1494,47 @@ class FechamentoClienteController extends Controller
             return response()->json(['success' => false, 'message' => 'Cliente não encontrado.'], 404);
         }
 
+        $mode           = $request->input('mode') === 'despesa' ? 'despesa' : 'servicos';
+        // project_id propagado no preview pra que o template do e-mail liste só o
+        // projeto filtrado (espelha o anexo PDF que o enviarEmail vai gerar).
+        $projectId      = $mode === 'servicos' && $request->filled('project_id')
+            ? (int) $request->input('project_id')
+            : null;
         $periodo        = $this->periodoExtenso($yearMonth);
-        $mensagemPadrao = $this->defaultMensagem($periodo);
-        $mensagem       = trim((string) $request->input('mensagem'));
-        $mensagem       = $mensagem !== '' ? $mensagem : $mensagemPadrao;
+        $mensagemPadrao = $this->defaultMensagem($periodo, $mode);
 
-        $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand');
-        $projetosList = array_values(array_map(
-            fn ($p) => ['codigo' => $p['projeto_codigo'] ?? '—', 'nome' => $p['projeto_nome'] ?? '—'],
-            $apData['projetos'] ?? []
-        ));
+        $projetosList = [];
+        $valorTotal   = $this->brl($this->despesaTotal((int) $customer->id, $yearMonth));
+        if ($mode !== 'despesa') {
+            $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand', $projectId);
+            $projetosList = array_values(array_map(
+                fn ($p) => ['codigo' => $p['projeto_codigo'] ?? '—', 'nome' => $p['projeto_nome'] ?? '—'],
+                $apData['projetos'] ?? []
+            ));
+            // Valor total: dos rows filtrados quando há projectId; cliente inteiro caso contrário.
+            if ($projectId) {
+                $rowsFiltered = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $this->isVedamotors($customer), $projectId);
+                $valorTotal   = $this->brl(round(collect($rowsFiltered)->sum(fn ($r) => (float) $r['horas'] * (float) ($r['valor_hora'] ?? 0)), 2));
+            } else {
+                $valorTotal   = $this->brl($this->clienteTotal((int) $customer->id, $yearMonth));
+            }
+        }
+
+        // Semeia a partir do modelo do cadastro (cliente é único), se houver ativo.
+        $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
+        $vars = ['nome' => $customer->name, 'empresa' => $customer->name, 'razao_social' => $customer->company_name ?: $customer->name, 'periodo' => $periodo, 'valor' => $valorTotal];
+        if ($tpl = $svc->resolve('cliente', null, $vars, $yearMonth)) {
+            $mensagemPadrao = $tpl['body'];
+        }
+        $mensagem = trim((string) $request->input('mensagem'));
+        $mensagem = $mensagem !== '' ? $mensagem : $mensagemPadrao;
 
         $html = view('emails.fechamento.cliente', [
             'clienteName'     => $customer->name,
             'senderName'      => $sender->name,
             'periodo'         => $periodo,
-            'valorTotal'      => $this->brl($this->clienteTotal((int) $customer->id, $yearMonth)),
+            'mode'            => $mode,
+            'valorTotal'      => $valorTotal,
             'withAttachments' => true,
             'mensagem'        => $mensagem,
             'projetos'        => $projetosList,
@@ -1169,9 +1546,10 @@ class FechamentoClienteController extends Controller
         $html = str_ireplace('</head>', $override . '</head>', $html);
 
         return response()->json([
-            'html'             => $html,
-            'mensagem_padrao'  => $mensagemPadrao,
-            'fechamento_email' => $customer->fechamento_email,
+            'html'                   => $html,
+            'mensagem_padrao'        => $mensagemPadrao,
+            'fechamento_email'       => $customer->fechamento_email,
+            'emails_administrativos' => $customer->adminEmails(),
         ]);
     }
 
@@ -1190,9 +1568,20 @@ class FechamentoClienteController extends Controller
         }
 
         $request->validate([
-            'mensagem' => 'nullable|string', // corpo editável; vazio = mensagem padrão
-            'emails'   => 'required|array',
-            'emails.*' => 'email',
+            'mensagem'   => 'nullable|string', // corpo editável; vazio = mensagem padrão
+            'emails'     => 'required|array|min:1',
+            'emails.*'   => 'email',
+            'mode'       => 'nullable|in:servicos,despesa',
+            'project_id' => 'nullable|integer', // filtro de contrato (projeto pai)
+            'anexos'     => 'nullable|array',
+            'anexos.*'   => 'file|max:10240', // até 10 MB cada (Graph soma anexos ~3 MB no total)
+        ], [
+            'emails.required' => 'Informe ao menos um e-mail de destino antes de enviar.',
+            'emails.array'    => 'Lista de e-mails inválida.',
+            'emails.min'      => 'Informe ao menos um e-mail de destino antes de enviar.',
+            'emails.*.email'  => 'Um dos e-mails informados é inválido.',
+            'anexos.*.file'   => 'Anexo inválido.',
+            'anexos.*.max'    => 'Cada anexo deve ter no máximo 10 MB.',
         ]);
 
         $customer = Customer::find($customerId);
@@ -1200,9 +1589,15 @@ class FechamentoClienteController extends Controller
             return response()->json(['success' => false, 'message' => 'Cliente não encontrado.'], 404);
         }
 
+        $mode         = $request->input('mode') === 'despesa' ? 'despesa' : 'servicos';
+        // project_id só faz sentido no modo serviços (relatório por contrato); no modo
+        // despesa o relatório agrega despesas — ignora o filtro pra não esconder dados.
+        $projectId    = $mode === 'servicos' && $request->filled('project_id')
+            ? (int) $request->input('project_id')
+            : null;
         $periodo      = $this->periodoExtenso($yearMonth);
         $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
-        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo);
+        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo, $mode);
 
         // Destinatários: SOMENTE os e-mails informados na tela (clientes não têm admin automático).
         $to = array_values(array_unique(array_filter($request->input('emails') ?: [])));
@@ -1217,10 +1612,59 @@ class FechamentoClienteController extends Controller
         // CC: só o financeiro (não-vazio), sem duplicar quem já está no To.
         $cc = array_values(array_diff(array_filter([$financeiroCc]), $to));
 
-        $subject = 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Apontamentos - ' . $customer->name;
+        $subject = $mode === 'despesa'
+            ? 'Despesas ' . $this->periodoMMAAAA($yearMonth) . ' | Reembolso - ' . $customer->name
+            : 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Apontamentos - ' . $customer->name;
 
-        $files      = $this->generateClienteFiles($customer, $yearMonth);
+        $files      = $this->generateClienteFiles($customer, $yearMonth, $mode, $projectId);
         $totalValue = $files['total_value'];
+
+        // Modelo de e-mail do cadastro (cliente é único). Só quando NÃO houve corpo
+        // manual; cai no default acima se não houver modelo ativo.
+        if (trim((string) $request->input('mensagem')) === '') {
+            $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
+            $vars = ['nome' => $customer->name, 'empresa' => $customer->name, 'razao_social' => $customer->company_name ?: $customer->name, 'periodo' => $periodo, 'valor' => $this->brl($totalValue)];
+            $tpl  = $svc->resolve('cliente', null, $vars, $yearMonth);
+            if ($tpl) {
+                $mensagem = $tpl['body'];
+                if ($tpl['subject'] !== '') $subject = $tpl['subject'];
+            }
+        }
+
+        // Anexos extras escolhidos pelo usuário — salvos em pasta única (preserva o
+        // nome original p/ exibição) e removidos ao final do envio.
+        $extraPaths = [];
+        foreach ((array) $request->file('anexos', []) as $file) {
+            if (!$file || !$file->isValid()) {
+                continue;
+            }
+            $dir  = storage_path('app/fechamentos/anexos/' . uniqid('a', true));
+            if (!is_dir($dir)) {
+                mkdir($dir, 0775, true);
+            }
+            $name = $file->getClientOriginalName() ?: ('anexo_' . uniqid() . '.' . ($file->getClientOriginalExtension() ?: 'bin'));
+            $file->move($dir, $name);
+            $extraPaths[] = $dir . '/' . $name;
+        }
+
+        // Limite de envio: via Graph os anexos (PDF + XLSX + extras) somam até ~3 MB.
+        // Bloqueia ANTES de enviar — não deixa passar do limite.
+        if (\App\Services\GraphMailer::enabled()) {
+            $totalBytes = (is_file($files['pdf_full'])  ? (int) filesize($files['pdf_full'])  : 0)
+                        + (is_file($files['xlsx_full']) ? (int) filesize($files['xlsx_full']) : 0);
+            foreach ($extraPaths as $p) {
+                $totalBytes += is_file($p) ? (int) filesize($p) : 0;
+            }
+            if ($totalBytes > \App\Services\GraphMailer::MAX_INLINE_ATTACHMENTS_BYTES) {
+                foreach ($extraPaths as $p) { @unlink($p); @rmdir(dirname($p)); }
+                $maxMb = number_format(\App\Services\GraphMailer::MAX_INLINE_ATTACHMENTS_BYTES / 1048576, 1, ',', '.');
+                $totMb = number_format($totalBytes / 1048576, 1, ',', '.');
+                return response()->json([
+                    'success' => false,
+                    'message' => "Anexos excedem o limite de envio: {$totMb} MB de {$maxMb} MB (inclui o relatório PDF e a planilha). Remova ou reduza os anexos extras.",
+                ], 422);
+            }
+        }
 
         // Envia COMO o remetente (App Password O365) quando configurado; senão, conta NF-e (fallback atual).
         $mc = \App\Services\SenderMailer::for(
@@ -1248,6 +1692,8 @@ class FechamentoClienteController extends Controller
                 withAttachments: true,
                 fromAddress:     $mc['from_address'],
                 fromName:        $mc['from_name'],
+                mode:            $mode,
+                extraAttachments: $extraPaths,
             );
 
             // Microsoft Graph (Send As do remetente) quando configurado; senão, SMTP/NF-e atual.
@@ -1258,7 +1704,7 @@ class FechamentoClienteController extends Controller
                     $cc,
                     $subject,
                     $mailable->render(),
-                    [$files['pdf_full'], $files['xlsx_full']],
+                    array_merge([$files['pdf_full'], $files['xlsx_full']], $extraPaths),
                 );
             } else {
                 Mail::mailer($mc['mailer'])->to($to)->cc($cc)->send($mailable);
@@ -1270,9 +1716,11 @@ class FechamentoClienteController extends Controller
 
             Log::info('Fechamento de cliente enviado por e-mail', [
                 'cliente' => $customer->id, 'remetente' => $sender->id,
-                'to' => $to, 'cc' => $cc, 'total' => $totalValue,
+                'to' => $to, 'cc' => $cc, 'total' => $totalValue, 'anexos_extras' => count($extraPaths),
             ]);
+            foreach ($extraPaths as $p) { @unlink($p); @rmdir(dirname($p)); }
         } catch (\Throwable $e) {
+            foreach ($extraPaths as $p) { @unlink($p); @rmdir(dirname($p)); }
             Log::error('Falha ao enviar fechamento de cliente por e-mail', [
                 'cliente' => $customer->id, 'remetente' => $sender->id, 'erro' => $e->getMessage(),
             ]);
@@ -1314,12 +1762,40 @@ class FechamentoClienteController extends Controller
             return response()->json(['success' => false, 'message' => 'Cliente não encontrado.'], 404);
         }
 
+        $mode = $request->query('mode') === 'despesa' ? 'despesa' : 'servicos';
+        // project_id (filtro de contrato) só faz sentido no modo serviços; ignora em despesa.
+        $projectId = $mode === 'servicos' && $request->query('project_id')
+            ? (int) $request->query('project_id')
+            : null;
+
+        if ($mode === 'despesa') {
+            $despesas = array_map(
+                fn ($d) => $d + ['cliente' => $customer->name, 'is_paid' => false, 'paid_at' => null],
+                $this->despesasData((int) $customer->id, $yearMonth, $yearMonth),
+            );
+            $export   = new FechamentoConsultorDespesaExport($despesas, $customer->name, $this->periodoExtenso($yearMonth));
+            $fileName = "Despesas_{$yearMonth}_" . $this->sanitizeFilename($customer->name) . ".xlsx";
+            return Excel::download($export, $fileName);
+        }
+
         $periodo    = $this->periodoExtenso($yearMonth);
         $vedamotors = $this->isVedamotors($customer);
-        $rows       = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $vedamotors);
-        $totalValue = $this->clienteTotal((int) $customer->id, $yearMonth);
+        $rows       = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $vedamotors, $projectId);
+        $totalValue = $projectId
+            ? round(collect($rows)->sum(fn ($r) => (float) $r['horas'] * (float) ($r['valor_hora'] ?? 0)), 2)
+            : $this->clienteTotal((int) $customer->id, $yearMonth);
         $export     = new FechamentoClienteExport($rows, $customer->name, $periodo, $totalValue, $vedamotors);
-        $fileName   = "Fechamento_{$yearMonth}_" . $this->sanitizeFilename($customer->name) . ".xlsx";
+
+        // Sufixo com o código do projeto pra diferenciar do download do fechamento completo.
+        $projSuffix = '';
+        if ($projectId) {
+            $apData = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand', $projectId);
+            $first  = $apData['projetos'][0] ?? null;
+            if ($first && !empty($first['projeto_codigo']) && $first['projeto_codigo'] !== '—') {
+                $projSuffix = '_' . $this->sanitizeFilename($first['projeto_codigo']);
+            }
+        }
+        $fileName = "Fechamento_{$yearMonth}_" . $this->sanitizeFilename($customer->name) . "{$projSuffix}.xlsx";
 
         return Excel::download($export, $fileName);
     }
@@ -1338,14 +1814,24 @@ class FechamentoClienteController extends Controller
         }
 
         $request->validate([
-            'fechamento_email' => 'nullable|string',
+            'fechamento_email'         => 'nullable|string',
+            'emails_administrativos'   => 'nullable|array',
+            'emails_administrativos.*' => 'email',
         ]);
 
-        $customer->update(['fechamento_email' => $request->input('fechamento_email')]);
+        // Lista única (mesma usada no comunicado de reajuste). Aceita array OU a string
+        // legada (separada por , ; ou espaço). setAdminEmails sincroniza fechamento_email.
+        $emails = $request->input('emails_administrativos');
+        if ($emails === null && $request->filled('fechamento_email')) {
+            $emails = preg_split('/[,;\s]+/', (string) $request->input('fechamento_email'));
+        }
+        $customer->setAdminEmails($emails ?? []);
+        $customer->save();
 
         return response()->json([
-            'success'          => true,
-            'fechamento_email' => $customer->fechamento_email,
+            'success'                => true,
+            'fechamento_email'       => $customer->fechamento_email,
+            'emails_administrativos' => $customer->adminEmails(),
         ]);
     }
 }

@@ -6,6 +6,9 @@
   <style>
     * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { font-family: 'DejaVu Sans', Arial, sans-serif; color: #1f2937; font-size: 11px; margin: 0; padding: 0; }
+    /* Margem do documento: por página no PDF (@page) e como padding no preview em tela. */
+    @page { margin: 1.3cm 1.5cm; }
+    @media screen { body { padding: 1.3cm 1.5cm; } }
 
     /* Cabeçalho — logo à esquerda + identificação à direita, régua roxa embaixo. */
     table.header { width: 100%; border-collapse: collapse; border-bottom: 2px solid #5b21b6; margin-bottom: 18px; }
@@ -33,6 +36,12 @@
     .right { text-align: right; }
     .nowrap { white-space: nowrap; }
     .section-total { font-size: 11px; font-weight: bold; color: #5b21b6; text-align: right; padding: 4px 6px; }
+
+    /* Observação abaixo de cada apontamento (mesmo padrão do Relatório de Apontamentos). */
+    table.rows tr.ap-row > td { border-bottom: none; padding-bottom: 2px; }
+    /* Separador entre apontamentos: linha cinza mais visível ao fim de cada bloco (apontamento + descrição). */
+    table.rows tr.desc-row > td { border-bottom: 1px solid #d1d5db; padding: 0 6px 7px; font-size: 10.5px; color: #6b7280; line-height: 1.5; vertical-align: top; word-break: break-word; overflow-wrap: anywhere; }
+    .desc-label { font-weight: bold; color: #9ca3af; margin-right: 3px; }
 
     /* Sub-projeto (filho consolidado dentro do contrato) — destaque roxo. */
     .sub-title { font-size: 11px; font-weight: bold; color: #5b21b6; background: #f5f3ff; padding: 4px 10px; margin-top: 8px; border-left: 3px solid #8b5cf6; }
@@ -115,12 +124,15 @@
             </thead>
             <tbody>
               @foreach($sub['linhas'] as $l)
-                <tr>
+                <tr class="ap-row">
                   <td class="nowrap">{{ $l['data'] }}</td>
                   <td>{{ $l['consultor'] }}</td>
                   <td>{{ $l['ticket'] ?: '—' }}</td>
                   <td>{{ $l['titulo'] ?: '—' }}</td>
                   <td class="right nowrap">{{ $l['horas_fmt'] }}</td>
+                </tr>
+                <tr class="desc-row">
+                  <td colspan="5"><span class="desc-label">Descrição:</span>{!! $l['observacao_html'] ?? '—' !!}</td>
                 </tr>
               @endforeach
             </tbody>
@@ -141,12 +153,15 @@
           </thead>
           <tbody>
             @foreach($grupo['linhas'] as $l)
-              <tr>
+              <tr class="ap-row">
                 <td class="nowrap">{{ $l['data'] }}</td>
                 <td>{{ $l['consultor'] }}</td>
                 <td>{{ $l['ticket'] ?: '—' }}</td>
                 <td>{{ $l['titulo'] ?: '—' }}</td>
                 <td class="right nowrap">{{ $l['horas_fmt'] }}</td>
+              </tr>
+              <tr class="desc-row">
+                <td colspan="5"><span class="desc-label">Descrição:</span>{!! $l['observacao_html'] ?? '—' !!}</td>
               </tr>
             @endforeach
           </tbody>

@@ -40,7 +40,7 @@ class FechamentoContratoController extends Controller
             'project.parentProject.customer:id,name,company_name',
         ])
             ->whereBetween('date', [$from, $to])
-            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_LATE])
             ->whereNull('deleted_at')
             ->get();
 
@@ -93,6 +93,13 @@ class FechamentoContratoController extends Controller
                 ($minutesMap[$typeCode][$custId][$rootId] ?? 0) + (int) $ts->effort_minutes;
         }
 
+        // Flag "faturado / NFS-e enviada" por projeto (pai) neste mês (existência da linha).
+        $invoicedSet = \App\Models\OnDemandInvoicedMonth::where('year_month', $yearMonth)
+            ->whereIn('project_id', array_keys($projMeta))
+            ->pluck('project_id')
+            ->flip()
+            ->toArray();
+
         // Para banco de horas: horas consumidas acumuladas (all-time) por projeto raiz
         $bhProjectIds = collect($projMeta)
             ->filter(fn ($p) => in_array($p['type_code'], ['fixed_hours', 'monthly_hours']))
@@ -101,7 +108,7 @@ class FechamentoContratoController extends Controller
 
         $allTimeMinutes = [];
         if ($bhProjectIds->isNotEmpty()) {
-            $allTimeMinutes = Timesheet::whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
+            $allTimeMinutes = Timesheet::whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_LATE])
                 ->whereNull('deleted_at')
                 ->whereIn('project_id', $bhProjectIds)
                 ->selectRaw('project_id, SUM(effort_minutes) as total')
@@ -163,6 +170,7 @@ class FechamentoContratoController extends Controller
                         'excedente_valor' => $excValor,
                         'valor_mensal'    => $mensal,
                         'total_receita'   => $receita,
+                        'invoiced'        => isset($invoicedSet[$projId]),
                     ];
 
                     $custHoras   += $horas;

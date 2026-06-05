@@ -248,15 +248,26 @@ class MovideskService
         // (cliente/projeto/data/horários/effort/observação), o reprocess NÃO
         // sobrescreve mais. Edições do Minutor têm prioridade sobre o sync.
         if (!$timesheet->manual_project_edit) {
-            // Corrige cliente
-            $newCustomerId = $this->extractCustomerId($ticket);
-            if ($newCustomerId && $newCustomerId !== $timesheet->customer_id) {
+            // Corrige cliente — mas NUNCA rebaixa um cliente real para o fallback
+            // (default). Quando a organização do ticket não resolve (não está em
+            // movidesk_organizations), extractCustomerId devolve o cliente default;
+            // se o timesheet já tem cliente real, preserva. Evita o flip-flop que
+            // jogava apontamentos (ex.: DICAST) pro ERPSERV/PROJETO PADRÃO e os
+            // "perdia". Mesma filosofia da blindagem do extractProjectId(forRemap).
+            $newCustomerId      = $this->extractCustomerId($ticket);
+            $defaultCustomerId  = $this->getDefaultCustomerId();
+            $downgradeToDefault = $newCustomerId === $defaultCustomerId
+                && $timesheet->customer_id
+                && $timesheet->customer_id !== $defaultCustomerId;
+            if ($newCustomerId && $newCustomerId !== $timesheet->customer_id && !$downgradeToDefault) {
                 $changes['customer_id'] = ['from' => $timesheet->customer_id, 'to' => $newCustomerId];
                 $timesheet->customer_id = $newCustomerId;
             }
 
             // Corrige projeto usando o cliente atualizado
-            $newProjectId = $this->extractProjectId($timesheet->customer_id);
+            // forRemap=true: só re-mapeia se houver projeto DESIGNADO (chave/org).
+            // Sem isso, NÃO troca o projeto — evita o flip-flop com a chave desativada.
+            $newProjectId = $this->extractProjectId($timesheet->customer_id, true);
             if ($newProjectId && $newProjectId !== $timesheet->project_id) {
                 $changes['project_id'] = ['from' => $timesheet->project_id, 'to' => $newProjectId];
                 $timesheet->project_id = $newProjectId;
@@ -290,7 +301,9 @@ class MovideskService
                 ];
             }
 
-            if ($newDate) {
+            // date_locked: data travada manualmente na aprovação de atraso → o reprocesso
+            // NÃO sobrescreve a data (o aprovador escolheu o mês de inclusão de propósito).
+            if ($newDate && !$timesheet->date_locked) {
                 $currentDate = $timesheet->date
                     ? (is_string($timesheet->date) ? $timesheet->date : $timesheet->date->format('Y-m-d'))
                     : null;
@@ -901,7 +914,7 @@ class MovideskService
         );
     }
 
-    private function extractProjectId(?int $customerId): ?int
+    private function extractProjectId(?int $customerId, bool $forRemap = false): ?int
     {
         if ($customerId) {
             // 1. Prioridade absoluta: projeto com flag movidesk_integration_enabled.
@@ -946,6 +959,14 @@ class MovideskService
                 ]);
             }
 
+            // BLINDAGEM: no RE-MAPEAMENTO (reprocesso), sem projeto DESIGNADO (chave ou
+            // vínculo de org), NÃO adivinha via fallback/padrão — retorna null pra o
+            // reprocesso DEIXAR o apontamento onde está. Evita o flip-flop de projeto
+            // quando a chave movidesk_integration_enabled está desativada.
+            if ($forRemap) {
+                return null;
+            }
+
             // 2. Fallback: busca projeto de sustentação do cliente
             $project = Project::where('customer_id', $customerId)
                 ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
@@ -970,7 +991,8 @@ class MovideskService
             }
         }
 
-        return $this->resolveDefaultProject();
+        // Sem cliente: no re-mapeamento não força projeto padrão (deixa onde está).
+        return $forRemap ? null : $this->resolveDefaultProject();
     }
 
     private function resolveDefaultProject(): ?int
@@ -1235,6 +1257,25 @@ class MovideskService
         return $matches->count() === 1 ? $matches->first() : null;
     }
 
+    /**
+     * Competência fechada para apontamento da integração? (FechamentoAdministrativo
+     * fechado E sem ProjectOpenPeriod reaberto pro projeto+mês). Quando true, o
+     * apontamento vindo da integração entra como STATUS_LATE (aguarda aprovação).
+     */
+    private function isCompetenciaFechada(string $date, int $projectId): bool
+    {
+        $ym   = \Carbon\Carbon::parse($date)->format('Y-m');
+        $fech = \App\Models\FechamentoAdministrativo::where('year_month', $ym)->first();
+        if (!$fech || !$fech->isClosed()) {
+            return false;
+        }
+        $reaberto = \App\Models\ProjectOpenPeriod::where('project_id', $projectId)
+            ->where('year_month', $ym)
+            ->whereNull('closed_at')
+            ->exists();
+        return !$reaberto;
+    }
+
     private function createTimesheet(array $data): void
     {
         DB::beginTransaction();
@@ -1264,8 +1305,20 @@ class MovideskService
             $timesheet->is_internal_action      = $data['is_internal_action'] ?? false;
             $timesheet->origin                  = $data['origin'] ?? 'webhook';
 
+            // SÓ apontamento GENUINAMENTE NOVO vira atraso. Se já existiu um apontamento
+            // (mesmo soft-deletado) pra este movidesk_appointment_id, é RECRIAÇÃO do
+            // reprocesso — NÃO vira late (senão o reprocesso derrubaria horas já fechadas).
+            $jaExistiu = !empty($data['movidesk_appointment_id'])
+                && Timesheet::withTrashed()
+                    ->where('movidesk_appointment_id', $data['movidesk_appointment_id'])
+                    ->exists();
+
             if ($data['is_internal_action'] ?? false) {
                 $timesheet->status = Timesheet::STATUS_INTERNAL;
+            } elseif (!$jaExistiu && $this->isCompetenciaFechada($data['date'], (int) $data['project_id'])) {
+                // Atraso pós-fechamento: apontamento NOVO chegou pela integração com data em
+                // competência já fechada. NÃO entra no período — aguarda aprovação na tela de Atrasos.
+                $timesheet->status = Timesheet::STATUS_LATE;
             } else {
                 $timesheet->status = $conflict
                     ? Timesheet::STATUS_CONFLICTED

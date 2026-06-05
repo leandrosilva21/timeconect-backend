@@ -40,6 +40,9 @@ class Timesheet extends Model
     public const STATUS_ADJUSTMENT_REQUESTED = 'adjustment_requested';
     public const STATUS_INTERNAL = 'internal';
     public const STATUS_RELEASED = 'released';
+    // Atraso pós-fechamento: apontamento chegou pela integração com data em competência
+    // já fechada. Fica fora de fechamento/consumo/dashboards até ser aprovado na tela de Atrasos.
+    public const STATUS_LATE = 'late';
 
     /**
      * The attributes that are mass assignable.
@@ -52,6 +55,7 @@ class Timesheet extends Model
         'project_id',
         'stage_id',
         'stage_delivery_id',
+        'real_project_id',
         'date',
         'start_time',
         'end_time',
@@ -68,6 +72,7 @@ class Timesheet extends Model
         'reviewed_by',
         'reviewed_at',
         'manual_project_edit',
+        'date_locked',
     ];
 
     /**
@@ -80,6 +85,7 @@ class Timesheet extends Model
         'is_billable_only'    => 'boolean',
         'is_internal_action'  => 'boolean',
         'manual_project_edit' => 'boolean',
+        'date_locked'         => 'boolean',
         'client_extra_pct'    => 'decimal:2',
         'consultant_extra_pct'=> 'decimal:2',
         'start_time' => 'datetime:H:i',
@@ -131,6 +137,7 @@ class Timesheet extends Model
             self::STATUS_ADJUSTMENT_REQUESTED => 'Ajuste Solicitado',
             self::STATUS_INTERNAL             => 'Ação Interna',
             self::STATUS_RELEASED             => 'Liberado',
+            self::STATUS_LATE                 => 'Atraso (pós-fechamento)',
         ];
     }
 
@@ -159,14 +166,42 @@ class Timesheet extends Model
     }
 
     /**
-     * Converte total_hours (formato HH:MM) para effort_minutes
+     * Converte uma string `total_hours` em minutos (int) ou null se inválido.
+     * Aceita 3 formatos:
+     *   - HH:MM     ("4:30"   → 270)
+     *   - Decimal   ("4.5", "4,5" → 270; "4.25" → 255; "4.75" → 285)
+     *   - Inteiro   ("4"      → 240)
+     *
+     * Centralizado aqui pra que TimesheetController (store + update) e setTotalHours
+     * usem a mesma regra. Fração com mais de 2 casas é arredondada.
+     */
+    public static function parseTotalHoursToMinutes(?string $totalHours): ?int
+    {
+        if ($totalHours === null || $totalHours === '') {
+            return null;
+        }
+        // HH:MM (minutos 00-59)
+        if (preg_match('/^(\d+):([0-5][0-9])$/', $totalHours, $m)) {
+            return ((int) $m[1]) * 60 + ((int) $m[2]);
+        }
+        // Decimal (ponto ou vírgula) ou inteiro puro
+        if (preg_match('/^(\d+)(?:[.,](\d{1,2}))?$/', $totalHours, $m)) {
+            $hours    = (int) $m[1];
+            $fracStr  = $m[2] ?? '';
+            $fraction = $fracStr === '' ? 0.0 : (float) ('0.' . $fracStr);
+            return $hours * 60 + (int) round($fraction * 60);
+        }
+        return null;
+    }
+
+    /**
+     * Converte total_hours (HH:MM ou decimal) para effort_minutes do model.
      */
     public function setTotalHours(string $totalHours): void
     {
-        if (preg_match('/^(\d+):([0-5][0-9])$/', $totalHours, $matches)) {
-            $hours = intval($matches[1]);
-            $minutes = intval($matches[2]);
-            $this->effort_minutes = ($hours * 60) + $minutes;
+        $minutes = self::parseTotalHoursToMinutes($totalHours);
+        if ($minutes !== null) {
+            $this->effort_minutes = $minutes;
         }
     }
 
@@ -250,6 +285,15 @@ class Timesheet extends Model
                 $this->attributes['stage_id'] = $delivery->stage_id;
             }
         }
+    }
+
+    /**
+     * Projeto REAL do apontamento de investimento (referência). O consumo é contabilizado
+     * no project_id (investimento); o real define o coordenador que aprova.
+     */
+    public function realProject(): BelongsTo
+    {
+        return $this->belongsTo(Project::class, 'real_project_id');
     }
 
     /**
@@ -366,7 +410,17 @@ class Timesheet extends Model
             return true;
         }
 
-        if (!$user->isCoordenador() || !$this->project) {
+        if (!$this->project) {
+            return false;
+        }
+
+        // Investimento COMERCIAL: o EXECUTIVO do cliente aprova (mesmo sem ser coordenador).
+        if ($this->project->is_investimento_comercial && $this->project->categoria_interna === 'Comercial') {
+            return $this->customer_id && \App\Models\Customer::where('id', $this->customer_id)
+                ->where('executive_id', $user->id)->exists();
+        }
+
+        if (!$user->isCoordenador()) {
             return false;
         }
 
@@ -376,6 +430,13 @@ class Timesheet extends Model
                 \App\Models\ServiceType::where('id', $this->project->service_type_id)
                     ->where('code', 'sustentacao')
                     ->exists();
+        }
+
+        // Apontamento de INVESTIMENTO (Suporte/Projeto): aprova o coordenador do PROJETO REAL.
+        if ($this->project->is_investimento_comercial && $this->real_project_id) {
+            return \App\Models\Project::where('id', $this->real_project_id)
+                ->whereHas('coordinators', fn($q) => $q->where('users.id', $user->id))
+                ->exists();
         }
 
         // Coordenador de projetos aprova projetos onde está vinculado como coordenador

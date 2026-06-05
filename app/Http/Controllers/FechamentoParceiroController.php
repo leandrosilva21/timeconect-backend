@@ -31,7 +31,7 @@ class FechamentoParceiroController extends Controller
     private function effectiveHourlyRate(float $hourlyRate, string $rateType): float
     {
         return ($rateType === 'monthly' && $hourlyRate > 0)
-            ? round($hourlyRate / 180, 4)
+            ? round($hourlyRate / 160, 4)
             : $hourlyRate;
     }
 
@@ -60,10 +60,8 @@ class FechamentoParceiroController extends Controller
     /** Formata horas decimais como HHhMM (ex.: 12.5 -> "12h30"). */
     private function fmtHoras(float $h): string
     {
-        $totalMins = abs((int) round($h * 60));
-        $hrs  = intdiv($totalMins, 60);
-        $mins = $totalMins % 60;
-        return sprintf('%dh%02d', $hrs, $mins);
+        // Horas em DECIMAL 2 casas (pt-BR) — total bate com horas × taxa.
+        return number_format($h, 2, ',', '.');
     }
 
     /** Remove acentos/espaços/barras de um nome para uso em filename. */
@@ -78,9 +76,14 @@ class FechamentoParceiroController extends Controller
     }
 
     /** Mensagem padrão (corpo) do e-mail de fechamento — editável na tela antes de enviar. */
-    private function defaultMensagem(string $periodo): string
+    private function defaultMensagem(string $periodo, string $yearMonth, string $mode = 'ambos'): string
     {
-        return "Segue em anexo o fechamento referente ao período de {$periodo}.\n\nEm caso de dúvidas ou divergências, por gentileza entrar em contato.";
+        $doc = $mode === 'despesa' ? 'a apuração das despesas' : 'o fechamento';
+        // Recebimento sempre no dia 20 do mês seguinte à competência.
+        $dataRecebimento = \Carbon\Carbon::parse($yearMonth . '-01')->addMonth()->day(20)->format('d/m/Y');
+        return "Este e-mail é apenas para informar que o seu recebimento será no dia {$dataRecebimento}.\n\n"
+            . "Segue em anexo {$doc} referente ao período de {$periodo}.\n\n"
+            . "ATENÇÃO: Para garantir o bom andamento dos processos financeiros, pedimos que, ao receber o fechamento, revise todas as informações com atenção e informe imediatamente ao departamento financeiro se houver necessidade de ajustes. Para consultores que emitem notas fiscais pedimos que as notas sejam enviadas com antecedência, para evitar impacto no fluxo do financeiro.";
     }
 
     // ─── Index ────────────────────────────────────────────────────────────────
@@ -91,7 +94,7 @@ class FechamentoParceiroController extends Controller
 
         $partners = Partner::whereRaw('"active" = true')
             ->orderBy('name')
-            ->get(['id', 'name', 'pricing_type', 'hourly_rate']);
+            ->get(['id', 'name', 'pricing_type', 'hourly_rate', 'contract_type']);
 
         $fechamentos = $yearMonth
             ? FechamentoParceiro::where('year_month', $yearMonth)
@@ -104,21 +107,78 @@ class FechamentoParceiroController extends Controller
             \App\Models\FechamentoSendStatus::TIPO_PARCEIRO, $yearMonth, $partners->pluck('id')->all(),
         );
 
-        $data = $partners->map(function ($partner) use ($fechamentos, $envioMap) {
+        // Notas fiscais PJ (NFS-e + Nota de débito) por parceiro no mês.
+        $notasMap = $yearMonth
+            ? \App\Models\FechamentoNota::where('notable_type', Partner::class)
+                ->where('year_month', $yearMonth)
+                ->whereIn('notable_id', $partners->pluck('id'))
+                ->get()->keyBy('notable_id')
+            : collect();
+
+        // Ajustes manuais (desconto/adiantamento/adicional) por parceiro no mês.
+        $ajustesMap = $yearMonth
+            ? \App\Models\FechamentoParceiroAjuste::where('year_month', $yearMonth)
+                ->get()->keyBy('partner_id')
+            : collect();
+
+        $data = $partners->map(function ($partner) use ($fechamentos, $envioMap, $notasMap, $ajustesMap, $yearMonth) {
             $f = $fechamentos->get($partner->id);
+
+            $ajuste       = $ajustesMap->get($partner->id);
+            $desconto     = round((float) ($ajuste->desconto ?? 0), 2);
+            $adiantamento = round((float) ($ajuste->adiantamento ?? 0), 2);
+            $adicional    = round((float) ($ajuste->adicional ?? 0), 2);
+
+            // Quebra serviços × despesas. O pagamento de SERVIÇOS (mão de obra) é sem despesas —
+            // usado no Relatório de Pagamentos, onde despesas (reembolso) não entram no valor.
+            $servicos = 0.0; $despesasReais = 0.0;
+            if ($yearMonth) {
+                if ($f?->isClosed()) {
+                    $servicos      = round(collect($f->snapshot_consultores ?? [])->sum('total'), 2);
+                    $despesasReais = round((float) ($f->total_despesas ?? 0), 2);
+                } else {
+                    $servicos      = round(collect($this->consultoresData($partner, $yearMonth))->sum('total'), 2);
+                    $despesasReais = round(collect($this->despesasData((int) $partner->id, $yearMonth))->where('is_paid', false)->sum('valor'), 2);
+                }
+            }
+
+            // Total a pagar = base (serviços + despesas), SEM ajustes. Recebimento = base − desconto − adiantamento + adicional.
+            // No snapshot fechado o total_a_pagar gravado JÁ inclui os ajustes (= recebimento); reconstrói a base p/ exibição.
+            if ($f?->isClosed()) {
+                $recebimento = round((float) ($f->total_a_pagar ?? 0), 2);
+                $totalAPagar = round($recebimento + $desconto + $adiantamento - $adicional, 2);
+            } else {
+                $totalAPagar = round($servicos + $despesasReais, 2);
+                $recebimento = round($totalAPagar - $desconto - $adiantamento + $adicional, 2);
+            }
+            $recebimentoSemDespesas = round($recebimento - $despesasReais, 2);
+
             return [
                 'partner_id'     => $partner->id,
                 'nome'           => $partner->name,
+                'contract_type'  => $partner->contract_type,
+                'notas'          => $partner->contract_type === 'pj'
+                    ? (optional($notasMap->get($partner->id))->toRowPayload() ?? \App\Models\FechamentoNota::emptyRowPayload())
+                    : null,
                 'pricing_type'   => $partner->pricing_type,
                 'hourly_rate'    => (float) ($partner->hourly_rate ?? 0),
                 'status'         => $f?->status ?? 'sem_registro',
                 'total_horas'    => (float) ($f?->total_horas ?? 0),
                 'total_despesas' => (float) ($f?->total_despesas ?? 0),
-                'total_a_pagar'  => (float) ($f?->total_a_pagar ?? 0),
+                'total_servicos' => $servicos,
+                'total_a_pagar'  => round($totalAPagar, 2),
                 'closed_at'      => $f?->closed_at?->toISOString(),
                 'closed_by_name' => $f?->closedByUser?->name,
                 'envio_em'       => $envioMap[$partner->id]['envio_em'] ?? null,
                 'envio_por'      => $envioMap[$partner->id]['envio_por'] ?? null,
+                // Ajustes do recebimento.
+                'desconto'       => $desconto,
+                'desconto_desc'  => $ajuste->desconto_desc ?? null,
+                'adiantamento'   => $adiantamento,
+                'adicional'      => $adicional,
+                'adicional_desc' => $ajuste->adicional_desc ?? null,
+                'recebimento'    => $recebimento,
+                'recebimento_sem_despesas' => $recebimentoSemDespesas,
             ];
         });
 
@@ -180,13 +240,20 @@ class FechamentoParceiroController extends Controller
         $totalServicos = round(collect($consultores)->sum('total'), 2);
         $totalDespesas = round(collect($despesas)->sum('valor'), 2);
 
+        // Ajustes manuais do recebimento entram no total a pagar gravado no snapshot.
+        $ajuste        = \App\Models\FechamentoParceiroAjuste::where('partner_id', $partnerId)
+            ->where('year_month', $yearMonth)->first();
+        $desconto      = round((float) ($ajuste->desconto ?? 0), 2);
+        $adiantamento  = round((float) ($ajuste->adiantamento ?? 0), 2);
+        $adicional     = round((float) ($ajuste->adicional ?? 0), 2);
+
         $fechamento->fill([
             'status'               => 'closed',
             'snapshot_consultores' => $consultores,
             'snapshot_despesas'    => $despesas,
             'total_horas'          => $totalHoras,
             'total_despesas'       => $totalDespesas,
-            'total_a_pagar'        => round($totalServicos + $totalDespesas, 2),
+            'total_a_pagar'        => round($totalServicos + $totalDespesas - $desconto - $adiantamento + $adicional, 2),
             'closed_at'            => now(),
             'closed_by'            => $request->user()->id,
             'notes'                => $request->input('notes'),
@@ -235,7 +302,7 @@ class FechamentoParceiroController extends Controller
         foreach ($users as $user) {
             $minutos = Timesheet::where('user_id', $user->id)
                 ->whereBetween('date', [$from, $to])
-                ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL])
+                ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
                 ->whereNull('deleted_at')
                 ->where('is_internal_action', false)
                 ->sum('effort_minutes');
@@ -251,6 +318,10 @@ class FechamentoParceiroController extends Controller
                 );
             }
 
+            // Parceiro ADM (is_executive) também fatura as horas dele quando tem
+            // apontamento — pago igual à equipe do parceiro (regra 2026-06-02).
+            $isParceiroAdm = (bool) $user->is_executive;
+
             $rows[] = [
                 'user_id'              => $user->id,
                 'nome'                 => $user->name,
@@ -258,6 +329,7 @@ class FechamentoParceiroController extends Controller
                 'rate_type'            => $user->rate_type ?? 'hourly',
                 'valor_hora'           => $valorHora,
                 'pricing_type_parceiro'=> $partner->pricing_type,
+                'is_parceiro_adm'      => $isParceiroAdm,
                 'total'                => round($horas * $valorHora, 2),
             ];
         }
@@ -265,7 +337,7 @@ class FechamentoParceiroController extends Controller
         return $rows;
     }
 
-    private function despesasData(int $partnerId, string $yearMonth): array
+    public function despesasData(int $partnerId, string $yearMonth): array
     {
         [$from, $to] = $this->period($yearMonth);
 
@@ -282,7 +354,8 @@ class FechamentoParceiroController extends Controller
         // no relatório com indicador, mas NÃO entra no total a pagar do fechamento.
         return Expense::with([
             'user:id,name',
-            'project:id,name,code',
+            'project:id,name,code,customer_id',
+            'project.customer:id,name',
             'category:id,name',
             'paidByUser:id,name',
         ])
@@ -296,6 +369,7 @@ class FechamentoParceiroController extends Controller
                 'descricao'    => $e->description,
                 'categoria'    => $e->category->name ?? '—',
                 'colaborador'  => $e->user->name ?? '—',
+                'cliente'      => $e->project?->customer?->name ?? '—',
                 'projeto'      => $e->project->name ?? '—',
                 'valor'        => (float) $e->amount,
                 'status'       => $e->status,
@@ -330,7 +404,7 @@ class FechamentoParceiroController extends Controller
             return [];
         }
 
-        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE];
 
         return Timesheet::with([
             'user:id,name',
@@ -414,7 +488,7 @@ class FechamentoParceiroController extends Controller
     }
 
     /** Agrupa as linhas de apontamento por consultor, para o PDF. */
-    private function buildPdfGroups(array $rows): array
+    private function buildPdfGroups(array $rows, array $calcByUser = []): array
     {
         $byConsultor = [];
         foreach ($rows as $r) {
@@ -434,10 +508,23 @@ class FechamentoParceiroController extends Controller
                     'horas_fmt' => $this->fmtHoras((float) ($l['horas'] ?? 0)),
                 ];
             }
+            // Taxa/hora e total do consultor (do consultoresData) — exibidos no cabeçalho do grupo.
+            // Strings montadas em PHP (sem @if no Blade) — evita erro de parse na view.
+            $uid       = $items[0]['user_id'] ?? null;
+            $calc      = ($uid !== null && isset($calcByUser[$uid])) ? $calcByUser[$uid] : null;
+            $valorHora = $calc ? (float) ($calc['valor_hora'] ?? 0) : 0.0;
+            $totalCons = $calc ? (float) ($calc['total'] ?? 0) : round($horas * $valorHora, 2);
+            $horasFmt  = $this->fmtHoras($horas);
+            $vhFmt     = $valorHora > 0 ? $this->brl($valorHora) : null;
+            $totFmt    = $this->brl($totalCons);
             $grupos[] = [
-                'consultor' => $consultor,
-                'linhas'    => $linhas,
-                'horas_fmt' => $this->fmtHoras($horas),
+                'consultor'      => $consultor,
+                'linhas'         => $linhas,
+                'horas_fmt'      => $horasFmt,
+                'valor_hora_fmt' => $vhFmt,
+                'total_fmt'      => $totFmt,
+                'header_line'    => $consultor . ' — ' . $horasFmt . ($vhFmt ? ' · Taxa ' . $vhFmt . '/h' : '') . ' · ' . $totFmt,
+                'subtotal_line'  => 'Subtotal ' . $consultor . ': ' . $horasFmt . ($vhFmt ? ' × ' . $vhFmt : '') . ' = ' . $totFmt,
             ];
         }
 
@@ -452,16 +539,76 @@ class FechamentoParceiroController extends Controller
      *   pdf_name:string, xlsx_name:string, total_value:float
      * }
      */
-    private function generateParceiroFiles(Partner $partner, string $yearMonth): array
+    /**
+     * View-data ÚNICA do relatório do parceiro — usada PELA TELA (endpoint reportHtml)
+     * E pelo PDF/e-mail (generateParceiroFiles), garantindo que sejam IDÊNTICOS.
+     */
+    private function buildParceiroReportView(Partner $partner, string $yearMonth, string $mode = 'ambos'): array
     {
         $periodo    = $this->periodoExtenso($yearMonth);
         $rows       = $this->parceiroApontamentosRows((string) $partner->id, $yearMonth);
-        $totalValue = $this->parceiroTotals($partner, $yearMonth);
+        $totalAll   = $this->parceiroTotals($partner, $yearMonth);
         $totalHoras = round(collect($rows)->sum('horas'), 2);
 
+        $soDespesa = $mode === 'despesa';
+        $soServico = $mode === 'servicos';
+
+        $despesasAll     = $this->despesasData((int) $partner->id, $yearMonth);
+        $despesas        = array_values(array_filter($despesasAll, fn ($d) => !$d['is_paid']));
+        $despesasAntecip = array_values(array_filter($despesasAll, fn ($d) => $d['is_paid']));
+        $totalDespesas   = round(collect($despesas)->sum('valor'), 2);
+        $totalServicos   = round($totalAll - $totalDespesas, 2);
+        $totalValue      = $soDespesa ? $totalDespesas : ($soServico ? $totalServicos : $totalAll);
+
+        // Taxa/hora por consultor (consultoresData) — alimenta o cabeçalho de cada grupo
+        // e o card "Taxa/Hora" do resumo (quando o parceiro tem uma única taxa).
+        $calc      = collect($this->consultoresData($partner, $yearMonth))->keyBy('user_id')->all();
+        $ratesUnis = collect($calc)->pluck('valor_hora')->filter(fn ($v) => (float) $v > 0)->map(fn ($v) => round((float) $v, 4))->unique()->values();
+        $taxaHoraFmt = $ratesUnis->count() === 1 ? $this->brl((float) $ratesUnis[0]) : ($ratesUnis->count() > 1 ? 'por consultor' : '—');
+
+        // Logo ERPSERV embutido (base64) — mesmo modelo do relatório de consultor/cliente.
+        $logoFile    = public_path('logo-erpserv.png');
+        $logoDataUri = is_file($logoFile) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($logoFile)) : '';
+
+        return [
+            'parceiroName'     => $partner->name,
+            'periodo'          => $periodo,
+            'logoDataUri'      => $logoDataUri,
+            'mode'             => $mode,
+            'totalHorasFmt'    => $this->fmtHoras($totalHoras),
+            'taxaHoraFmt'      => $taxaHoraFmt,
+            'valorTotal'       => $this->brl($totalValue),
+            'grupos'           => $soDespesa ? [] : $this->buildPdfGroups($rows, $calc),
+            'despesas'         => $soServico ? [] : $despesas,
+            'despesasAntecip'  => $soServico ? [] : $despesasAntecip,
+            'totalServicosFmt' => $this->brl($totalServicos),
+            'totalDespesasFmt' => $this->brl($totalDespesas),
+            'brl'              => fn ($v) => $this->brl((float) $v),
+        ];
+    }
+
+    /** GET /fechamento-parceiro/{partnerId}/{yearMonth}/report-html?mode= — HTML do relatório (mesma fonte do PDF). */
+    public function reportHtml(Request $request, string $partnerId, string $yearMonth): JsonResponse
+    {
+        $partner = Partner::findOrFail($partnerId);
+        $mode    = $request->query('mode', 'ambos');
+        $html    = view('pdf.fechamento-parceiro', $this->buildParceiroReportView($partner, $yearMonth, $mode))->render();
+        return response()->json(['html' => $html]);
+    }
+
+    private function generateParceiroFiles(Partner $partner, string $yearMonth, string $mode = 'ambos'): array
+    {
+        $periodo    = $this->periodoExtenso($yearMonth);
+        $rows       = $this->parceiroApontamentosRows((string) $partner->id, $yearMonth);
+        $totalAll   = $this->parceiroTotals($partner, $yearMonth); // serviços + despesas
+        $totalHoras = round(collect($rows)->sum('horas'), 2);
+
+        $soDespesa = $mode === 'despesa';
+        $soServico = $mode === 'servicos';
+        $prefix    = $soDespesa ? 'Despesas' : 'Fechamento';
         $safeName     = $this->sanitizeFilename($partner->name);
-        $pdfFileName  = "Fechamento_{$yearMonth}_{$safeName}.pdf";
-        $xlsxFileName = "Fechamento_{$yearMonth}_{$safeName}.xlsx";
+        $pdfFileName  = "{$prefix}_{$yearMonth}_{$safeName}.pdf";
+        $xlsxFileName = "{$prefix}_{$yearMonth}_{$safeName}.xlsx";
         $dir          = 'fechamentos';
         $pdfRelPath   = "{$dir}/{$pdfFileName}";
         $xlsxRelPath  = "{$dir}/{$xlsxFileName}";
@@ -479,26 +626,19 @@ class FechamentoParceiroController extends Controller
         $despesasAll       = $this->despesasData((int) $partner->id, $yearMonth);
         $despesas          = array_values(array_filter($despesasAll, fn ($d) => !$d['is_paid']));
         $despesasAntecip   = array_values(array_filter($despesasAll, fn ($d) => $d['is_paid']));
-        $totalServicos     = round($totalValue - round(collect($despesas)->sum('valor'), 2), 2);
         $totalDespesas     = round(collect($despesas)->sum('valor'), 2);
+        $totalServicos     = round($totalAll - $totalDespesas, 2);
+        $totalValue        = $soDespesa ? $totalDespesas : ($soServico ? $totalServicos : $totalAll);
 
-        // ── PDF ──
-        $pdf = Pdf::loadView('pdf.fechamento-parceiro', [
-            'parceiroName'     => $partner->name,
-            'periodo'          => $periodo,
-            'totalHorasFmt'    => $this->fmtHoras($totalHoras),
-            'valorTotal'       => $this->brl($totalValue),
-            'grupos'           => $this->buildPdfGroups($rows),
-            'despesas'         => $despesas,
-            'despesasAntecip'  => $despesasAntecip,
-            'totalServicosFmt' => $this->brl($totalServicos),
-            'totalDespesasFmt' => $this->brl($totalDespesas),
-            'brl'              => fn ($v) => $this->brl((float) $v),
-        ])->setPaper('a4', 'portrait');
+        // ── PDF ── (MESMA fonte/Blade do relatório da tela → tela = e-mail idênticos)
+        $pdf = Pdf::loadView('pdf.fechamento-parceiro', $this->buildParceiroReportView($partner, $yearMonth, $mode))
+            ->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
         file_put_contents($pdfFullPath, $pdf->output());
 
         // ── XLSX ──
-        $export = new FechamentoParceiroExport($rows, $partner->name, $periodo, $totalValue);
+        $export = $soDespesa
+            ? new \App\Exports\FechamentoConsultorDespesaExport($despesasAll, $partner->name, $periodo)
+            : new FechamentoParceiroExport($rows, $partner->name, $periodo, $totalValue);
         file_put_contents($xlsxFullPath, Excel::raw($export, \Maatwebsite\Excel\Excel::XLSX));
 
         return [
@@ -527,7 +667,17 @@ class FechamentoParceiroController extends Controller
         }
 
         $periodo        = $this->periodoExtenso($yearMonth);
-        $mensagemPadrao = $this->defaultMensagem($periodo);
+        $mode           = $request->input('mode', 'ambos');
+        $totalAll       = $this->parceiroTotals($partner, $yearMonth); // serviços + despesas
+        $totalDesp      = round(collect($this->despesasData((int) $partner->id, $yearMonth))->where('is_paid', false)->sum('valor'), 2);
+        $valorPreview   = $mode === 'despesa' ? $totalDesp : ($mode === 'servicos' ? $totalAll - $totalDesp : $totalAll);
+        $mensagemPadrao = $this->defaultMensagem($periodo, $yearMonth, $mode);
+        // Semeia a partir do modelo do cadastro (por tipo de contrato), se houver ativo.
+        $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
+        $vars = ['nome' => $partner->name, 'periodo' => $periodo, 'valor' => $this->brl($valorPreview)];
+        if ($tpl = $svc->resolve('parceiro', $partner->contract_type, $vars, $yearMonth)) {
+            $mensagemPadrao = $tpl['body'];
+        }
         $mensagem       = trim((string) $request->input('mensagem'));
         $mensagem       = $mensagem !== '' ? $mensagem : $mensagemPadrao;
 
@@ -535,7 +685,8 @@ class FechamentoParceiroController extends Controller
             'parceiroName'    => $partner->name,
             'senderName'      => $sender->name,
             'periodo'         => $periodo,
-            'valorTotal'      => $this->brl($this->parceiroTotals($partner, $yearMonth)),
+            'mode'            => $mode,
+            'valorTotal'      => $this->brl($valorPreview),
             'withAttachments' => true,
             'mensagem'        => $mensagem,
         ])->render();
@@ -571,7 +722,9 @@ class FechamentoParceiroController extends Controller
             'mensagem' => 'nullable|string', // corpo editável; vazio = mensagem padrão
             'emails'   => 'nullable|array',
             'emails.*' => 'email',
+            'mode'     => 'nullable|string|in:servicos,despesa,ambos',
         ]);
+        $mode = $request->input('mode', 'ambos');
 
         $partner = Partner::find($partnerId);
         if (!$partner) {
@@ -580,7 +733,7 @@ class FechamentoParceiroController extends Controller
 
         $periodo      = $this->periodoExtenso($yearMonth);
         $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
-        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo);
+        $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo, $yearMonth, $mode);
 
         // Destinatários: e-mails informados na tela (To) ou, se vazios, os parceiro_admin.
         $customEmails = $request->input('emails') ?: [];
@@ -602,10 +755,24 @@ class FechamentoParceiroController extends Controller
             ], 422);
         }
 
-        $subject = 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Horas - ' . $partner->name;
+        $subject = $mode === 'despesa'
+            ? 'Despesas ' . $this->periodoMMAAAA($yearMonth) . ' | Reembolso - ' . $partner->name
+            : 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Horas - ' . $partner->name;
 
-        $files      = $this->generateParceiroFiles($partner, $yearMonth);
+        $files      = $this->generateParceiroFiles($partner, $yearMonth, $mode);
         $totalValue = $files['total_value'];
+
+        // Modelo de e-mail do cadastro (por tipo de contrato do parceiro). Só quando
+        // NÃO houve corpo manual; cai no default acima se não houver modelo ativo.
+        if (trim((string) $request->input('mensagem')) === '') {
+            $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
+            $vars = ['nome' => $partner->name, 'periodo' => $periodo, 'valor' => $this->brl($totalValue)];
+            $tpl  = $svc->resolve('parceiro', $partner->contract_type, $vars, $yearMonth);
+            if ($tpl) {
+                $mensagem = $tpl['body'];
+                if ($tpl['subject'] !== '') $subject = $tpl['subject'];
+            }
+        }
 
         // Envia COMO o remetente (App Password O365) quando configurado; senão, remetente padrão.
         $mc = \App\Services\SenderMailer::for(
@@ -632,6 +799,7 @@ class FechamentoParceiroController extends Controller
                 withAttachments: true,
                 fromAddress:     $mc['from_address'],
                 fromName:        $mc['from_name'],
+                mode:            $mode,
             );
 
             // Microsoft Graph (Send As do remetente) quando configurado; senão, SMTP atual.
@@ -699,6 +867,15 @@ class FechamentoParceiroController extends Controller
         }
 
         $periodo    = $this->periodoExtenso($yearMonth);
+        $mode       = $request->query('mode', 'ambos');
+
+        // Relatório SÓ de despesas → planilha de despesas.
+        if ($mode === 'despesa') {
+            $export   = new \App\Exports\FechamentoConsultorDespesaExport($this->despesasData((int) $partner->id, $yearMonth), $partner->name, $periodo);
+            $fileName = "Despesas_{$yearMonth}_" . $this->sanitizeFilename($partner->name) . ".xlsx";
+            return Excel::download($export, $fileName);
+        }
+
         $rows       = $this->parceiroApontamentosRows((string) $partner->id, $yearMonth);
         $totalValue = $this->parceiroTotals($partner, $yearMonth);
         $export     = new FechamentoParceiroExport($rows, $partner->name, $periodo, $totalValue);
@@ -729,6 +906,62 @@ class FechamentoParceiroController extends Controller
         return response()->json([
             'success'          => true,
             'fechamento_email' => $partner->fechamento_email,
+        ]);
+    }
+
+    // ─── Ajustes do recebimento ──────────────────────────────────────────────────
+    /**
+     * POST /fechamento-parceiro/{partnerId}/{yearMonth}/ajustes
+     * Salva (upsert) os ajustes manuais de um parceiro no mês:
+     * desconto / adiantamento / adicional (+ descritivos de desconto e adicional).
+     * Recebimento = serviços + despesas − desconto − adiantamento + adicional.
+     */
+    public function salvarAjustes(Request $request, string $partnerId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
+        }
+
+        $data = $request->validate([
+            'desconto'       => 'nullable|numeric',
+            'desconto_desc'  => 'nullable|string',
+            'adiantamento'   => 'nullable|numeric',
+            'adicional'      => 'nullable|numeric',
+            'adicional_desc' => 'nullable|string',
+        ]);
+
+        $partner = Partner::find($partnerId);
+        if (!$partner) {
+            return response()->json(['success' => false, 'message' => 'Parceiro não encontrado.'], 404);
+        }
+
+        $ajuste = \App\Models\FechamentoParceiroAjuste::updateOrCreate(
+            ['partner_id' => (int) $partnerId, 'year_month' => $yearMonth],
+            [
+                'desconto'       => round((float) ($data['desconto'] ?? 0), 2),
+                'desconto_desc'  => $data['desconto_desc'] ?? null,
+                'adiantamento'   => round((float) ($data['adiantamento'] ?? 0), 2),
+                'adicional'      => round((float) ($data['adicional'] ?? 0), 2),
+                'adicional_desc' => $data['adicional_desc'] ?? null,
+            ]
+        );
+
+        // Recalcula o recebimento (serviços + despesas − desconto − adiantamento + adicional).
+        $totalAPagar = $this->parceiroTotals($partner, $yearMonth);
+        $recebimento = round(
+            $totalAPagar
+            - (float) $ajuste->desconto
+            - (float) $ajuste->adiantamento
+            + (float) $ajuste->adicional,
+            2
+        );
+
+        return response()->json([
+            'success'       => true,
+            'ajuste'        => $ajuste,
+            'total_a_pagar' => round($totalAPagar, 2),
+            'recebimento'   => $recebimento,
         ]);
     }
 }

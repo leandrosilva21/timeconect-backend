@@ -1522,7 +1522,7 @@ class FechamentoClienteController extends Controller
 
         // Semeia a partir do modelo do cadastro (cliente é único), se houver ativo.
         $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
-        $vars = ['nome' => $customer->name, 'periodo' => $periodo, 'valor' => $valorTotal];
+        $vars = ['nome' => $customer->name, 'empresa' => $customer->name, 'razao_social' => $customer->company_name ?: $customer->name, 'periodo' => $periodo, 'valor' => $valorTotal];
         if ($tpl = $svc->resolve('cliente', null, $vars, $yearMonth)) {
             $mensagemPadrao = $tpl['body'];
         }
@@ -1623,7 +1623,7 @@ class FechamentoClienteController extends Controller
         // manual; cai no default acima se não houver modelo ativo.
         if (trim((string) $request->input('mensagem')) === '') {
             $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
-            $vars = ['nome' => $customer->name, 'periodo' => $periodo, 'valor' => $this->brl($totalValue)];
+            $vars = ['nome' => $customer->name, 'empresa' => $customer->name, 'razao_social' => $customer->company_name ?: $customer->name, 'periodo' => $periodo, 'valor' => $this->brl($totalValue)];
             $tpl  = $svc->resolve('cliente', null, $vars, $yearMonth);
             if ($tpl) {
                 $mensagem = $tpl['body'];

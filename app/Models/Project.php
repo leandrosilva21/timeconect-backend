@@ -1290,8 +1290,19 @@ class Project extends Model
             return (float) ($this->sold_hours ?? 0) + $newContributions;
         }
 
-        // Fallback: usar aporte legado (para projetos antigos)
-        return (float) ($this->sold_hours ?? 0) + (float) ($this->hour_contribution ?? 0);
+        // Sem aportes ATIVOS. O aporte LEGADO (coluna denormalizada hour_contribution)
+        // só vale para projetos que NUNCA usaram o sistema novo. Se o projeto já teve
+        // aporte no sistema novo e foi excluído (soft-delete), o legado é stale — a
+        // migração copiou legado→novo sem zerar a coluna — então ignora (senão o aporte
+        // excluído "ressuscita" na lista de Gestão de Projetos).
+        $legacy = (float) ($this->hour_contribution ?? 0);
+        if ($legacy <= 0) {
+            return (float) ($this->sold_hours ?? 0);
+        }
+        if ($this->hourContributions()->withTrashed()->exists()) {
+            return (float) ($this->sold_hours ?? 0);
+        }
+        return (float) ($this->sold_hours ?? 0) + $legacy;
     }
 
     /**

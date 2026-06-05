@@ -776,6 +776,20 @@ class Project extends Model
     }
 
     /**
+     * Pool de horas que o Cronograma pode distribuir entre etapas/aportes.
+     *
+     * Regra (horas do coordenador): as horas disponibilizadas no cronograma são
+     * as LIBERADAS À GESTÃO — ou seja, o banco de coordenação (coordination_hours).
+     * Só libera 100% das horas vendidas quando coordination_hours está zerado ou
+     * não preenchido (coordenador ainda não delimitou o quanto abrir pra gestão).
+     */
+    public function cronogramaPoolHours(): float
+    {
+        $coord = (float) ($this->coordination_hours ?? 0);
+        return $coord > 0 ? $coord : (float) ($this->sold_hours ?? 0);
+    }
+
+    /**
      * Verificar se o projeto é do tipo On Demand
      */
     public function isOnDemand(): bool

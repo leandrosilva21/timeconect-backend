@@ -2562,6 +2562,7 @@ class ProjectController extends Controller
                 'id'                  => $project->id,
                 'name'                => $project->name,
                 'sold_hours'          => (float) ($project->sold_hours ?? 0),
+                'coordination_hours'  => (float) ($project->coordination_hours ?? 0),
                 'start_date'          => $project->start_date?->toDateString(),
                 'expected_end_date'   => $project->expected_end_date?->toDateString(),
                 'allow_weekend_work'  => (bool) $project->allow_weekend_work,

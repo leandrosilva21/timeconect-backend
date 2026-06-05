@@ -66,16 +66,16 @@ class StageHourAporteController extends Controller
         $project = $stage->project;
 
         if ($project && $project->isOperational() && $hours > 0) {
-            $sold      = (float) ($project->sold_hours ?? 0);
+            $pool      = $project->cronogramaPoolHours();
             $allocated = (float) $project->stages()->sum('hours_planned');
-            $available = $sold - $allocated;
+            $available = $pool - $allocated;
 
             if ($hours > $available + 0.001) {
                 return response()->json([
                     'message' => 'Sem saldo disponível. Verifique com o coordenador.',
                     'detail'  => sprintf(
-                        'Aporte de %.1fh excede o saldo do projeto. Disponível: %.1fh (vendidas %.1fh, alocadas %.1fh).',
-                        $hours, $available, $sold, $allocated
+                        'Aporte de %.1fh excede o saldo liberado à gestão. Disponível: %.1fh (liberadas %.1fh, alocadas %.1fh).',
+                        $hours, $available, $pool, $allocated
                     ),
                 ], 422);
             }
@@ -139,23 +139,23 @@ class StageHourAporteController extends Controller
         $project = $stage?->project;
 
         if ($project && $project->isOperational() && $hours > 0) {
-            $sold = (float) ($project->sold_hours ?? 0);
+            $pool = $project->cronogramaPoolHours();
             // Saldo agora considera SUM dos deliveries (Pilar D do refactor):
-            // sold − SUM(stage_deliveries.hours_planned) >= hours
+            // pool − SUM(stage_deliveries.hours_planned) >= hours
             $allocated = (float) DB::table('stage_deliveries as sd')
                 ->join('project_stages as ps', 'ps.id', '=', 'sd.stage_id')
                 ->where('ps.project_id', $project->id)
                 ->whereNull('sd.deleted_at')
                 ->whereNull('ps.deleted_at')
                 ->sum('sd.hours_planned');
-            $available = $sold - $allocated;
+            $available = $pool - $allocated;
 
             if ($hours > $available + 0.001) {
                 return response()->json([
                     'message' => 'Sem saldo disponível. Verifique com o coordenador.',
                     'detail'  => sprintf(
-                        'Aporte de %.1fh excede o saldo do projeto. Disponível: %.1fh (vendidas %.1fh, alocadas em atividades %.1fh).',
-                        $hours, $available, $sold, $allocated
+                        'Aporte de %.1fh excede o saldo liberado à gestão. Disponível: %.1fh (liberadas %.1fh, alocadas em atividades %.1fh).',
+                        $hours, $available, $pool, $allocated
                     ),
                 ], 422);
             }

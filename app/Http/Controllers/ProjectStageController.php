@@ -341,7 +341,7 @@ class ProjectStageController extends Controller
             'stage_start_at'      => 'nullable|date',
         ]);
 
-        // Bloqueia se a nova etapa fizer SUM(stages.planned) > project.sold_hours
+        // Bloqueia se a nova etapa fizer SUM(stages.planned) > pool liberado à gestão
         $project->loadMissing('serviceType');
         if ($project->isOperational() && isset($data['hours_planned']) && $data['hours_planned'] > 0) {
             $err = $this->guardProjectCapacity($project, (float) $data['hours_planned']);
@@ -410,21 +410,23 @@ class ProjectStageController extends Controller
     }
 
     /**
-     * Bloqueia se SUM(stages.planned_hours) + $delta > project.sold_hours.
+     * Bloqueia se SUM(stages.planned_hours) + $delta > pool do cronograma.
+     * Pool = horas liberadas à gestão (coordination_hours); 100% das vendidas
+     * só quando coordination_hours está zerado/não preenchido.
      * Retorna 422 com mensagem padrão; ou null se está OK.
      */
     private function guardProjectCapacity(Project $project, float $delta): ?JsonResponse
     {
-        $sold      = (float) ($project->sold_hours ?? 0);
+        $pool      = $project->cronogramaPoolHours();
         $allocated = (float) $project->stages()->sum('hours_planned');
-        $available = $sold - $allocated;
+        $available = $pool - $allocated;
 
         if ($delta > $available + 0.001) {
             return response()->json([
                 'message' => 'Sem saldo disponível. Verifique com o coordenador.',
                 'detail'  => sprintf(
-                    'Tentativa de alocar %.1fh. Saldo do projeto: %.1fh (vendidas %.1fh, alocadas %.1fh).',
-                    $delta, $available, $sold, $allocated
+                    'Tentativa de alocar %.1fh. Saldo liberado à gestão: %.1fh (liberadas %.1fh, alocadas %.1fh).',
+                    $delta, $available, $pool, $allocated
                 ),
             ], 422);
         }

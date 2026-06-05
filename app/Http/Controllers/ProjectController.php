@@ -866,6 +866,7 @@ class ProjectController extends Controller
             'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
             'allow_negative_balance' => 'nullable|boolean',
             'client_follows_timesheets' => 'nullable|boolean',
+            'extrato_visivel_cliente' => 'nullable|boolean',
             'status' => ['nullable', Rule::in(array_keys(Project::getStatuses()))],
             'consultant_ids' => 'nullable|array',
             'consultant_ids.*' => 'exists:users,id',
@@ -979,6 +980,9 @@ class ProjectController extends Controller
         }
         if (!Schema::hasColumn('projects', 'client_follows_timesheets')) {
             unset($validated['client_follows_timesheets']);
+        }
+        if (!Schema::hasColumn('projects', 'extrato_visivel_cliente')) {
+            unset($validated['extrato_visivel_cliente']);
         }
 
         // Gerar ou validar código do projeto
@@ -1287,6 +1291,7 @@ class ProjectController extends Controller
             'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
             'allow_negative_balance' => 'nullable|boolean',
             'client_follows_timesheets' => 'nullable|boolean',
+            'extrato_visivel_cliente' => 'nullable|boolean',
             'sold_hours_effective_from' => 'nullable|date',
             'hourly_rate_effective_from' => 'nullable|date',
             'consultant_ids' => 'nullable|array',
@@ -1510,6 +1515,9 @@ class ProjectController extends Controller
         }
         if (!Schema::hasColumn('projects', 'client_follows_timesheets')) {
             unset($validated['client_follows_timesheets']);
+        }
+        if (!Schema::hasColumn('projects', 'extrato_visivel_cliente')) {
+            unset($validated['extrato_visivel_cliente']);
         }
 
         // Override de coordenador para projetos de sustentação:

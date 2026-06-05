@@ -179,6 +179,10 @@ class BankHoursMonthlyController extends Controller
         // serviceType do próprio projeto + filhos (evita N+1)
         $parentProjects = $query->with(['serviceType', 'contractType', 'childProjects.contractType', 'childProjects.serviceType'])->get();
 
+        // Extrato (Situação do Contrato mês a mês) só aparece no perfil do cliente se
+        // TODOS os projetos pais em escopo permitirem (chave extrato_visivel_cliente).
+        $extratoVisivelCliente = $parentProjects->every(fn ($p) => (bool) ($p->extrato_visivel_cliente ?? true));
+
         // Calcular horas acumuladas (mesma lógica de contracted_hours, mas usando accumulated_sold_hours quando disponível)
         // Para projetos "Banco de Horas Mensal": usa accumulated_sold_hours se existir, senão usa sold_hours
         // Para outros projetos: usa sold_hours normalmente
@@ -605,6 +609,7 @@ class BankHoursMonthlyController extends Controller
             'message' => 'Dados do dashboard obtidos com sucesso',
             'data' => [
                 'contracted_hours' => $contractedHours,
+                'extrato_visivel_cliente' => $extratoVisivelCliente,
                 'accumulated_contracted_hours' => $accumulatedContractedHours,
                 'contributed_hours' => $contributedHours,
                 'consumed_hours' => $consumedHours,

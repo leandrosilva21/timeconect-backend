@@ -7,10 +7,10 @@ on:
 
 jobs:
   build:
-    # Roda apenas no repo de produção (Leonardo-almd/minutor-backend).
-    # No repo homolog (ricardooliveiraerpserv/minutor-backend-homolog) o
+    # Roda apenas no repo de produção (Leonardo-almd/timeconect-backend).
+    # No repo homolog (ricardooliveiraerpserv/timeconect-backend-homolog) o
     # workflow é ignorado — Render builda e roda automaticamente.
-    if: github.repository == 'Leonardo-almd/minutor-backend'
+    if: github.repository == 'Leonardo-almd/timeconect-backend'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -35,8 +35,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/leonardo-almd/minutor-backend:latest
-            ghcr.io/leonardo-almd/minutor-backend:${{ github.sha }}
+            ghcr.io/leonardo-almd/timeconect-backend:latest
+            ghcr.io/leonardo-almd/timeconect-backend:${{ github.sha }}
           # Cache no GHCR (registry) — mais consistente que type=gha.
-          cache-from: type=registry,ref=ghcr.io/leonardo-almd/minutor-backend:buildcache
-          cache-to: type=registry,ref=ghcr.io/leonardo-almd/minutor-backend:buildcache,mode=max
+          cache-from: type=registry,ref=ghcr.io/leonardo-almd/timeconect-backend:buildcache
+          cache-to: type=registry,ref=ghcr.io/leonardo-almd/timeconect-backend:buildcache,mode=max

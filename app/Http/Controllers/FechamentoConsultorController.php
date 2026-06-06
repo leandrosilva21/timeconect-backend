@@ -377,10 +377,10 @@ class FechamentoConsultorController extends Controller
     /** Message-ID determinístico-por-envio da thread de fechamento. */
     private function buildMessageId(int|string $consultantId, string $yearMonth): string
     {
-        return 'fech-' . $consultantId . '-' . $yearMonth . '-' . Str::uuid()->toString() . '@minutor.com.br';
+        return 'fech-' . $consultantId . '-' . $yearMonth . '-' . Str::uuid()->toString() . '@timeconect.com.br';
     }
 
-    /** Chave da thread usada no header X-Minutor-Fechamento-Id. */
+    /** Chave da thread usada no header X-Time Conect-Fechamento-Id. */
     private function threadKey(int|string $consultantId, string $yearMonth): string
     {
         return "{$consultantId}:{$yearMonth}";

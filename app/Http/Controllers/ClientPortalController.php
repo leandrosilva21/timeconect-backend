@@ -591,7 +591,7 @@ class ClientPortalController extends Controller
 
         // Horas consumidas por mês — soma de effort_minutes APENAS dos projetos
         // de sustentação (service_type.code = 'sustentacao' ou name ~ 'sustenta').
-        // Histórico de apontamentos começa em 2025-05 (início do Minutor); meses
+        // Histórico de apontamentos começa em 2025-05 (início do Time Conect); meses
         // anteriores não têm dados — o front exibe nota explicativa.
         $rawHours = DB::table('timesheets')
             ->join('projects', 'projects.id', '=', 'timesheets.project_id')
@@ -674,7 +674,7 @@ class ClientPortalController extends Controller
                 $consumed = max(0, $available - $balance);
             } else {
                 // On Demand: soma effort_minutes dos timesheets approved+pending (regra
-                // [[reference_minutor_consumo_whitelist]] — não inclui adjustment/rejected).
+                // [[reference_timeconect_consumo_whitelist]] — não inclui adjustment/rejected).
                 $consumedMin = \App\Models\Timesheet::where('project_id', $p->id)
                     ->whereNull('deleted_at')
                     ->whereIn('status', ['approved', 'pending'])

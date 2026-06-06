@@ -2698,7 +2698,7 @@ class TimesheetController extends Controller
 
         // Saldos iniciais cadastrados pra esse cliente — somam SOMENTE no
         // lifetime_minutes (histórico), não no period_minutes (saldo é
-        // histórico anterior à entrada do ticket no Minutor).
+        // histórico anterior à entrada do ticket no Time Conect).
         $initialByTicket = \DB::table('ticket_initial_balances')
             ->whereNull('deleted_at')
             ->where('customer_id', $customerId)
@@ -3138,7 +3138,7 @@ class TimesheetController extends Controller
 
             // Sync completo processa 100+ tickets e leva minutos — não cabe num
             // request HTTP (nginx tem proxy_read_timeout=120s). Despacha pra
-            // fila e retorna imediatamente; o worker (minutor-queue) executa
+            // fila e retorna imediatamente; o worker (timeconect-queue) executa
             // em background e o usuário vê o resultado ao recarregar a tela.
             try {
                 \Illuminate\Support\Facades\Artisan::queue('movidesk:sync');

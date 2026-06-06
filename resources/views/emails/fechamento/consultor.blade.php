@@ -53,16 +53,16 @@
               {{-- Logo (ERPSERV ou Bizify conforme o consultor; ERPSERV tem dark-mode swap) --}}
               <div style="text-align:center;">
                 @if(($isBizify ?? false))
-                  <img src="https://app.minutor.com.br/logo-bizify.png" alt="Bizify" width="180" style="display:inline-block;width:180px;max-width:58%;height:auto;border:0;" />
+                  <img src="https://app.timeconect.com.br/logo-bizify.png" alt="Bizify" width="180" style="display:inline-block;width:180px;max-width:58%;height:auto;border:0;" />
                 @else
-                  <img src="https://app.minutor.com.br/logo.png" alt="ERPSERV Consultoria" width="200" class="erp-light" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
+                  <img src="https://app.timeconect.com.br/logo.png" alt="ERPSERV Consultoria" width="200" class="erp-light" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
                   <div class="erp-dark" style="display:none;mso-hide:all;max-height:0;overflow:hidden;">
-                    <img src="https://app.minutor.com.br/logo-white.png" alt="ERPSERV Consultoria" width="200" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
+                    <img src="https://app.timeconect.com.br/logo-white.png" alt="ERPSERV Consultoria" width="200" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
                   </div>
                 @endif
               </div>
 
-              {{-- Marca Minutor (secundária, menor, alinhada à esquerda abaixo do logo) --}}
+              {{-- Marca Time Conect (secundária, menor, alinhada à esquerda abaixo do logo) --}}
               <table role="presentation" border="0" cellpadding="0" cellspacing="0" align="left" style="margin-top:20px;">
                 <tr>
                   <td style="vertical-align:middle;padding-right:10px;">
@@ -75,7 +75,7 @@
                     </table>
                   </td>
                   <td style="vertical-align:middle;text-align:left;">
-                    <div style="font-size:16px;font-weight:700;letter-spacing:-0.01em;color:#111827;line-height:1.05;">Minutor</div>
+                    <div style="font-size:16px;font-weight:700;letter-spacing:-0.01em;color:#111827;line-height:1.05;">Time Conect</div>
                     <div style="margin-top:2px;font-size:12px;color:#6B7280;font-weight:400;">Controle de horas e contratos em um só lugar</div>
                   </td>
                 </tr>

@@ -36,7 +36,7 @@ class CardChatMessageNotification extends Notification implements ShouldQueue
     {
         $isRequest = $this->cardType === 'contract_request';
         $eyebrow = $isRequest ? 'Chat de requisição' : 'Chat interno do projeto';
-        $subjectPrefix = $isRequest ? '[Minutor]' : '[Minutor · Interno]';
+        $subjectPrefix = $isRequest ? '[Time Conect]' : '[Time Conect · Interno]';
         $subjectNoun  = $isRequest ? 'requisição' : 'projeto';
         $subject = "{$subjectPrefix} Nova mensagem na {$subjectNoun} {$this->cardCode} — {$this->cardTitle}";
 

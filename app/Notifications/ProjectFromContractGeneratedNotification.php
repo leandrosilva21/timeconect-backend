@@ -38,7 +38,7 @@ class ProjectFromContractGeneratedNotification extends Notification
         $projeto = $this->project->name ?? ($c->project_name ?? '—');
         $cliente = optional($c->customer)->name ?? '—';
 
-        $base = rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/');
+        $base = rtrim((string) config('app.frontend_url', 'https://app.timeconect.com.br'), '/');
         $cardUrl = "{$base}/projetos/{$this->project->id}";
 
         $isCliente = $notifiable instanceof AnonymousNotifiable;
@@ -47,7 +47,7 @@ class ProjectFromContractGeneratedNotification extends Notification
             : ($notifiable->name ?? 'time interno');
 
         return (new MailMessage)
-            ->subject("[Minutor] Projeto criado — {$codigo}")
+            ->subject("[Time Conect] Projeto criado — {$codigo}")
             ->view('emails.contracts.project-generated', [
                 'codigo'        => $codigo,
                 'projeto'       => $projeto,

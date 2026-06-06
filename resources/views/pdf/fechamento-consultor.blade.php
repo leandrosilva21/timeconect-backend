@@ -53,7 +53,7 @@
           @if(!empty($logoDataUri))
             <span class="logo"><img src="{{ $logoDataUri }}" alt="ERPSERV Consultoria"></span>
           @else
-            <span class="brand">ERPSERV Consultoria</span><div class="brand-sub">Minutor — Controle de horas e contratos</div>
+            <span class="brand">ERPSERV Consultoria</span><div class="brand-sub">Time Conect — Controle de horas e contratos</div>
           @endif
         </td>
         <td class="meta" style="vertical-align:middle;">

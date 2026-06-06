@@ -2,7 +2,7 @@
 
 ## 📋 Resumo
 
-Implementação completa da funcionalidade de subprojetos no sistema Minutor, permitindo que projetos tenham projetos filhos, com apontamento de horas nos subprojetos e visualização consolidada de custos.
+Implementação completa da funcionalidade de subprojetos no sistema Time Conect, permitindo que projetos tenham projetos filhos, com apontamento de horas nos subprojetos e visualização consolidada de custos.
 
 ## 🎯 Funcionalidades Implementadas
 
@@ -236,7 +236,7 @@ INDEX (parent_project_id)
 
 ### Migration
 ```bash
-cd /path/to/minutor-backend
+cd /path/to/timeconect-backend
 docker compose exec app php artisan migrate
 ```
 

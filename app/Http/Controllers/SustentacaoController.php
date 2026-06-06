@@ -39,7 +39,7 @@ class SustentacaoController extends Controller
         });
     }
 
-    /** Apenas organizações reais (com CNPJ ou vinculadas ao Minutor) — exclui departamentos internos */
+    /** Apenas organizações reais (com CNPJ ou vinculadas ao Time Conect) — exclui departamentos internos */
     private function orgLookup(): \Illuminate\Support\Collection
     {
         return MovideskOrganization::where(function ($q) {
@@ -286,7 +286,7 @@ class SustentacaoController extends Controller
         $this->authorize();
         [$from, $to] = $this->dateRange($request);
 
-        // Agrupa por owner_email (Movidesk) — inclui responsáveis sem vínculo no Minutor
+        // Agrupa por owner_email (Movidesk) — inclui responsáveis sem vínculo no Time Conect
         $byConsultant = $this->tickets()->selectRaw("LOWER(owner_email) as owner_email")
             ->selectRaw("MAX(responsavel->>'name') as owner_name")
             ->selectRaw('MAX(user_id) as user_id')
@@ -450,17 +450,17 @@ class SustentacaoController extends Controller
 
                 if ($cnpjNorm && isset($customersByCnpj[$cnpjNorm])) {
                     $match       = 'cnpj';
-                    $minutorName = $customersByCnpj[$cnpjNorm]->name ?? $customersByCnpj[$cnpjNorm]->company_name;
-                    $minutorCgc  = $customersByCnpj[$cnpjNorm]->cgc;
+                    $timeconectName = $customersByCnpj[$cnpjNorm]->name ?? $customersByCnpj[$cnpjNorm]->company_name;
+                    $timeconectCgc  = $customersByCnpj[$cnpjNorm]->cgc;
                 } elseif ($org->customer) {
                     $match       = 'nome';
-                    $minutorName = $org->customer->name ?? $org->customer->company_name;
-                    $minutorCgc  = $org->customer->cgc;
+                    $timeconectName = $org->customer->name ?? $org->customer->company_name;
+                    $timeconectCgc  = $org->customer->cgc;
                 } else {
                     $byName      = Customer::where('name', $org->name)->orWhere('company_name', $org->name)->first();
                     $match       = $byName ? 'nome' : 'nao';
-                    $minutorName = $byName?->name ?? $byName?->company_name;
-                    $minutorCgc  = $byName?->cgc;
+                    $timeconectName = $byName?->name ?? $byName?->company_name;
+                    $timeconectCgc  = $byName?->cgc;
                 }
 
                 return [
@@ -470,8 +470,8 @@ class SustentacaoController extends Controller
                     'tickets'       => (int) ($counts->tickets ?? 0),
                     'vinculados'    => (int) ($counts->vinculados ?? 0),
                     'match'         => $match,
-                    'minutor_name'  => $minutorName,
-                    'minutor_cgc'   => $minutorCgc,
+                    'timeconect_name'  => $timeconectName,
+                    'timeconect_cgc'   => $timeconectCgc,
                 ];
             })->sortByDesc('tickets')->values();
 
@@ -495,13 +495,13 @@ class SustentacaoController extends Controller
 
             if ($cnpjNorm && isset($customersByCnpj[$cnpjNorm])) {
                 $match       = 'cnpj';
-                $minutorName = $customersByCnpj[$cnpjNorm]->name ?? $customersByCnpj[$cnpjNorm]->company_name;
-                $minutorCgc  = $customersByCnpj[$cnpjNorm]->cgc;
+                $timeconectName = $customersByCnpj[$cnpjNorm]->name ?? $customersByCnpj[$cnpjNorm]->company_name;
+                $timeconectCgc  = $customersByCnpj[$cnpjNorm]->cgc;
             } else {
                 $byName      = Customer::where('name', $row->org)->orWhere('company_name', $row->org)->first();
                 $match       = $byName ? 'nome' : 'nao';
-                $minutorName = $byName?->name ?? $byName?->company_name;
-                $minutorCgc  = $byName?->cgc;
+                $timeconectName = $byName?->name ?? $byName?->company_name;
+                $timeconectCgc  = $byName?->cgc;
             }
 
             return [
@@ -510,8 +510,8 @@ class SustentacaoController extends Controller
                 'tickets'       => (int) $row->tickets,
                 'vinculados'    => (int) $row->vinculados,
                 'match'         => $match,
-                'minutor_name'  => $minutorName,
-                'minutor_cgc'   => $minutorCgc,
+                'timeconect_name'  => $timeconectName,
+                'timeconect_cgc'   => $timeconectCgc,
             ];
         });
 
@@ -555,7 +555,7 @@ class SustentacaoController extends Controller
             ->orderByDesc(DB::raw('COUNT(*)'))
             ->get()
             ->map(function ($row) use ($usersByEmail, $cutoff90) {
-                $minutorUser   = $usersByEmail[$row->email_key] ?? null;
+                $timeconectUser   = $usersByEmail[$row->email_key] ?? null;
                 $lastTicket    = $row->last_ticket_at ? \Carbon\Carbon::parse($row->last_ticket_at) : null;
                 $activeRecent  = $lastTicket && $lastTicket->gte($cutoff90);
                 return [
@@ -566,9 +566,9 @@ class SustentacaoController extends Controller
                     'is_active'      => $activeRecent,
                     'tickets'        => (int) $row->tickets,
                     'vinculados'     => (int) $row->vinculados,
-                    'match'          => $minutorUser ? 'encontrado' : 'nao',
-                    'minutor_name'   => $minutorUser?->name,
-                    'minutor_id'     => $minutorUser?->id,
+                    'match'          => $timeconectUser ? 'encontrado' : 'nao',
+                    'timeconect_name'   => $timeconectUser?->name,
+                    'timeconect_id'     => $timeconectUser?->id,
                 ];
             })->values();
 
@@ -689,7 +689,7 @@ class SustentacaoController extends Controller
                 'sla_breached'  => (int) $r->sla_breached_count,
             ]);
 
-        // Horas apontadas no Minutor (só faz sentido quando filtra por responsável)
+        // Horas apontadas no Time Conect (só faz sentido quando filtra por responsável)
         $hoursWorked = null;
         if ($responsavelFilter) {
             $userIds = \App\Models\User::whereIn(DB::raw('LOWER(email)'), array_map('strtolower', $responsavelFilter))

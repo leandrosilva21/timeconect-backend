@@ -25,7 +25,7 @@ class AuthController extends Controller
      *         required=true,
      *         @OA\JsonContent(
      *             required={"email","password"},
-     *             @OA\Property(property="email", type="string", format="email", example="admin@minutor.com"),
+     *             @OA\Property(property="email", type="string", format="email", example="admin@timeconect.com"),
      *             @OA\Property(property="password", type="string", format="password", example="admin123456"),
      *             @OA\Property(property="device_name", type="string", example="web-app", description="Nome do dispositivo (opcional)")
      *         )
@@ -40,7 +40,7 @@ class AuthController extends Controller
      *                 type="object",
      *                 @OA\Property(property="id", type="integer", example=1),
      *                 @OA\Property(property="name", type="string", example="Administrador"),
-     *                 @OA\Property(property="email", type="string", example="admin@minutor.com"),
+     *                 @OA\Property(property="email", type="string", example="admin@timeconect.com"),
      *                 @OA\Property(property="email_verified_at", type="string", example="2024-01-01T00:00:00.000000Z")
      *             ),
      *             @OA\Property(property="token", type="string", example="1|abc123..."),
@@ -244,7 +244,7 @@ class AuthController extends Controller
      *                 type="object",
      *                 @OA\Property(property="id", type="integer", example=1),
      *                 @OA\Property(property="name", type="string", example="Administrador"),
-     *                 @OA\Property(property="email", type="string", example="admin@minutor.com"),
+     *                 @OA\Property(property="email", type="string", example="admin@timeconect.com"),
      *                 @OA\Property(property="email_verified_at", type="string", example="2024-01-01T00:00:00.000000Z"),
      *                 @OA\Property(property="created_at", type="string", example="2024-01-01T00:00:00.000000Z"),
      *                 @OA\Property(property="updated_at", type="string", example="2024-01-01T00:00:00.000000Z")
@@ -542,7 +542,7 @@ class AuthController extends Controller
      *                 type="object",
      *                 @OA\Property(property="id", type="integer", example=1),
      *                 @OA\Property(property="name", type="string", example="Administrador"),
-     *                 @OA\Property(property="email", type="string", example="admin@minutor.com")
+     *                 @OA\Property(property="email", type="string", example="admin@timeconect.com")
      *             )
      *         )
      *     ),
@@ -672,7 +672,7 @@ class AuthController extends Controller
      *                     type="object",
      *                     @OA\Property(property="id", type="integer", example=1),
      *                     @OA\Property(property="name", type="string", example="Administrador"),
-     *                     @OA\Property(property="email", type="string", example="admin@minutor.com")
+     *                     @OA\Property(property="email", type="string", example="admin@timeconect.com")
      *                 ),
      *                 @OA\Property(
      *                     property="permissions",

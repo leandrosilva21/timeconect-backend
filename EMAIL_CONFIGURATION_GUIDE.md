@@ -1,8 +1,8 @@
-# 📧 Guia de Configuração de Email - Minutor
+# 📧 Guia de Configuração de Email - Time Conect
 
 ## ✅ Configuração Concluída
 
-Este documento descreve toda a configuração de email implementada no sistema Minutor.
+Este documento descreve toda a configuração de email implementada no sistema Time Conect.
 
 ## 🔧 Configurações Realizadas
 
@@ -17,11 +17,11 @@ As seguintes variáveis foram configuradas no arquivo `.env`:
 MAIL_MAILER=smtp
 MAIL_HOST=smtp.zoho.com
 MAIL_PORT=587
-MAIL_USERNAME=naoresponder@minutor.com.br
+MAIL_USERNAME=naoresponder@timeconect.com.br
 MAIL_PASSWORD="cC4pnsx$"
 MAIL_ENCRYPTION=tls
-MAIL_FROM_ADDRESS=naoresponder@minutor.com.br
-MAIL_FROM_NAME="Minutor - Sistema de Gestão"
+MAIL_FROM_ADDRESS=naoresponder@timeconect.com.br
+MAIL_FROM_NAME="Time Conect - Sistema de Gestão"
 
 # URL do Frontend Angular
 APP_FRONTEND_URL=http://localhost:4200
@@ -67,7 +67,7 @@ APP_FRONTEND_URL=http://localhost:4200
 recovery: PoPageLoginRecovery = {
   url: '/api/v1/auth/forgot-password',
   type: 'internalLink',
-  contactMail: 'suporte@minutor.com.br'
+  contactMail: 'suporte@timeconect.com.br'
 };
 
 // Literais em português
@@ -180,15 +180,15 @@ docker-compose exec app php artisan email:test usuario@email.com --type=welcome
 
 ## 📞 Suporte
 
-- **Email de suporte**: suporte@minutor.com.br
-- **Email do sistema**: naoresponder@minutor.com.br
+- **Email de suporte**: suporte@timeconect.com.br
+- **Email do sistema**: naoresponder@timeconect.com.br
 - **Documentação PO-UI**: https://po-ui.io/documentation/po-page-login
 
 ---
 
 **🎉 Configuração de email concluída com sucesso!**
 
-O sistema Minutor agora possui um sistema completo de emails com:
+O sistema Time Conect agora possui um sistema completo de emails com:
 - Recuperação de senha integrada ao po-page-login
 - Templates profissionais em português
 - Notificações de boas-vindas

@@ -14,15 +14,15 @@ use Illuminate\Support\Facades\Log;
  *
  * No-op se o Graph não estiver configurado (sem credenciais → dorme).
  * O noreply é compartilhado por outros workflows, então SÓ entram mensagens cujo
- * In-Reply-To/References casa com um Message-ID nosso (fech-{id}-{ym}-{uuid}@minutor.com.br).
+ * In-Reply-To/References casa com um Message-ID nosso (fech-{id}-{ym}-{uuid}@timeconect.com.br).
  */
 class PollFechamentoInbox extends Command
 {
     protected $signature = 'fechamento:poll-inbox {--since= : ISO8601/data — sobrescreve a janela automática} {--top=50}';
     protected $description = 'Lê respostas dos consultores ao fechamento (caixa noreply via Graph) e encadeia na thread';
 
-    /** fech-{consultantId}-{YYYY-MM}-{sufixo}@minutor.com.br (uuid no uso real; tolerante a qualquer sufixo) */
-    private const OUR_ID_RE = '/^fech-(\d+)-(\d{4}-\d{2})-[0-9A-Za-z-]+@minutor\.com\.br$/i';
+    /** fech-{consultantId}-{YYYY-MM}-{sufixo}@timeconect.com.br (uuid no uso real; tolerante a qualquer sufixo) */
+    private const OUR_ID_RE = '/^fech-(\d+)-(\d{4}-\d{2})-[0-9A-Za-z-]+@timeconect\.com\.br$/i';
 
     public function handle(GraphMailService $graph): int
     {

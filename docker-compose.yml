@@ -5,14 +5,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: minutor_app
+    container_name: timeconect_app
     restart: unless-stopped
     working_dir: /var/www
     volumes:
       - ./:/var/www
       - ./docker/php/local.ini:/usr/local/etc/php/conf.d/local.ini
     networks:
-      - minutor
+      - timeconect
     # Configuração de logs para captura pelo Docker
     logging:
       driver: "json-file"
@@ -22,7 +22,7 @@ services:
 
   webserver:
     image: nginx:alpine
-    container_name: minutor_webserver
+    container_name: timeconect_webserver
     restart: unless-stopped
     ports:
       - "8000:80"
@@ -32,11 +32,11 @@ services:
     depends_on:
       - app
     networks:
-      - minutor
+      - timeconect
 
   db:
     image: mysql:8.0
-    container_name: minutor_db
+    container_name: timeconect_db
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: laravel
@@ -49,22 +49,22 @@ services:
       - mysql_data:/var/lib/mysql
       - ./docker/mysql/my.cnf:/etc/mysql/my.cnf
     networks:
-      - minutor
+      - timeconect
 
   redis:
     image: redis:alpine
-    container_name: minutor_redis
+    container_name: timeconect_redis
     restart: unless-stopped
     ports:
       - "6379:6379"
     networks:
-      - minutor
+      - timeconect
 
   queue-worker:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: minutor_queue_worker
+    container_name: timeconect_queue_worker
     restart: unless-stopped
     working_dir: /var/www
     volumes:
@@ -76,7 +76,7 @@ services:
       - app
       - db
     networks:
-      - minutor
+      - timeconect
     logging:
       driver: "json-file"
       options:
@@ -87,7 +87,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: minutor_scheduler
+    container_name: timeconect_scheduler
     restart: unless-stopped
     working_dir: /var/www
     volumes:
@@ -99,7 +99,7 @@ services:
       - redis
       - db
     networks:
-      - minutor
+      - timeconect
     logging:
       driver: "json-file"
       options:
@@ -111,5 +111,5 @@ volumes:
     driver: local
 
 networks:
-  minutor:
+  timeconect:
     driver: bridge

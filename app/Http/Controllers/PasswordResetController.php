@@ -29,7 +29,7 @@ class PasswordResetController extends Controller
      *         required=true,
      *         @OA\JsonContent(
      *             required={"email"},
-     *             @OA\Property(property="email", type="string", format="email", example="admin@minutor.com")
+     *             @OA\Property(property="email", type="string", format="email", example="admin@timeconect.com")
      *         )
      *     ),
      *     @OA\Response(
@@ -124,7 +124,7 @@ class PasswordResetController extends Controller
      *         required=true,
      *         @OA\JsonContent(
      *             required={"email","token","password","password_confirmation"},
-     *             @OA\Property(property="email", type="string", format="email", example="admin@minutor.com"),
+     *             @OA\Property(property="email", type="string", format="email", example="admin@timeconect.com"),
      *             @OA\Property(property="token", type="string", example="reset_token_from_email"),
      *             @OA\Property(property="password", type="string", format="password", example="nova_senha_123"),
      *             @OA\Property(property="password_confirmation", type="string", format="password", example="nova_senha_123")
@@ -222,7 +222,7 @@ class PasswordResetController extends Controller
      *         required=true,
      *         @OA\JsonContent(
      *             required={"email","token"},
-     *             @OA\Property(property="email", type="string", format="email", example="admin@minutor.com"),
+     *             @OA\Property(property="email", type="string", format="email", example="admin@timeconect.com"),
      *             @OA\Property(property="token", type="string", example="reset_token_from_email")
      *         )
      *     ),

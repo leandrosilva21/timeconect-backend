@@ -6,7 +6,7 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="color-scheme" content="dark">
   <meta name="supported-color-schemes" content="dark">
-  <title>Nova Senha Temporária — Minutor</title>
+  <title>Nova Senha Temporária — Time Conect</title>
   <!--[if mso]>
   <noscript>
     <xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>
@@ -69,7 +69,7 @@
                   </td>
                   <td style="vertical-align:middle;">
                     <div style="font-size:26px;font-weight:700;letter-spacing:-0.02em;color:#FFFFFF;line-height:1.05;font-family:'Segoe UI',Arial,sans-serif;">
-                      Minutor
+                      Time Conect
                     </div>
                     <div style="margin-top:4px;font-size:13px;color:rgba(255,255,255,0.38);font-weight:400;font-family:'Segoe UI',Arial,sans-serif;">
                       Controle de horas e contratos em um só lugar
@@ -193,12 +193,12 @@
                 <tr>
                   <td align="center"
                     style="border-radius:10px;background:linear-gradient(135deg,#3B82F6 0%,#8B5CF6 100%);">
-                    <a href="{{ config('app.frontend_url', 'https://app.minutor.com.br') }}/login"
+                    <a href="{{ config('app.frontend_url', 'https://app.timeconect.com.br') }}/login"
                       target="_blank"
                       style="display:inline-block;padding:14px 36px;font-size:15px;font-weight:600;
                         color:#FFFFFF;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;
                         letter-spacing:0.2px;">
-                      Acessar o Minutor &rarr;
+                      Acessar o Time Conect &rarr;
                     </a>
                   </td>
                 </tr>

@@ -24,7 +24,7 @@
             </td>
           </tr>
           <tr>
-            <td style="padding-top:14px;font-size:11px;color:#9CA3AF;">Enviado via Minutor</td>
+            <td style="padding-top:14px;font-size:11px;color:#9CA3AF;">Enviado via Time Conect</td>
           </tr>
         </table>
       </td>

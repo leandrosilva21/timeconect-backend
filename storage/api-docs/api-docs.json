@@ -1,10 +1,10 @@
 {
     "openapi": "3.0.0",
     "info": {
-        "title": "Minutor API",
+        "title": "Time Conect API",
         "description": "Sistema de apontamento de horas e despesas",
         "contact": {
-            "email": "admin@minutor.com"
+            "email": "admin@timeconect.com"
         },
         "license": {
             "name": "MIT",
@@ -40,7 +40,7 @@
                                     "email": {
                                         "type": "string",
                                         "format": "email",
-                                        "example": "admin@minutor.com"
+                                        "example": "admin@timeconect.com"
                                     },
                                     "password": {
                                         "type": "string",
@@ -81,7 +81,7 @@
                                                 },
                                                 "email": {
                                                     "type": "string",
-                                                    "example": "admin@minutor.com"
+                                                    "example": "admin@timeconect.com"
                                                 },
                                                 "email_verified_at": {
                                                     "type": "string",
@@ -287,7 +287,7 @@
                                                 },
                                                 "email": {
                                                     "type": "string",
-                                                    "example": "admin@minutor.com"
+                                                    "example": "admin@timeconect.com"
                                                 },
                                                 "email_verified_at": {
                                                     "type": "string",
@@ -688,7 +688,7 @@
                                                 },
                                                 "email": {
                                                     "type": "string",
-                                                    "example": "admin@minutor.com"
+                                                    "example": "admin@timeconect.com"
                                                 }
                                             },
                                             "type": "object"
@@ -876,7 +876,7 @@
                                                         },
                                                         "email": {
                                                             "type": "string",
-                                                            "example": "admin@minutor.com"
+                                                            "example": "admin@timeconect.com"
                                                         }
                                                     },
                                                     "type": "object"
@@ -2385,7 +2385,7 @@
                                     "email": {
                                         "type": "string",
                                         "format": "email",
-                                        "example": "admin@minutor.com"
+                                        "example": "admin@timeconect.com"
                                     }
                                 },
                                 "type": "object"
@@ -2491,7 +2491,7 @@
                                     "email": {
                                         "type": "string",
                                         "format": "email",
-                                        "example": "admin@minutor.com"
+                                        "example": "admin@timeconect.com"
                                     },
                                     "token": {
                                         "type": "string",
@@ -2609,7 +2609,7 @@
                                     "email": {
                                         "type": "string",
                                         "format": "email",
-                                        "example": "admin@minutor.com"
+                                        "example": "admin@timeconect.com"
                                     },
                                     "token": {
                                         "type": "string",

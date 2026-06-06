@@ -196,18 +196,18 @@ class RelatorioRentabilidadeController extends Controller
                 'recebido'        => round($recebido, 2),
                 'margem_real'     => $margemReal,
                 'margem_real_pct' => $recebido > 0 ? round($margemReal / $recebido * 100, 1) : null,
-                'no_minutor'      => true,
+                'no_timeconect'      => true,
             ];
         }
 
-        // Clientes com recebimento no M+1 mas SEM apontamento Minutor no mês M.
+        // Clientes com recebimento no M+1 mas SEM apontamento Time Conect no mês M.
         foreach ($keruak as $cnpj => $info) {
             if (isset($usados[$cnpj])) continue;
             $recebido = (float) ($info['receb'][$recebMonth] ?? 0);
             if ($recebido <= 0) continue;
             $rows[] = [
                 'customer_id'     => null,
-                'cliente'         => $info['name'] ?: '(fora do Minutor)',
+                'cliente'         => $info['name'] ?: '(fora do Time Conect)',
                 'cnpj'            => $cnpj,
                 'horas'           => 0.0,
                 'receita'         => 0.0,
@@ -217,7 +217,7 @@ class RelatorioRentabilidadeController extends Controller
                 'recebido'        => round($recebido, 2),
                 'margem_real'     => round($recebido, 2),
                 'margem_real_pct' => 100.0,
-                'no_minutor'      => false,
+                'no_timeconect'      => false,
             ];
         }
 

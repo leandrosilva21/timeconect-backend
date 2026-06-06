@@ -1,4 +1,4 @@
-# 🚀 Deploy Rápido - Minutor Backend
+# 🚀 Deploy Rápido - Time Conect Backend
 
 ## 📋 Resumo
 
@@ -33,7 +33,7 @@ git push origin production
 ### Usando o Script Automatizado
 ```bash
 # No servidor de produção
-cd minutor-backend
+cd timeconect-backend
 ./deploy.sh deploy
 ```
 
@@ -141,7 +141,7 @@ DB_PASSWORD=senha_forte_aqui
 ## 📁 Estrutura de Arquivos
 
 ```
-minutor-backend/
+timeconect-backend/
 ├── .gitlab-ci.yml          # Pipeline CI/CD
 ├── deploy.sh               # Script de deploy manual
 ├── docker-compose.yml      # Configuração Docker

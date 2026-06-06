@@ -19,7 +19,7 @@ return [
 
     'allowed_methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 
-    'allowed_origins' => array_filter(array_map('trim', explode(',', env('CORS_ALLOWED_ORIGINS', 'https://app.minutor.com.br,https://api.minutor.com.br,https://minutor-frontend-homolog.onrender.com,https://minutor-backend-homolog.onrender.com,http://localhost:3000,http://localhost:5173')))),
+    'allowed_origins' => array_filter(array_map('trim', explode(',', env('CORS_ALLOWED_ORIGINS', 'https://app.timeconect.com.br,https://api.timeconect.com.br,https://timeconect-frontend-homolog.onrender.com,https://timeconect-backend-homolog.onrender.com,http://localhost:3000,http://localhost:5173')))),
 
     'allowed_origins_patterns' => array_filter(array_map('trim', explode(',', env('CORS_ALLOWED_ORIGINS_PATTERNS', '')))),
 

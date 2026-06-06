@@ -65,8 +65,8 @@ class WelcomeNotification extends Notification implements ShouldQueue
         }
 
         $map = [
-            'horista'        => ['file' => 'manual-consultor-horista.pdf',      'name' => 'Manual Minutor - Consultor Horista.pdf'],
-            'banco_de_horas' => ['file' => 'manual-consultor-banco-horas.pdf',  'name' => 'Manual Minutor - Consultor Banco de Horas.pdf'],
+            'horista'        => ['file' => 'manual-consultor-horista.pdf',      'name' => 'Manual Time Conect - Consultor Horista.pdf'],
+            'banco_de_horas' => ['file' => 'manual-consultor-banco-horas.pdf',  'name' => 'Manual Time Conect - Consultor Banco de Horas.pdf'],
         ];
 
         $entry = $map[$user->consultant_type] ?? null;

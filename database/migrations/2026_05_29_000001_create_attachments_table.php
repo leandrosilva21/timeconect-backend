@@ -5,7 +5,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * FASE 11.1 — Camada global de anexos do Minutor.
+ * FASE 11.1 — Camada global de anexos do Time Conect.
  *
  * Tabela polimórfica única: entity_type + entity_id apontam pra qualquer entidade
  * registrada no AttachableEntitiesRegistry. SEM foreign key real em entity_id (custo

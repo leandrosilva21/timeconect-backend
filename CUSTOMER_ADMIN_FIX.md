@@ -100,7 +100,7 @@ Resultado: Retorna apenas clientes onde o usuário 3 é consultor/aprovador
 # Login como Administrator
 POST /api/v1/auth/login
 {
-  "email": "admin@minutor.com",
+  "email": "admin@timeconect.com",
   "password": "senha123"
 }
 
@@ -117,7 +117,7 @@ GET /api/v1/customers/user-linked
 # Login como Administrator (ID: 1)
 POST /api/v1/auth/login
 {
-  "email": "admin@minutor.com",
+  "email": "admin@timeconect.com",
   "password": "senha123"
 }
 
@@ -134,7 +134,7 @@ GET /api/v1/customers/user-linked?user_id=2
 # Login como Administrator (ID: 1)
 POST /api/v1/auth/login
 {
-  "email": "admin@minutor.com",
+  "email": "admin@timeconect.com",
   "password": "senha123"
 }
 
@@ -151,7 +151,7 @@ GET /api/v1/customers/user-linked?user_id=5
 # Login como Consultor
 POST /api/v1/auth/login
 {
-  "email": "consultor@minutor.com",
+  "email": "consultor@timeconect.com",
   "password": "senha123"
 }
 
@@ -251,5 +251,5 @@ private loadCustomers(): void {
 
 **Data da Correção:** 17 de Janeiro de 2025  
 **Versão:** 1.0.0  
-**Autor:** Sistema Minutor
+**Autor:** Sistema Time Conect
 

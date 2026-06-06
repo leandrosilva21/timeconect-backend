@@ -1,4 +1,4 @@
-# 📖 Guia Completo do Swagger - Minutor API
+# 📖 Guia Completo do Swagger - Time Conect API
 
 ## 🚀 Acessos Rápidos
 
@@ -119,7 +119,7 @@ O Swagger já está configurado para:
 ```json
 POST /api/v1/auth/login
 {
-  "email": "admin@minutor.com",
+  "email": "admin@timeconect.com",
   "password": "admin123456"
 }
 ```
@@ -201,7 +201,7 @@ docker-compose exec app php artisan l5-swagger:generate
 
 ### Configurações principais:
 - Arquivo: `config/l5-swagger.php`
-- Título: Já configurado como "Minutor API Documentation"
+- Título: Já configurado como "Time Conect API Documentation"
 - Path: `/api/documentation`
 
 ### Para alterar aparência:

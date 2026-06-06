@@ -15,10 +15,10 @@ class UserSeeder extends Seeder
     {
         // Usuário administrador padrão
         User::firstOrCreate(
-            ['email' => 'admin@minutor.com'],
+            ['email' => 'admin@timeconect.com'],
             [
                 'name' => 'Administrador',
-                'email' => 'admin@minutor.com',
+                'email' => 'admin@timeconect.com',
                 'password' => Hash::make('admin123456'),
                 'email_verified_at' => now(),
                 'type' => 'admin',
@@ -27,10 +27,10 @@ class UserSeeder extends Seeder
 
         // Usuário de teste (Coordenador)
         User::firstOrCreate(
-            ['email' => 'teste@minutor.com'],
+            ['email' => 'teste@timeconect.com'],
             [
                 'name' => 'Usuário Teste',
-                'email' => 'teste@minutor.com',
+                'email' => 'teste@timeconect.com',
                 'password' => Hash::make('teste123456'),
                 'email_verified_at' => now(),
                 'type' => 'coordenador',
@@ -39,10 +39,10 @@ class UserSeeder extends Seeder
 
         // Usuário demo (Consultor)
         User::firstOrCreate(
-            ['email' => 'demo@minutor.com'],
+            ['email' => 'demo@timeconect.com'],
             [
                 'name' => 'Demo User',
-                'email' => 'demo@minutor.com',
+                'email' => 'demo@timeconect.com',
                 'password' => Hash::make('demo123456'),
                 'email_verified_at' => now(),
                 'type' => 'consultor',
@@ -52,8 +52,8 @@ class UserSeeder extends Seeder
         $this->command->info('Usuários criados com sucesso!');
         $this->command->line('');
         $this->command->line('Credenciais de acesso:');
-        $this->command->line('Admin: admin@minutor.com / admin123456 (admin)');
-        $this->command->line('Teste: teste@minutor.com / teste123456 (coordenador)');
-        $this->command->line('Demo: demo@minutor.com / demo123456 (consultor)');
+        $this->command->line('Admin: admin@timeconect.com / admin123456 (admin)');
+        $this->command->line('Teste: teste@timeconect.com / teste123456 (coordenador)');
+        $this->command->line('Demo: demo@timeconect.com / demo123456 (consultor)');
     }
 }

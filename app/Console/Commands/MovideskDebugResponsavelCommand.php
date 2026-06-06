@@ -10,7 +10,7 @@ use Illuminate\Support\Collection;
 class MovideskDebugResponsavelCommand extends Command
 {
     protected $signature   = 'movidesk:debug-responsavel';
-    protected $description = 'Lista emails do responsavel no Movidesk e verifica vínculo com usuários do Minutor';
+    protected $description = 'Lista emails do responsavel no Movidesk e verifica vínculo com usuários do Time Conect';
 
     public function handle(): int
     {
@@ -27,7 +27,7 @@ class MovideskDebugResponsavelCommand extends Command
         $this->line('=== RESPONSÁVEIS NO MOVIDESK ===');
         $this->line('');
 
-        $headers = ['Email no Movidesk', 'Tickets', 'Já vinculados', 'Usuário no Minutor?'];
+        $headers = ['Email no Movidesk', 'Tickets', 'Já vinculados', 'Usuário no Time Conect?'];
         $tableData = $rows->map(function ($row) use ($userEmails) {
             $email = $row->email ?? '(vazio)';
             $found = in_array(strtolower($email), $userEmails) ? '✓ SIM' : '✗ NÃO';

@@ -63,7 +63,7 @@ class TimesheetStatusNotification extends Notification implements ShouldQueue
         };
 
         $mail = (new MailMessage)
-            ->subject("[Minutor] {$assunto} — {$projeto} ({$data})")
+            ->subject("[Time Conect] {$assunto} — {$projeto} ({$data})")
             ->greeting("Olá, {$notifiable->name}!")
             ->line($intro)
             ->line("**Projeto:** {$projeto}")
@@ -80,7 +80,7 @@ class TimesheetStatusNotification extends Notification implements ShouldQueue
             $mail->line($cta);
         }
 
-        $mail->action('Abrir Apontamentos', config('app.frontend_url', 'https://app.minutor.com.br') . '/timesheets')
+        $mail->action('Abrir Apontamentos', config('app.frontend_url', 'https://app.timeconect.com.br') . '/timesheets')
              ->line('Em caso de dúvida, fale com seu coordenador.');
 
         return $mail;

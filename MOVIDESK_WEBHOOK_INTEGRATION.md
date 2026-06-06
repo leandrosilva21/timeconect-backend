@@ -2,7 +2,7 @@
 
 ## 📋 Visão Geral
 
-Este documento descreve a integração implementada entre o webhook do Movidesk e o sistema Minutor para criar automaticamente apontamentos de horas (timesheets) a partir de tickets do Movidesk.
+Este documento descreve a integração implementada entre o webhook do Movidesk e o sistema Time Conect para criar automaticamente apontamentos de horas (timesheets) a partir de tickets do Movidesk.
 
 ## 🔄 Fluxo de Processamento
 
@@ -11,7 +11,7 @@ Quando o webhook do Movidesk recebe uma notificação de ticket:
 1. O sistema busca os detalhes completos do ticket via API do Movidesk
 2. Processa a primeira ação (`actions[0]`) do ticket
 3. Extrai o primeiro apontamento de tempo (`timeAppointments[0]`)
-4. Cria automaticamente um timesheet no sistema Minutor
+4. Cria automaticamente um timesheet no sistema Time Conect
 
 ## 📊 Mapeamento de Dados
 
@@ -277,4 +277,4 @@ docker-compose exec app php artisan tinker
 
 **Implementado em**: Dezembro 2025  
 **Versão**: 1.0  
-**Autor**: Sistema Minutor
+**Autor**: Sistema Time Conect

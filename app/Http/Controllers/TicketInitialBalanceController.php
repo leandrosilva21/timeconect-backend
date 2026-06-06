@@ -41,7 +41,7 @@ class TicketInitialBalanceController extends Controller
 
         if (!$ts) {
             return response()->json([
-                'message' => 'Ticket não encontrado nos apontamentos do Minutor',
+                'message' => 'Ticket não encontrado nos apontamentos do Time Conect',
             ], 404);
         }
 

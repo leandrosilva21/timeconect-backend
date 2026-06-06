@@ -857,7 +857,7 @@ class Project extends Model
 
         $initialBalance  = (float) ($this->initial_hours_balance ?? 0);
         $initialConsumed = (float) ($this->initial_hours_consumed ?? 0);
-        // initial_hours_consumed: horas já consumidas antes do projeto entrar no Minutor (saldo
+        // initial_hours_consumed: horas já consumidas antes do projeto entrar no Time Conect (saldo
         // já queimado pelo cliente). Sem essa subtração o show() devolvia o saldo inflado e o
         // modal de subprojeto autorizava criação acima do realmente disponível.
         $balance = ($soldHours + $contributionHours) - ($totalLoggedHours + $coordinationHours) + $initialBalance - $initialConsumed;

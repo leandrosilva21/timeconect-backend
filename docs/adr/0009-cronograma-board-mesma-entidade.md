@@ -4,7 +4,7 @@
 
 ## Contexto
 
-O Minutor passou a precisar de planejamento operacional: uma tela onde o coordenador desenha o cronograma do projeto (etapas + atividades + datas + responsáveis) **antes** da execução. A tentação natural seria criar tabelas paralelas `stage_plans` / `activity_plans` que rascunham o cronograma e "publicam" gerando `project_stages` / `stage_deliveries` reais.
+O Time Conect passou a precisar de planejamento operacional: uma tela onde o coordenador desenha o cronograma do projeto (etapas + atividades + datas + responsáveis) **antes** da execução. A tentação natural seria criar tabelas paralelas `stage_plans` / `activity_plans` que rascunham o cronograma e "publicam" gerando `project_stages` / `stage_deliveries` reais.
 
 Avaliamos 3 opções:
 1. **Reuso**: cronograma e board operam sobre as mesmas tabelas.

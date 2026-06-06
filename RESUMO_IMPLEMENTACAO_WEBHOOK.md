@@ -3,7 +3,7 @@
 ## ✅ O Que Foi Implementado
 
 ### 🎯 Objetivo
-Criar automaticamente apontamentos de horas (timesheets) no sistema Minutor a partir de tickets recebidos via webhook do Movidesk.
+Criar automaticamente apontamentos de horas (timesheets) no sistema Time Conect a partir de tickets recebidos via webhook do Movidesk.
 
 ### 📦 Arquivos Modificados/Criados
 

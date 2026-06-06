@@ -2,7 +2,7 @@
 
 ## 🎯 Visão Geral
 
-O sistema de seeders do Minutor está organizado para separar claramente dados essenciais de produção de dados de desenvolvimento/demo.
+O sistema de seeders do Time Conect está organizado para separar claramente dados essenciais de produção de dados de desenvolvimento/demo.
 
 ## 🏗️ Estrutura de Seeders
 

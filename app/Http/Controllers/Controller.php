@@ -5,10 +5,10 @@ namespace App\Http\Controllers;
 /**
  * @OA\Info(
  *      version="1.0.0",
- *      title="Minutor API",
+ *      title="Time Conect API",
  *      description="Sistema de apontamento de horas e despesas",
  *      @OA\Contact(
- *          email="admin@minutor.com"
+ *          email="admin@timeconect.com"
  *      ),
  *      @OA\License(
  *          name="MIT",

@@ -58,7 +58,7 @@
     <tr>
       <td style="padding:24px 40px 32px;background:#000000;color:#D4D4D8;font-size:12px;line-height:1.7;border-top:1px solid #3F3F46;">
         Olá, {{ $recipientName }}. Você está recebendo este e-mail porque integra a área administrativa
-        do Minutor — todo novo contrato cadastrado é comunicado à equipe responsável pela triagem administrativa.
+        do Time Conect — todo novo contrato cadastrado é comunicado à equipe responsável pela triagem administrativa.
         <br><br>
         <span style="color:#71717A;">&copy; {{ date('Y') }} ERPServ Consultoria · Todos os direitos reservados</span>
       </td>

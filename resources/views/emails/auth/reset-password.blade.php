@@ -6,7 +6,7 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="color-scheme" content="dark">
   <meta name="supported-color-schemes" content="dark">
-  <title>Redefinição de Senha — Minutor</title>
+  <title>Redefinição de Senha — Time Conect</title>
   <!--[if mso]>
   <noscript>
     <xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>
@@ -69,7 +69,7 @@
                   </td>
                   <td style="vertical-align:middle;">
                     <div style="font-size:26px;font-weight:700;letter-spacing:-0.02em;color:#FFFFFF;line-height:1.05;font-family:'Segoe UI',Arial,sans-serif;">
-                      Minutor
+                      Time Conect
                     </div>
                     <div style="margin-top:4px;font-size:13px;color:rgba(255,255,255,0.38);font-weight:400;font-family:'Segoe UI',Arial,sans-serif;">
                       Controle de horas e contratos em um só lugar
@@ -91,7 +91,7 @@
               <p style="margin:0;font-size:15px;color:#A1A1AA;line-height:1.6;
                 font-family:'Segoe UI',Arial,sans-serif;">
                 Olá, <strong style="color:#FFFFFF;">{{ $user->name ?? 'Usuário' }}</strong>!
-                Recebemos uma solicitação para redefinir a senha da sua conta no Minutor.
+                Recebemos uma solicitação para redefinir a senha da sua conta no Time Conect.
               </p>
             </td>
           </tr>

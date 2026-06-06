@@ -161,7 +161,7 @@ return [
     |--------------------------------------------------------------------------
     | Reply-To dos fechamentos (caixa de resposta)
     |--------------------------------------------------------------------------
-    | Endereço pra onde a resposta do consultor vai (Reply-To) e que o Minutor
+    | Endereço pra onde a resposta do consultor vai (Reply-To) e que o Time Conect
     | LÊ via Graph (Fase 2). Separado do From: o From pode ser o noreply (que
     | costuma ter regra descartando e-mail externo), mas a resposta precisa cair
     | numa caixa que ACEITE externo. Default = o próprio From.

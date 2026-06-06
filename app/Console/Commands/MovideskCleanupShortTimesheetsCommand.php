@@ -9,7 +9,7 @@ use Illuminate\Console\Command;
  * Limpa timesheets de origem Movidesk com duração < 5 minutos.
  *
  * Regra global: apontamentos do Movidesk com effort_minutes < 5 não devem
- * existir no Minutor (já bloqueado em MovideskService::processAppointment e
+ * existir no Time Conect (já bloqueado em MovideskService::processAppointment e
  * MovideskService::reprocessTimesheet). Este comando faz a varredura
  * retroativa pra remover registros que entraram antes/durante a brecha.
  *

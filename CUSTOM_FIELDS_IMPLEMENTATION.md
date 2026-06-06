@@ -74,7 +74,7 @@ Arquivo: `src/app/app.routes.ts`
 {
   path: 'admin/custom-fields',
   loadComponent: () => import('./features/custom-fields/custom-fields-admin.component').then(m => m.CustomFieldsAdminComponent),
-  title: 'Campos Customizados - Minutor',
+  title: 'Campos Customizados - Time Conect',
   canActivate: [PermissionGuard],
   data: { permissions: ['admin.full_access'] }
 }
@@ -86,7 +86,7 @@ Arquivo: `src/app/app.routes.ts`
 
 ```bash
 # Entrar no diretório do backend
-cd minutor-backend
+cd timeconect-backend
 
 # Rodar migrations dentro do container
 docker-compose exec app php artisan migrate
@@ -334,7 +334,7 @@ Onde `{context}` pode ser: `projects`, `timesheets`, `expenses`, `customers`
 ## 🔧 Integração nos Formulários
 
 Para integrar custom fields nos formulários existentes, consulte:
-- **Frontend**: `minutor-frontend/CUSTOM_FIELDS_INTEGRATION_GUIDE.md`
+- **Frontend**: `timeconect-frontend/CUSTOM_FIELDS_INTEGRATION_GUIDE.md`
 
 ## 🐛 Troubleshooting
 

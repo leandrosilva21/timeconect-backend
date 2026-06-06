@@ -91,9 +91,9 @@ Route::prefix('v1')->group(function () {
     // 🧪 DEV: dispara e-mail de exemplo dos templates de contrato.
     // Protegido por token fixo (APP_ENV em homolog está como 'production', então
     // não dá pra usar app()->environment como guard).
-    // Uso: GET /api/v1/__test/contract-email?token=minutor-debug-2026&to=...&kind=created|generated
+    // Uso: GET /api/v1/__test/contract-email?token=timeconect-debug-2026&to=...&kind=created|generated
     Route::get('/__test/contract-email', function (\Illuminate\Http\Request $request) {
-        if ($request->query('token') !== 'minutor-debug-2026') {
+        if ($request->query('token') !== 'timeconect-debug-2026') {
             return response()->json(['error' => 'token inválido'], 403);
         }
         $to = $request->query('to', 'ricardo.oliveira@erpserv.com.br');
@@ -134,7 +134,7 @@ Route::prefix('v1')->group(function () {
     // 🧪 DEV: backfill — marca requisições já convertidas em projeto como CONVERTIDO.
     // One-shot pra limpar duplicação no kanban. Mesmo token do test endpoint.
     Route::get('/__test/backfill-requests-convertido', function (\Illuminate\Http\Request $request) {
-        if ($request->query('token') !== 'minutor-debug-2026') {
+        if ($request->query('token') !== 'timeconect-debug-2026') {
             return response()->json(['error' => 'token inválido'], 403);
         }
         try {

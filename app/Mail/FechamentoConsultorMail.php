@@ -17,7 +17,7 @@ use Illuminate\Queue\SerializesModels;
  * De  = conta autenticada (mail.from.address) COM o nome do usuário logado.
  *       NÃO usa o e-mail do usuário no From: o O365 bloqueia Send As cross-domain.
  * Reply-To = a PRÓPRIA conta (noreply) — pra resposta do consultor cair na caixa que
- *       o Minutor lê via Graph (Fase 2) e encadear na thread. CC = financeiro (visibilidade).
+ *       o Time Conect lê via Graph (Fase 2) e encadear na thread. CC = financeiro (visibilidade).
  * To  = consultor (definido no Mail::to()).
  *
  * Corpo minimalista; o detalhamento vai nos anexos PDF + XLSX.
@@ -30,7 +30,7 @@ class FechamentoConsultorMail extends Mailable
      * @param string|null      $messageId      Message-ID custom (sem os <>) que setamos no header desta mensagem.
      * @param string|null      $references     Message-ID da mensagem-raiz (References) para threading.
      * @param string|null      $inReplyTo      Message-ID da mensagem-raiz (In-Reply-To) — Outlook threada por este header.
-     * @param string|null      $threadKey      "consultorId:yearMonth" — vai no header X-Minutor-Fechamento-Id.
+     * @param string|null      $threadKey      "consultorId:yearMonth" — vai no header X-Time Conect-Fechamento-Id.
      * @param string|null      $bodyText       Texto livre (continuações) — exibido antes do conteúdo padrão.
      * @param bool             $isContinuation Se é uma continuação/resposta da thread (vs. envio original).
      * @param bool             $withAttachments Anexar PDF+XLSX (sempre no original; opcional nas continuações).
@@ -93,10 +93,10 @@ class FechamentoConsultorMail extends Mailable
 
     /**
      * Headers de threading + matching:
-     *  - Message-ID determinístico (fech-...@minutor.com.br) por mensagem;
+     *  - Message-ID determinístico (fech-...@timeconect.com.br) por mensagem;
      *  - In-Reply-To = Message-ID da mensagem-raiz da thread (Outlook threada por este);
      *  - References = Message-ID da mensagem-raiz da thread;
-     *  - X-Minutor-Fechamento-Id = "consultorId:yearMonth" para matching robusto de inbound futuro.
+     *  - X-Time Conect-Fechamento-Id = "consultorId:yearMonth" para matching robusto de inbound futuro.
      *
      * O Illuminate\Mail\Mailables\Headers não tem campo dedicado para In-Reply-To,
      * então adicionamos via `text:` (addTextHeader não envolve em <>; envolvemos aqui),
@@ -106,7 +106,7 @@ class FechamentoConsultorMail extends Mailable
     {
         $text = [];
         if ($this->threadKey) {
-            $text['X-Minutor-Fechamento-Id'] = $this->threadKey;
+            $text['X-Time Conect-Fechamento-Id'] = $this->threadKey;
         }
         if ($this->inReplyTo) {
             $id = trim($this->inReplyTo, '<>');

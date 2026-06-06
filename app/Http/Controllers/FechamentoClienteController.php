@@ -1120,7 +1120,7 @@ class FechamentoClienteController extends Controller
             ->get();
 
         // Saldos iniciais cadastrados pra esse cliente — somam SOMENTE no lifetime
-        // (histórico anterior à entrada do ticket no Minutor), nunca no período.
+        // (histórico anterior à entrada do ticket no Time Conect), nunca no período.
         $initialByTicket = \DB::table('ticket_initial_balances')
             ->whereNull('deleted_at')
             ->where('customer_id', $customerId)

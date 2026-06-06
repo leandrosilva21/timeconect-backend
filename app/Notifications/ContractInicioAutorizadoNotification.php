@@ -33,7 +33,7 @@ class ContractInicioAutorizadoNotification extends Notification
         $projeto = $c->project_name ?? '—';
         $cliente = optional($c->customer)->name ?? '—';
 
-        $base = rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/');
+        $base = rtrim((string) config('app.frontend_url', 'https://app.timeconect.com.br'), '/');
         $cardUrl = "{$base}/contratos/kanban";
 
         $recipientName = $notifiable instanceof AnonymousNotifiable
@@ -41,7 +41,7 @@ class ContractInicioAutorizadoNotification extends Notification
             : ($notifiable->name ?? 'executivo da conta');
 
         return (new MailMessage)
-            ->subject("[Minutor] Contrato com início autorizado — {$codigo}")
+            ->subject("[Time Conect] Contrato com início autorizado — {$codigo}")
             ->view('emails.contracts.inicio-autorizado', [
                 'codigo'        => $codigo,
                 'projeto'       => $projeto,

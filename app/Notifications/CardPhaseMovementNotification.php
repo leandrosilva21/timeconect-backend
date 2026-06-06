@@ -36,7 +36,7 @@ class CardPhaseMovementNotification extends Notification implements ShouldQueue
     public function toMail($notifiable): MailMessage
     {
         $subjectNoun = $this->cardType === 'contract_request' ? 'Requisição' : 'Projeto';
-        $subject = "[Minutor] {$subjectNoun} {$this->cardCode} avançou para {$this->toColumn}";
+        $subject = "[Time Conect] {$subjectNoun} {$this->cardCode} avançou para {$this->toColumn}";
 
         return (new MailMessage)
             ->subject($subject)

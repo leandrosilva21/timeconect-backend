@@ -1,14 +1,14 @@
-# ADR 0001 — Minutor não é Jira
+# ADR 0001 — Time Conect não é Jira
 
 **Status:** Aceito · **Data:** 2026-05-13
 
 ## Contexto
 
-Estamos introduzindo gestão operacional de projetos (etapas + entregas + kanban). É o tipo de feature que historicamente puxa o produto para o lado de "ferramenta de gestão ágil genérica" (Jira/ClickUp/Asana). O diferencial do Minutor não é gestão ágil — é **execução operacional integrada a horas, contratos e financeiro**.
+Estamos introduzindo gestão operacional de projetos (etapas + entregas + kanban). É o tipo de feature que historicamente puxa o produto para o lado de "ferramenta de gestão ágil genérica" (Jira/ClickUp/Asana). O diferencial do Time Conect não é gestão ágil — é **execução operacional integrada a horas, contratos e financeiro**.
 
 ## Decisão
 
-O Minutor adota gestão operacional **mínima**, ancorada em três níveis: projeto · etapa · entrega. Tudo o que estiver fora dessa hierarquia, ou que adicione complexidade típica de ferramenta ágil, fica explicitamente **fora de escopo**.
+O Time Conect adota gestão operacional **mínima**, ancorada em três níveis: projeto · etapa · entrega. Tudo o que estiver fora dessa hierarquia, ou que adicione complexidade típica de ferramenta ágil, fica explicitamente **fora de escopo**.
 
 ### Não fazemos (e não vamos fazer sem novo ADR)
 

@@ -5,7 +5,7 @@ return [
     'documentations' => [
         'default' => [
             'api' => [
-                'title' => 'Minutor API Documentation',
+                'title' => 'Time Conect API Documentation',
             ],
 
             'routes' => [

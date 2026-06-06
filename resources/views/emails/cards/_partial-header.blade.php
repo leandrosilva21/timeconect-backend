@@ -1,4 +1,4 @@
-{{-- Card header com logo ERPServ branco + Minutor. Compartilhado entre todos templates de card. --}}
+{{-- Card header com logo ERPServ branco + Time Conect. Compartilhado entre todos templates de card. --}}
 <tr>
   <td align="left" style="padding:36px 40px 28px;background:#000000;border-bottom:1px solid rgba(255,255,255,0.06);">
 
@@ -16,7 +16,7 @@
       </tr>
     </table>
 
-    {{-- Minutor — produto --}}
+    {{-- Time Conect — produto --}}
     <table role="presentation" border="0" cellpadding="0" cellspacing="0">
       <tr>
         <td style="vertical-align:middle;padding-right:14px;">
@@ -29,7 +29,7 @@
           </table>
         </td>
         <td style="vertical-align:middle;">
-          <div style="font-size:26px;font-weight:700;letter-spacing:-0.02em;color:#FFFFFF;line-height:1.05;font-family:'Segoe UI',Arial,sans-serif;">Minutor</div>
+          <div style="font-size:26px;font-weight:700;letter-spacing:-0.02em;color:#FFFFFF;line-height:1.05;font-family:'Segoe UI',Arial,sans-serif;">Time Conect</div>
           <div style="margin-top:4px;font-size:13px;color:rgba(255,255,255,0.38);font-weight:400;font-family:'Segoe UI',Arial,sans-serif;">Controle de horas e contratos em um só lugar</div>
         </td>
       </tr>

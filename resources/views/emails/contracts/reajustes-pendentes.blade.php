@@ -88,7 +88,7 @@
     <tr>
       <td style="padding:22px 40px 28px;background:#000000;">
         <p style="margin:0;color:#52525B;font-size:11px;line-height:1.5;">
-          E-mail automático do Minutor — enviado no 1º dia útil do mês. O reajuste <b style="color:#71717A;">não é aplicado automaticamente</b>:
+          E-mail automático do Time Conect — enviado no 1º dia útil do mês. O reajuste <b style="color:#71717A;">não é aplicado automaticamente</b>:
           confira o índice e o período, e aplique manualmente no dashboard.
         </p>
       </td>

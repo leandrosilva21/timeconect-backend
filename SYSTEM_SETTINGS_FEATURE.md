@@ -2,7 +2,7 @@
 
 ## 📋 Visão Geral
 
-Feature completa para gerenciamento de configurações do sistema Minutor, permitindo que administradores configurem diversos parâmetros operacionais através de uma interface web amigável.
+Feature completa para gerenciamento de configurações do sistema Time Conect, permitindo que administradores configurem diversos parâmetros operacionais através de uma interface web amigável.
 
 **Data de Implementação:** 24/11/2025  
 **Status:** ✅ Implementado e Testado
@@ -221,7 +221,7 @@ export class SystemSettingsService {
   path: 'system-settings',
   loadComponent: () => import('./features/system-settings/system-settings.component')
     .then(m => m.SystemSettingsComponent),
-  title: 'Configurações do Sistema - Minutor',
+  title: 'Configurações do Sistema - Time Conect',
   canActivate: [PermissionGuard],
   data: { permissions: ['system_settings.view', 'admin.full_access'] }
 }

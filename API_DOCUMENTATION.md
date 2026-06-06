@@ -1,4 +1,4 @@
-# 🔐 API Minutor - Sistema de Apontamento de Horas
+# 🔐 API Time Conect - Sistema de Apontamento de Horas
 
 ## Visão Geral
 
@@ -68,7 +68,7 @@ Autentica um usuário e retorna token de acesso.
 **Body:**
 ```json
 {
-  "email": "admin@minutor.com",
+  "email": "admin@timeconect.com",
   "password": "admin123456",
   "device_name": "web-app" // opcional
 }
@@ -81,7 +81,7 @@ Autentica um usuário e retorna token de acesso.
   "user": {
     "id": 1,
     "name": "Administrador",
-    "email": "admin@minutor.com",
+    "email": "admin@timeconect.com",
     "email_verified_at": "2024-01-01T00:00:00.000000Z"
   },
   "token": "1|abc123...",
@@ -97,7 +97,7 @@ Envia link de recuperação de senha por email.
 **Body:**
 ```json
 {
-  "email": "admin@minutor.com"
+  "email": "admin@timeconect.com"
 }
 ```
 
@@ -116,7 +116,7 @@ Redefine a senha usando token recebido por email.
 **Body:**
 ```json
 {
-  "email": "admin@minutor.com",
+  "email": "admin@timeconect.com",
   "token": "reset_token_from_email",
   "password": "nova_senha_123",
   "password_confirmation": "nova_senha_123"
@@ -138,7 +138,7 @@ Verifica se token de reset é válido.
 **Body:**
 ```json
 {
-  "email": "admin@minutor.com",
+  "email": "admin@timeconect.com",
   "token": "reset_token_from_email"
 }
 ```
@@ -166,7 +166,7 @@ Retorna dados do usuário autenticado.
   "user": {
     "id": 1,
     "name": "Administrador",
-    "email": "admin@minutor.com",
+    "email": "admin@timeconect.com",
     "email_verified_at": "2024-01-01T00:00:00.000000Z",
     "created_at": "2024-01-01T00:00:00.000000Z",
     "updated_at": "2024-01-01T00:00:00.000000Z"
@@ -258,7 +258,7 @@ Verifica se token atual é válido.
   "user": {
     "id": 1,
     "name": "Administrador",
-    "email": "admin@minutor.com"
+    "email": "admin@timeconect.com"
   }
 }
 ```
@@ -315,9 +315,9 @@ Verifica se a API está funcionando.
 
 ### Credenciais Padrão
 ```
-Admin: admin@minutor.com / admin123456
-Teste: teste@minutor.com / teste123456
-Demo: demo@minutor.com / demo123456
+Admin: admin@timeconect.com / admin123456
+Teste: teste@timeconect.com / teste123456
+Demo: demo@timeconect.com / demo123456
 ```
 
 ---
@@ -399,7 +399,7 @@ curl -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -d '{
-    "email": "admin@minutor.com",
+    "email": "admin@timeconect.com",
     "password": "admin123456"
   }'
 ```

@@ -40,8 +40,8 @@ class ContractRequestLifecycleNotification extends Notification implements Shoul
     public function toMail($notifiable): MailMessage
     {
         $subject = $this->stage === 'created'
-            ? "[Minutor] Requisição {$this->reqCode} criada — próximos passos"
-            : "[Minutor] Requisição {$this->reqCode} avançou para " . $this->prettyColumn($this->toColumn);
+            ? "[Time Conect] Requisição {$this->reqCode} criada — próximos passos"
+            : "[Time Conect] Requisição {$this->reqCode} avançou para " . $this->prettyColumn($this->toColumn);
 
         return (new MailMessage)
             ->subject($subject)

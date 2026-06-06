@@ -20,7 +20,7 @@ use App\Models\User;
 use Closure;
 
 /**
- * FASE 11 — Fonte ÚNICA de verdade das entidades anexáveis do Minutor.
+ * FASE 11 — Fonte ÚNICA de verdade das entidades anexáveis do Time Conect.
  *
  * Princípios:
  *  - entity_type é uma chave string controlada (PROJECT, EXPENSE, ...) — NUNCA livre.

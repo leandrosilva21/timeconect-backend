@@ -4,7 +4,7 @@
 
 ## Contexto
 
-O Minutor tem hoje 3 kanbans que olham para projetos/contratos:
+O Time Conect tem hoje 3 kanbans que olham para projetos/contratos:
 
 1. **Kanban de Contratos** (`/contratos/kanban`) — source of truth do fluxo comercial. DnD entre colunas de coordenador, regras de sustentação, estados terminais; sincroniza com várias rotinas. Custou caro estabilizar.
 2. **Kanban de Projetos Operacional** (`/projetos/kanban`) — visão operacional/executiva dos projetos (Backlog → Execução → Homologação → Encerrado/Pausado/Cancelado).

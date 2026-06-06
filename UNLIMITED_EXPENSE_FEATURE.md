@@ -230,5 +230,5 @@ INFO  Running migrations.
 
 **Data de Implementação:** 17 de Janeiro de 2025  
 **Versão:** 1.0.0  
-**Autor:** Sistema Minutor
+**Autor:** Sistema Time Conect
 

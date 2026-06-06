@@ -1,8 +1,8 @@
-# 🎯 Regras do Projeto Minutor - Plataforma de Apontamento de Horas
+# 🎯 Regras do Projeto Time Conect - Plataforma de Apontamento de Horas
 
-## 📊 Sobre o Projeto Minutor
+## 📊 Sobre o Projeto Time Conect
 
-**Minutor** é uma plataforma completa para **apontamento de horas trabalhadas em projetos de clientes**.
+**Time Conect** é uma plataforma completa para **apontamento de horas trabalhadas em projetos de clientes**.
 
 ### Funcionalidades Principais:
 - ✅ **Gestão de Clientes** - Cadastro e gerenciamento de clientes (customers)
@@ -730,7 +730,7 @@ curl -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -d '{
-    "email": "admin@minutor.com",
+    "email": "admin@timeconect.com",
     "password": "admin123456"
   }'
 ```
@@ -853,7 +853,7 @@ Ao gerar código, verificar:
 
 ---
 
-## ⚠️ IMPORTANTE - PROJETO MINUTOR API
+## ⚠️ IMPORTANTE - PROJETO TIME CONECT API
 
 1. **SEMPRE** execute comandos PHP dentro dos containers
 2. **SEMPRE** retorne respostas JSON padronizadas PO-UI

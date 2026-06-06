@@ -9,7 +9,7 @@ use Illuminate\Console\Command;
 class MovideskDebugClienteCommand extends Command
 {
     protected $signature   = 'movidesk:debug-cliente';
-    protected $description = 'Compara clientes/CNPJ do Movidesk com customers do Minutor';
+    protected $description = 'Compara clientes/CNPJ do Movidesk com customers do Time Conect';
 
     public function handle(): int
     {
@@ -25,11 +25,11 @@ class MovideskDebugClienteCommand extends Command
             ->orderByDesc('tickets')
             ->get();
 
-        // Carrega customers do Minutor indexados por CGC normalizado
+        // Carrega customers do Time Conect indexados por CGC normalizado
         $customers = Customer::whereNotNull('cgc')->get()->keyBy(fn($c) => preg_replace('/[^0-9]/', '', $c->cgc));
 
         $this->line('');
-        $this->line('=== CLIENTES MOVIDESK x MINUTOR (CNPJ) ===');
+        $this->line('=== CLIENTES MOVIDESK x TIME CONECT (CNPJ) ===');
         $this->line('');
 
         $headers = [
@@ -38,8 +38,8 @@ class MovideskDebugClienteCommand extends Command
             'CNPJ normalizado',
             'Tickets',
             'Vinculados',
-            'Cliente no Minutor?',
-            'Nome no Minutor',
+            'Cliente no Time Conect?',
+            'Nome no Time Conect',
         ];
 
         $tableData = $rows->map(function ($row) use ($customers) {
@@ -49,16 +49,16 @@ class MovideskDebugClienteCommand extends Command
 
             if ($cnpjNorm && isset($customers[$cnpjNorm])) {
                 $found      = '✓ SIM (CNPJ)';
-                $minutorName = $customers[$cnpjNorm]->name ?? $customers[$cnpjNorm]->company_name ?? '—';
+                $timeconectName = $customers[$cnpjNorm]->name ?? $customers[$cnpjNorm]->company_name ?? '—';
             } else {
                 // Fallback: busca por nome
                 $byName = Customer::where('name', $org)->orWhere('company_name', $org)->first();
                 if ($byName) {
                     $found       = '~ SIM (nome)';
-                    $minutorName = $byName->name ?? $byName->company_name ?? '—';
+                    $timeconectName = $byName->name ?? $byName->company_name ?? '—';
                 } else {
                     $found       = '✗ NÃO';
-                    $minutorName = '—';
+                    $timeconectName = '—';
                 }
             }
 
@@ -69,7 +69,7 @@ class MovideskDebugClienteCommand extends Command
                 $row->tickets,
                 $row->vinculados,
                 $found,
-                mb_substr($minutorName, 0, 30),
+                mb_substr($timeconectName, 0, 30),
             ];
         })->toArray();
 

@@ -33,7 +33,7 @@ touch database/database.sqlite
 Se não tiver um arquivo `.env`, crie um com o seguinte conteúdo mínimo:
 
 ```env
-APP_NAME=Minutor
+APP_NAME=Time Conect
 APP_ENV=local
 APP_KEY=
 APP_DEBUG=true
@@ -88,9 +88,9 @@ Após executar os seeders, você terá acesso aos seguintes usuários:
 
 | Email | Senha | Role |
 |-------|-------|------|
-| `admin@minutor.com` | `admin123456` | Administrator |
-| `teste@minutor.com` | `teste123456` | Project Manager |
-| `demo@minutor.com` | `demo123456` | Consultant |
+| `admin@timeconect.com` | `admin123456` | Administrator |
+| `teste@timeconect.com` | `teste123456` | Project Manager |
+| `demo@timeconect.com` | `demo123456` | Consultant |
 
 ## ⚠️ Troubleshooting
 

@@ -27,7 +27,7 @@ class MovideskService
      * estiver vazia ou apontar pra entidade ausente, o firstOrCreate
      * resolve criando/retornando uma entidade marcada como fallback.
      */
-    private const FALLBACK_USER_EMAIL    = 'movidesk-fallback@minutor.local';
+    private const FALLBACK_USER_EMAIL    = 'movidesk-fallback@timeconect.local';
     private const FALLBACK_CUSTOMER_CGC  = '00000000000000';
     private const FALLBACK_PROJECT_CODE  = 'MOVIDESK-FALLBACK';
     private const FALLBACK_NAME          = 'Padrão Movidesk (Fallback)';
@@ -199,7 +199,7 @@ class MovideskService
 
         if (!$targetAction) {
             // Apontamento foi removido no Movidesk (deletado/recriado com novo id).
-            // Soft-delete no Minutor para não ficar fantasma duplicado em
+            // Soft-delete no Time Conect para não ficar fantasma duplicado em
             // fechamentos, dashboards e relatórios. Mantém o registro físico
             // para auditoria.
             $timesheet->delete();
@@ -246,7 +246,7 @@ class MovideskService
 
         // Trava manual: se o usuário editou qualquer campo de conteúdo via UI
         // (cliente/projeto/data/horários/effort/observação), o reprocess NÃO
-        // sobrescreve mais. Edições do Minutor têm prioridade sobre o sync.
+        // sobrescreve mais. Edições do Time Conect têm prioridade sobre o sync.
         if (!$timesheet->manual_project_edit) {
             // Corrige cliente — mas NUNCA rebaixa um cliente real para o fallback
             // (default). Quando a organização do ticket não resolve (não está em
@@ -282,7 +282,7 @@ class MovideskService
             $newObservation   = $this->buildObservation($ticket, $targetAction);
 
             // Regra global: apontamentos do Movidesk com duração < 5 min não devem
-            // existir no Minutor. Se o reprocess detecta que o Movidesk agora
+            // existir no Time Conect. Se o reprocess detecta que o Movidesk agora
             // reporta < 5 min, soft-deleta o timesheet em vez de atualizar pra
             // um valor proibido (mesma política aplicada na criação em processAppointment).
             if ($newEffortMinutes !== null && $newEffortMinutes < 5) {
@@ -447,7 +447,7 @@ class MovideskService
     {
         $appointmentId = $appointment['id'] ?? null;
 
-        // Bloquear importação de tickets de equipes não gerenciadas pelo Minutor
+        // Bloquear importação de tickets de equipes não gerenciadas pelo Time Conect
         $ownerTeam = $ticket['ownerTeam'] ?? null;
         if ($ownerTeam && in_array(trim($ownerTeam), self::BLOCKED_OWNER_TEAMS, true)) {
             Log::info('⛔ [MOVIDESK] Apontamento bloqueado (equipe não permitida)', [
@@ -1783,7 +1783,7 @@ class MovideskService
 
         $org = $target['organization'] ?? null;
 
-        // 1. Tenta por CNPJ — chave única confiável entre Movidesk e Minutor
+        // 1. Tenta por CNPJ — chave única confiável entre Movidesk e Time Conect
         $cpfCnpj = preg_replace('/[^0-9]/', '', $target['cpfCnpj'] ?? '');
         if (!$cpfCnpj && is_array($org)) {
             $cpfCnpj = preg_replace('/[^0-9]/', '', $org['cpfCnpj'] ?? '');

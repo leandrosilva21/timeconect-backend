@@ -1,6 +1,6 @@
-# CLAUDE.md — Minutor Backend (Laravel)
+# CLAUDE.md — Time Conect Backend (Laravel)
 
-> Referência rápida para o agente. Fonte de verdade completa: `/Users/ricardodeoliveirasilva/Documents/Obsidian Vault/MINUTOR.md`
+> Referência rápida para o agente. Fonte de verdade completa: `/Users/ricardodeoliveirasilva/Documents/Obsidian Vault/TIME CONECT.md`
 
 ---
 
@@ -15,18 +15,18 @@
 | Ambiente | Frontend | Backend | Obs |
 |---|---|---|---|
 | **Homolog** | Render | Render | Repos `ricardooliveiraerpserv/*-homolog` |
-| **Produção** | `app.minutor.com.br` | `api.minutor.com.br` | VPS 178.18.246.162, Docker Compose, Cloudflare Tunnel |
+| **Produção** | `app.timeconect.com.br` | `api.timeconect.com.br` | VPS 178.18.246.162, Docker Compose, Cloudflare Tunnel |
 | **Produção antiga** | Render (inativo) | Render (inativo) | — |
 
 ### Deploy em produção (VPS)
 ```bash
 # No servidor (SSH fabio@178.18.246.162)
-git -C /opt/minutor/backend pull origin main
-git -C /opt/minutor/frontend pull origin main
-docker build -t minutor-backend:latest /opt/minutor/backend
-docker build --build-arg NEXT_PUBLIC_API_URL=https://api.minutor.com.br -t minutor-frontend:latest /opt/minutor/frontend
-cd /opt/minutor && docker compose up -d --no-deps backend queue-worker scheduler frontend
-docker exec minutor-backend php artisan migrate --force
+git -C /opt/timeconect/backend pull origin main
+git -C /opt/timeconect/frontend pull origin main
+docker build -t timeconect-backend:latest /opt/timeconect/backend
+docker build --build-arg NEXT_PUBLIC_API_URL=https://api.timeconect.com.br -t timeconect-frontend:latest /opt/timeconect/frontend
+cd /opt/timeconect && docker compose up -d --no-deps backend queue-worker scheduler frontend
+docker exec timeconect-backend php artisan migrate --force
 ```
 
 ---

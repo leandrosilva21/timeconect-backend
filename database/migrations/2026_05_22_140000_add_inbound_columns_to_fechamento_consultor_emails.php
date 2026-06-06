@@ -16,7 +16,7 @@ return new class extends Migration
     {
         Schema::table('fechamento_consultor_emails', function (Blueprint $table) {
             if (!Schema::hasColumn('fechamento_consultor_emails', 'direction')) {
-                // 'outbound' = enviado pelo Minutor; 'inbound' = resposta do consultor lida via Graph.
+                // 'outbound' = enviado pelo Time Conect; 'inbound' = resposta do consultor lida via Graph.
                 $table->string('direction', 16)->default('outbound')->after('year_month');
             }
             if (!Schema::hasColumn('fechamento_consultor_emails', 'from_email')) {

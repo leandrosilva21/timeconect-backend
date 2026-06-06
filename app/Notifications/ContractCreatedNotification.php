@@ -36,7 +36,7 @@ class ContractCreatedNotification extends Notification
         $projeto = $c->project_name ?? '—';
         $cliente = optional($c->customer)->name ?? '—';
 
-        $base = rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/');
+        $base = rtrim((string) config('app.frontend_url', 'https://app.timeconect.com.br'), '/');
         $cardUrl = "{$base}/contratos/kanban";
 
         $recipientName = $notifiable instanceof AnonymousNotifiable
@@ -44,7 +44,7 @@ class ContractCreatedNotification extends Notification
             : ($notifiable->name ?? 'equipe administrativa');
 
         return (new MailMessage)
-            ->subject("[Minutor] Novo contrato cadastrado — {$codigo}")
+            ->subject("[Time Conect] Novo contrato cadastrado — {$codigo}")
             ->view('emails.contracts.created', [
                 'codigo'        => $codigo,
                 'projeto'       => $projeto,

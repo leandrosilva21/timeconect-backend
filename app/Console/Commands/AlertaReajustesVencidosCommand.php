@@ -37,7 +37,7 @@ class AlertaReajustesVencidosCommand extends Command
 
         $totalImpacto = round((float) $vencidos->sum('valor_estimado_reajuste'), 2);
         $referencia   = $this->mesAno(Carbon::now());
-        $dashboardUrl = rtrim(env('APP_FRONTEND_URL', config('app.url', 'https://app.minutor.com.br')), '/') . '/fechamento/reajustes';
+        $dashboardUrl = rtrim(env('APP_FRONTEND_URL', config('app.url', 'https://app.timeconect.com.br')), '/') . '/fechamento/reajustes';
         $to           = config('mail.reajustes_alerta_to', env('MAIL_REAJUSTES_ALERTA_TO', 'financeiro@erpserv.com.br'));
 
         $mail = new ReajustesPendentesMail($vencidos->all(), $totalImpacto, $referencia, $dashboardUrl);

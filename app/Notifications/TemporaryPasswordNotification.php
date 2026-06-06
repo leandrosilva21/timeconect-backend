@@ -39,7 +39,7 @@ class TemporaryPasswordNotification extends Notification
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject('Nova Senha Temporária - Minutor')
+            ->subject('Nova Senha Temporária - Time Conect')
             ->view('emails.auth.temporary-password', [
                 'notifiable' => $notifiable,
                 'temporaryPassword' => $this->temporaryPassword,

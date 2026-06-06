@@ -54,17 +54,17 @@
 **Deploy:**
 ```bash
 # 1. Branch
-git -C ~/PROJETOS/Minutor-desenvolvimento/Backend fetch prod main
+git -C ~/PROJETOS/Time Conect-desenvolvimento/Backend fetch prod main
 git worktree add -b fase11/01-fundacao /tmp/be-f11-01 prod/main
 
 # 2. Copiar arquivos da Replica (cirurgicamente; nenhum arquivo legado tocado)
-cp -r ~/PROJETOS/Minutor-Replica/Backend/app/Attachments /tmp/be-f11-01/app/Attachments
-cp ~/PROJETOS/Minutor-Replica/Backend/app/Models/Attachment.php /tmp/be-f11-01/app/Models/
-cp ~/PROJETOS/Minutor-Replica/Backend/app/Models/AttachmentEvent.php /tmp/be-f11-01/app/Models/
-cp ~/PROJETOS/Minutor-Replica/Backend/app/Http/Controllers/AttachmentController.php /tmp/be-f11-01/app/Http/Controllers/
-cp ~/PROJETOS/Minutor-Replica/Backend/app/Providers/AttachmentsServiceProvider.php /tmp/be-f11-01/app/Providers/
-cp ~/PROJETOS/Minutor-Replica/Backend/database/migrations/2026_05_29_*.php /tmp/be-f11-01/database/migrations/
-cp ~/PROJETOS/Minutor-Replica/Backend/app/Console/Commands/AttachmentsIntegrityCheck.php /tmp/be-f11-01/app/Console/Commands/
+cp -r ~/PROJETOS/Time Conect-Replica/Backend/app/Attachments /tmp/be-f11-01/app/Attachments
+cp ~/PROJETOS/Time Conect-Replica/Backend/app/Models/Attachment.php /tmp/be-f11-01/app/Models/
+cp ~/PROJETOS/Time Conect-Replica/Backend/app/Models/AttachmentEvent.php /tmp/be-f11-01/app/Models/
+cp ~/PROJETOS/Time Conect-Replica/Backend/app/Http/Controllers/AttachmentController.php /tmp/be-f11-01/app/Http/Controllers/
+cp ~/PROJETOS/Time Conect-Replica/Backend/app/Providers/AttachmentsServiceProvider.php /tmp/be-f11-01/app/Providers/
+cp ~/PROJETOS/Time Conect-Replica/Backend/database/migrations/2026_05_29_*.php /tmp/be-f11-01/database/migrations/
+cp ~/PROJETOS/Time Conect-Replica/Backend/app/Console/Commands/AttachmentsIntegrityCheck.php /tmp/be-f11-01/app/Console/Commands/
 
 # 3. Aplicar diff cirúrgico em routes/api.php + bootstrap/providers.php + routes/console.php
 #    (editor: adicionar SÓ as linhas novas; sem tocar nas outras edições do prod)
@@ -73,15 +73,15 @@ cp ~/PROJETOS/Minutor-Replica/Backend/app/Console/Commands/AttachmentsIntegrityC
 cd /tmp/be-f11-01
 git add -A && git commit -m "feat(attachments FASE 11.1): fundação polimórfica + service + integrity-check"
 git push prod fase11/01-fundacao
-gh pr create --repo Leonardo-almd/minutor-backend --base main --head Leonardo-almd:fase11/01-fundacao \
+gh pr create --repo Leonardo-almd/timeconect-backend --base main --head Leonardo-almd:fase11/01-fundacao \
   --title "feat(attachments): FASE 11.1 — fundação polimórfica" \
   --body "Migrations + Service + Registry + Storage abstrato + rotas REST + integrity-check diário. Sem efeito em módulos existentes."
 
 # 5. Aguardar GHA build → pull no VPS:
-ssh minutor-prod 'cd /opt/minutor && docker compose pull backend && docker compose up -d --no-deps backend queue-worker scheduler'
+ssh timeconect-prod 'cd /opt/timeconect && docker compose pull backend && docker compose up -d --no-deps backend queue-worker scheduler'
 
 # 6. Validar:
-ssh minutor-prod 'cd /opt/minutor && docker compose exec -T backend php artisan tinker --execute="
+ssh timeconect-prod 'cd /opt/timeconect && docker compose exec -T backend php artisan tinker --execute="
 echo \"Registry: \".implode(\",\", \App\Attachments\AttachableEntitiesRegistry::knownTypes()).PHP_EOL;
 echo \"Service: \".get_class(app(\App\Attachments\AttachmentService::class)).PHP_EOL;
 echo \"Attachments live: \".\App\Models\Attachment::count().PHP_EOL;
@@ -110,7 +110,7 @@ echo \"Attachments live: \".\App\Models\Attachment::count().PHP_EOL;
 **Deploy:** mesmo padrão PR 1. Após deploy:
 ```bash
 # Smoke: criar despesa de teste com receipt no prod
-ssh minutor-prod 'docker compose exec backend php artisan tinker --execute="
+ssh timeconect-prod 'docker compose exec backend php artisan tinker --execute="
 echo \"Expenses com receipt_path: \".\App\Models\Expense::whereNotNull(\"receipt_path\")->count().PHP_EOL;
 echo \"Attachments EXPENSE.receipt: \".\App\Models\Attachment::where(\"entity_type\",\"EXPENSE\")->count().PHP_EOL;
 "'
@@ -118,9 +118,9 @@ echo \"Attachments EXPENSE.receipt: \".\App\Models\Attachment::where(\"entity_ty
 
 **Backfill imediato (idempotente):**
 ```bash
-ssh minutor-prod 'docker compose exec backend php artisan attachments:backfill --module=user-avatar'
-ssh minutor-prod 'docker compose exec backend php artisan attachments:backfill --module=expense-receipt'
-ssh minutor-prod 'docker compose exec backend php artisan attachments:backfill --module=timesheet-attachment'
+ssh timeconect-prod 'docker compose exec backend php artisan attachments:backfill --module=user-avatar'
+ssh timeconect-prod 'docker compose exec backend php artisan attachments:backfill --module=expense-receipt'
+ssh timeconect-prod 'docker compose exec backend php artisan attachments:backfill --module=timesheet-attachment'
 ```
 
 **Critério:** após backfill, `attachments:legacy-drop-preview` deve mostrar 0 missing nos 3 módulos. Monitorar 24h.
@@ -186,7 +186,7 @@ ssh minutor-prod 'docker compose exec backend php artisan attachments:backfill -
 - `app/Console/Commands/AttachmentsStats.php`
 - `src/app/admin/attachments/page.tsx`
 
-**Validar acesso em prod:** `https://app.minutor.com.br/admin/attachments` — admin vê painel; não-admin recebe negado.
+**Validar acesso em prod:** `https://app.timeconect.com.br/admin/attachments` — admin vê painel; não-admin recebe negado.
 
 ---
 
@@ -215,22 +215,22 @@ ssh minutor-prod 'docker compose exec backend php artisan attachments:backfill -
 
 ```bash
 # Stats rápido
-ssh minutor-prod 'docker compose exec backend php artisan attachments:stats'
+ssh timeconect-prod 'docker compose exec backend php artisan attachments:stats'
 
 # Stats em JSON pra alerta (cron):
-ssh minutor-prod 'docker compose exec backend php artisan attachments:stats --json' | jq '.health.healthy'
+ssh timeconect-prod 'docker compose exec backend php artisan attachments:stats --json' | jq '.health.healthy'
 
 # Health (foco em integridade)
-ssh minutor-prod 'docker compose exec backend php artisan attachments:stats --health'
+ssh timeconect-prod 'docker compose exec backend php artisan attachments:stats --health'
 
 # Re-rodar backfill (idempotente, seguro)
-ssh minutor-prod 'docker compose exec backend php artisan attachments:backfill --all'
+ssh timeconect-prod 'docker compose exec backend php artisan attachments:backfill --all'
 
 # Verificar prontidão pra 11.4
-ssh minutor-prod 'docker compose exec backend php artisan attachments:legacy-drop-preview'
+ssh timeconect-prod 'docker compose exec backend php artisan attachments:legacy-drop-preview'
 
 # Forçar integrity check completo (não só últimos 7d)
-ssh minutor-prod 'docker compose exec backend php artisan attachments:integrity-check --all'
+ssh timeconect-prod 'docker compose exec backend php artisan attachments:integrity-check --all'
 ```
 
 ---
@@ -239,7 +239,7 @@ ssh minutor-prod 'docker compose exec backend php artisan attachments:integrity-
 
 Quando PR 4 for mergeado e backfill rodado, comunicar:
 
-> 🎉 A camada global de anexos do Minutor está ATIVA em produção. Tudo continua funcionando como antes (legado intacto), mas todo upload novo já vai pra duas tabelas:
+> 🎉 A camada global de anexos do Time Conect está ATIVA em produção. Tudo continua funcionando como antes (legado intacto), mas todo upload novo já vai pra duas tabelas:
 > - Coluna legada (como sempre)
 > - Tabela `attachments` (nova, polimórfica)
 >

@@ -10,6 +10,10 @@ return new class extends Migration
 
     public function up(): void
     {
+        $exists = DB::selectOne("SELECT 1 FROM pg_type WHERE typname = 'projects_status'");
+        if (! $exists) {
+            return;
+        }
         DB::statement("ALTER TYPE projects_status ADD VALUE IF NOT EXISTS 'liberado_para_testes'");
     }
 

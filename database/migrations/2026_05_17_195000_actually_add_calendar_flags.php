@@ -7,8 +7,12 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::table('projects', function (Blueprint $table) {
-            $table->boolean('allow_weekend_work')->default(false)->after('allow_negative_balance');
-            $table->boolean('allow_holiday_work')->default(false)->after('allow_weekend_work');
+            if (! Schema::hasColumn('projects', 'allow_weekend_work')) {
+                $table->boolean('allow_weekend_work')->default(false)->after('allow_negative_balance');
+            }
+            if (! Schema::hasColumn('projects', 'allow_holiday_work')) {
+                $table->boolean('allow_holiday_work')->default(false)->after('allow_weekend_work');
+            }
         });
     }
     public function down(): void

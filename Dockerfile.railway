@@ -71,12 +71,10 @@ CMD sh -c "mkdir -p /var/www/storage/logs /var/www/storage/framework/cache/data 
            chmod -R 777 /var/www/storage /var/www/bootstrap/cache; \
            php artisan config:clear; \
            php artisan db:fix-sequence; \
-           php artisan migrate --force; \
-           php artisan db:seed --class=PermissionSeeder --force; \
-           php artisan db:seed --class=RoleSeeder --force; \
-           php artisan db:seed --class=ServiceAndContractTypeSeeder --force; \
-           php artisan db:seed --class=ExpenseCategorySeeder --force; \
-           php artisan db:seed --class=SystemSettingSeeder --force; \
+           php artisan migrate --force || true; \
+           php artisan db:seed --class=ServiceAndContractTypeSeeder --force || true; \
+           php artisan db:seed --class=ExpenseCategorySeeder --force || true; \
+           php artisan db:seed --class=SystemSettingSeeder --force || true; \
            php artisan config:cache; \
            php artisan route:cache; \
            chmod -R 777 /var/www/storage /var/www/bootstrap/cache; \

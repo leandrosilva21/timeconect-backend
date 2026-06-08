@@ -79,5 +79,7 @@ CMD sh -c "mkdir -p /var/www/storage/logs /var/www/storage/framework/cache/data 
            php artisan route:cache; \
            chmod -R 777 /var/www/storage /var/www/bootstrap/cache; \
            chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache; \
+           PORT=\${PORT:-8080}; \
+           sed -i \"s/listen 8080;/listen \$PORT;/\" /etc/nginx/sites-available/default; \
            php artisan schedule:work & \
            php-fpm -D && nginx -g 'daemon off;'"

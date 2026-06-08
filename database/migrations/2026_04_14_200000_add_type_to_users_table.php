@@ -14,6 +14,11 @@ return new class extends Migration
         });
 
         // Backfill: deriva type a partir dos roles Spatie existentes.
+        // Pula se as tabelas Spatie não existem (instalação nova sem spatie/laravel-permission).
+        if (! Schema::hasTable('model_has_roles') || ! Schema::hasTable('roles')) {
+            return;
+        }
+
         // Prioridade: admin > coordenador > cliente > parceiro_admin > consultor (default).
         DB::statement("
             UPDATE users u
